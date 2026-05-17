@@ -1,0 +1,33 @@
+name: Bug report
+description: Report a local deployment bug.
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What failed?
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: Windows version
+      placeholder: Windows 10
+  - type: input
+    id: backend
+    attributes:
+      label: Backend
+      placeholder: Ollama or llama.cpp
+  - type: input
+    id: profile
+    attributes:
+      label: LocalDeploy profile
+      placeholder: gemma3_4b_ollama_safe
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: Remove private prompts, paths, tokens, and image contents.
+      render: text
