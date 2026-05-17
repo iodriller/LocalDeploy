@@ -4,6 +4,7 @@ import base64
 import json
 import math
 import os
+import re
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -375,11 +376,7 @@ def openai_request_to_local_payload(request_model: OpenAIChatCompletionRequest) 
 
     prompt = "\n\n".join(conversation_parts).strip()
     if request_model.response_format:
-        schema_text = json.dumps(request_model.response_format, ensure_ascii=False)
-        prompt = (
-            f"{prompt}\n\nReturn only valid JSON. Do not use markdown. "
-            f"Follow this response format request exactly:\n{schema_text}"
-        ).strip()
+        prompt = f"{prompt}\n\n{response_format_instruction(request_model.response_format)}".strip()
 
     payload: Dict[str, Any] = {
         "profile": requested_profile,
@@ -400,6 +397,36 @@ def openai_request_to_local_payload(request_model: OpenAIChatCompletionRequest) 
     if images:
         payload["images_base64"] = images
     return payload, bool(images)
+
+
+def response_format_instruction(response_format: Dict[str, Any]) -> str:
+    format_type = response_format.get("type")
+    if format_type == "json_schema":
+        json_schema = response_format.get("json_schema") or {}
+        schema = json_schema.get("schema") or {}
+        required = schema.get("required") or []
+        properties = schema.get("properties") or {}
+        property_lines = []
+        for key, details in properties.items():
+            if isinstance(details, dict):
+                value_type = details.get("type", "value")
+                description = details.get("description")
+                suffix = f" - {description}" if description else ""
+                property_lines.append(f"- {key}: {value_type}{suffix}")
+            else:
+                property_lines.append(f"- {key}")
+        return (
+            "Return only valid JSON. Do not use markdown or code fences. "
+            "Return a data object that conforms to this schema; do not return the schema itself. "
+            f"Required keys: {', '.join(required) if required else 'use the schema properties'}. "
+            f"Properties:\n{chr(10).join(property_lines) if property_lines else json.dumps(properties, ensure_ascii=False)}"
+        )
+    if format_type == "json_object":
+        return "Return only one valid JSON object. Do not use markdown or code fences."
+    return (
+        "Return only valid JSON when possible. Do not use markdown or code fences. "
+        f"Response format request: {json.dumps(response_format, ensure_ascii=False)}"
+    )
 
 
 def prepare_request(
@@ -1009,6 +1036,8 @@ def openai_error_response(result: Dict[str, Any]) -> JSONResponse:
 
 def openai_chat_completion_response(request_model: OpenAIChatCompletionRequest, result: Dict[str, Any]) -> Dict[str, Any]:
     content = str(result.get("response") or "")
+    if request_model.response_format:
+        content = normalize_structured_content(content)
     prompt_tokens = int(result.get("estimated_prompt_tokens") or estimate_tokens_from_chars(result.get("estimated_prompt_chars") or 0))
     completion_tokens = estimate_tokens_from_chars(len(content)) if content else 0
     return {
@@ -1041,6 +1070,28 @@ def openai_chat_completion_response(request_model: OpenAIChatCompletionRequest, 
             "max_output_tokens_used": result.get("max_output_tokens_used"),
         },
     }
+
+
+def normalize_structured_content(content: str) -> str:
+    stripped = content.strip()
+    fence_match = re.fullmatch(r"```(?:json)?\s*(.*?)\s*```", stripped, flags=re.IGNORECASE | re.DOTALL)
+    candidates = [fence_match.group(1).strip()] if fence_match else []
+    candidates.append(stripped)
+
+    object_match = re.search(r"(\{.*\})", stripped, flags=re.DOTALL)
+    if object_match:
+        candidates.append(object_match.group(1).strip())
+    array_match = re.search(r"(\[.*\])", stripped, flags=re.DOTALL)
+    if array_match:
+        candidates.append(array_match.group(1).strip())
+
+    for candidate in candidates:
+        try:
+            parsed = json.loads(candidate)
+        except Exception:
+            continue
+        return json.dumps(parsed, ensure_ascii=False)
+    return content
 
 
 app = FastAPI(title="Local LLM Server", version="1.0.0")

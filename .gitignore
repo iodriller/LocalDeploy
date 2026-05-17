@@ -21,6 +21,8 @@ env/
 logs/
 benchmark-results/
 *.log
+!reports/
+!reports/*.log
 
 # Local model files should not be committed
 models/

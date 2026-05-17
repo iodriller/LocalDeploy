@@ -1,0 +1,19 @@
+Test mode: local API server at http://127.0.0.1:8000
+Safe mode: True
+Requested max_output_tokens: 64
+
+Profile: gemma3_4b_ollama_safe
+  backend=ollama model=gemma3:4b recommended_8gb=True
+  PASS basic: 6.96s, 265 chars, ~9.52 tok/s
+  PASS reasoning: 3.17s, 226 chars, ~17.81 tok/s
+  PASS coding: 3.24s, 240 chars, ~18.51 tok/s
+  PASS long_context: 4.01s, 297 chars, ~18.52 tok/s
+  PASS json_compliance: 3.29s, 268 chars, ~20.33 tok/s
+  PASS local_api_use: 3.38s, 235 chars, ~17.39 tok/s
+  Summary: works | score=0.790 reliability=100% quality=0.57
+
+Scoring summary
+- gemma3_4b_ollama_safe: score=0.790, status=works, avg=4.01s, tok/s=17.01, failures=none, 8GB=True
+
+Recommended profile: gemma3_4b_ollama_safe
+Reason: it is the safest default when speed and reliability matter on 8 GB VRAM.

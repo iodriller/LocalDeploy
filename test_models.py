@@ -53,7 +53,7 @@ def server_base_url() -> str:
 
 def is_server_running() -> bool:
     try:
-        response = requests.get(f"{server_base_url()}/health", timeout=2)
+        response = requests.get(f"{server_base_url()}/health", timeout=10)
         return response.ok
     except requests.RequestException:
         return False

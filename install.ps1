@@ -71,8 +71,12 @@ function Pull-OllamaModel {
     )
 
     Write-Step "Pulling $Model"
+    $previousErrorActionPreference = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
     & $OllamaExe pull $Model
-    if ($LASTEXITCODE -ne 0) {
+    $pullExitCode = $LASTEXITCODE
+    $ErrorActionPreference = $previousErrorActionPreference
+    if ($pullExitCode -ne 0) {
         Write-Warning "Failed to pull $Model. You can retry later with: ollama pull $Model"
     }
     else {
