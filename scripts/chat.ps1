@@ -1,7 +1,7 @@
 param(
     [string]$Prompt,
-    [string]$Profile = "gemma3_4b_ollama_safe",
-    [int]$MaxOutputTokens = 256,
+    [string]$Profile = "gemma3_12b_ollama_safe",
+    [int]$MaxOutputTokens = 768,
     [switch]$Raw,
     [switch]$Profiles,
     [switch]$StartServer
