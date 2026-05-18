@@ -1,0 +1,19 @@
+Test mode: local API server at http://127.0.0.1:8000
+Safe mode: True
+Requested max_output_tokens: 64
+
+Profile: gemma3_12b_ollama_safe
+  backend=ollama model=gemma3:12b recommended_8gb=False
+  PASS basic: 14.86s, 260 chars, ~4.37 tok/s
+  PASS reasoning: 11.24s, 219 chars, ~4.87 tok/s
+  PASS coding: 11.92s, 241 chars, ~5.06 tok/s
+  PASS long_context: 14.23s, 279 chars, ~4.90 tok/s
+  PASS json_compliance: 11.37s, 300 chars, ~6.60 tok/s
+  PASS local_api_use: 11.85s, 270 chars, ~5.70 tok/s
+  Summary: works | score=0.740 reliability=100% quality=0.65
+
+Scoring summary
+- gemma3_12b_ollama_safe: score=0.740, status=works, avg=12.58s, tok/s=5.25, failures=none, 8GB=False
+
+Recommended profile: gemma3_12b_ollama_safe
+Reason: 12B only won because it ran reliably enough for the measured workload.
