@@ -45,13 +45,19 @@ Copy-Item config.example.json config.json
 Start the API:
 
 ```powershell
-python api_server.py
+.\scripts\start.ps1 -Background
 ```
 
 Health check:
 
 ```powershell
 Invoke-RestMethod http://127.0.0.1:8000/health
+```
+
+Run the server in the foreground if you want to see logs:
+
+```powershell
+.\scripts\start.ps1
 ```
 
 ## Easy Terminal Testing
@@ -112,6 +118,8 @@ $body = @{
 
 Invoke-RestMethod -Uri "http://127.0.0.1:8000/v1/chat/completions" -Method Post -ContentType "application/json" -Body $body
 ```
+
+More request options are documented in [docs/API_OPTIONS.md](docs/API_OPTIONS.md).
 
 Swagger UI is available at:
 
