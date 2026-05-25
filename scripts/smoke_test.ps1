@@ -7,19 +7,29 @@ $ErrorActionPreference = "Stop"
 $ProjectRoot = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 Set-Location $ProjectRoot
 
+$env:CONFIG_PATH = "config.example.json"
+$env:DEFAULT_MODEL_PROFILE = "gemma3_4b_ollama_safe"
+$env:REQUIRE_GPU_ONLY = "false"
+$env:ENABLE_LLAMA_CPP = "false"
+
 Write-Host "Checking Python syntax"
-python -m py_compile api_server.py test_models.py
+python -m py_compile api_server.py test_models.py chat_cli.py
 
 Write-Host "Checking JSON examples"
 python -m json.tool config.example.json > $null
 
-Write-Host "Checking PowerShell installer parse"
+Write-Host "Checking PowerShell script parse"
 $tokens = $null
 $errors = $null
-[System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path .\install.ps1), [ref]$tokens, [ref]$errors) | Out-Null
-if ($errors.Count -gt 0) {
-    $errors | ForEach-Object { Write-Error $_.Message }
-    exit 1
+foreach ($script in @(".\install.ps1") + (Get-ChildItem -LiteralPath ".\scripts" -Filter "*.ps1" | ForEach-Object { $_.FullName })) {
+    $tokens = $null
+    $errors = $null
+    [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $script), [ref]$tokens, [ref]$errors) | Out-Null
+    if ($errors.Count -gt 0) {
+        Write-Host "PowerShell parse failed: $script"
+        $errors | ForEach-Object { Write-Error $_.Message }
+        exit 1
+    }
 }
 
 Write-Host "Checking API import and safety validation"

@@ -1,10 +1,10 @@
 {
   "version": 1,
-  "default_profile": "gemma3_4b_gguf_q4_gpu",
+  "default_profile": "gemma3_4b_ollama_safe",
   "global_defaults": {
     "safe_mode": true,
     "stream": false,
-    "require_gpu_only": true
+    "require_gpu_only": false
   },
   "profiles": {
     "gemma3_4b_ollama_safe": {
@@ -12,7 +12,7 @@
       "backend": "ollama",
       "model_id": "gemma3:4b",
       "base_url": "http://localhost:11434",
-      "enabled": false,
+      "enabled": true,
       "description": "Ollama Gemma 3 4B safe default profile for local multimodal use.",
       "recommended_for_8gb_vram": true,
       "supports_vision": true,
@@ -25,7 +25,7 @@
       "repeat_penalty": 1.1,
       "timeout_seconds": 180,
       "slow_response_seconds": 60,
-      "notes": "Disabled because YBM is configured for GPU-only llama.cpp execution.",
+      "notes": "Stable default for local testing. Use this first unless a larger local profile is clearly better.",
       "quantization": null,
       "gpu_layers": null,
       "flash_attention": null,
@@ -42,7 +42,7 @@
       "backend": "ollama",
       "model_id": "gemma3:12b",
       "base_url": "http://localhost:11434",
-      "enabled": false,
+      "enabled": true,
       "description": "Ollama Gemma 3 12B test profile with conservative limits for 8 GB VRAM.",
       "recommended_for_8gb_vram": false,
       "supports_vision": true,
@@ -55,7 +55,7 @@
       "repeat_penalty": 1.1,
       "timeout_seconds": 240,
       "slow_response_seconds": 90,
-      "notes": "Disabled because YBM is configured for GPU-only llama.cpp execution.",
+      "notes": "Larger local Ollama profile. Test carefully because it is slower and more memory constrained than 4B.",
       "quantization": null,
       "gpu_layers": null,
       "flash_attention": null,
@@ -72,7 +72,7 @@
       "backend": "llamacpp",
       "model_id": "C:/models/gemma-3-4b-it-GGUF/gemma-3-4b-it-Q4_K_M.gguf",
       "base_url": "http://localhost:8080",
-      "enabled": true,
+      "enabled": false,
       "description": "llama.cpp GGUF Q4_K_M Gemma 3 4B GPU-only profile.",
       "recommended_for_8gb_vram": true,
       "supports_vision": false,

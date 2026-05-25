@@ -60,7 +60,7 @@ class OpenAIChatMessage(BaseModel):
 
 
 class OpenAIChatCompletionRequest(BaseModel):
-    model: str = Field(default="gemma3_4b_gguf_q4_gpu")
+    model: str = Field(default="gemma3_4b_ollama_safe")
     messages: List[OpenAIChatMessage]
     temperature: Optional[float] = None
     top_p: Optional[float] = None
@@ -103,7 +103,7 @@ def env_bool(name: str, default: bool = False) -> bool:
 
 
 def require_gpu_only() -> bool:
-    return env_bool("REQUIRE_GPU_ONLY", True)
+    return env_bool("REQUIRE_GPU_ONLY", False)
 
 
 def env_int(name: str, default: int) -> int:
@@ -298,7 +298,7 @@ def resolve_profile(
         request_data.get("profile")
         or os.getenv("DEFAULT_MODEL_PROFILE")
         or config.get("default_profile")
-        or "gemma3_4b_gguf_q4_gpu"
+        or "gemma3_4b_ollama_safe"
     )
     if profile_name not in profiles:
         return None, None, f"Unknown profile '{profile_name}'. Check config.json."
@@ -368,7 +368,7 @@ def profile_for_openai_model(config: Dict[str, Any], model_name: str) -> Tuple[s
     default_profile = (
         os.getenv("DEFAULT_MODEL_PROFILE")
         or config.get("default_profile")
-        or "gemma3_4b_gguf_q4_gpu"
+        or "gemma3_4b_ollama_safe"
     )
     return default_profile, model_name
 
@@ -911,7 +911,7 @@ def run_benchmark(request_data: Dict[str, Any]) -> Dict[str, Any]:
             data.get("profile")
             or os.getenv("DEFAULT_MODEL_PROFILE")
             or config.get("default_profile")
-            or "gemma3_4b_gguf_q4_gpu"
+            or "gemma3_4b_ollama_safe"
         ]
 
     if not profile_names:

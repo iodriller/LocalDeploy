@@ -62,7 +62,7 @@ function Assert-GpuOnlyProfile {
         [hashtable]$EnvFile,
         [object]$Profile
     )
-    $gpuOnly = Env-Bool -EnvFile $EnvFile -Name "REQUIRE_GPU_ONLY" -Default $true
+    $gpuOnly = Env-Bool -EnvFile $EnvFile -Name "REQUIRE_GPU_ONLY" -Default $false
     if (-not $gpuOnly) {
         return
     }

@@ -25,15 +25,15 @@ function Test-Http {
 # Try to stop the API server using the PID file
 $pidFile = ".\logs\api_server.pid"
 if (Test-Path -LiteralPath $pidFile) {
-    $pid = Get-Content -LiteralPath $pidFile -Raw | ForEach-Object { $_.Trim() }
-    if ($pid) {
+    $apiPid = Get-Content -LiteralPath $pidFile -Raw | ForEach-Object { $_.Trim() }
+    if ($apiPid) {
         try {
-            Stop-Process -Id $pid -ErrorAction SilentlyContinue
+            Stop-Process -Id $apiPid -ErrorAction SilentlyContinue
             Remove-Item -LiteralPath $pidFile -Force
-            Write-Step "Stopped LocalDeploy API (PID: $pid)"
+            Write-Step "Stopped LocalDeploy API (PID: $apiPid)"
         }
         catch {
-            Write-Warning "Could not stop process with PID $pid"
+            Write-Warning "Could not stop process with PID $apiPid"
         }
     }
 }
