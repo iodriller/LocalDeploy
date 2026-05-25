@@ -70,6 +70,8 @@ elseif (-not (Test-Http "http://localhost:11434/api/tags")) {
     Start-Sleep -Seconds 3
 }
 
+& ".\scripts\start_llamacpp.ps1" -SkipIfDisabled
+
 if (Test-Http "http://127.0.0.1:8000/health") {
     Write-Step "LocalDeploy API is already running"
 }

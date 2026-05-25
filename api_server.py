@@ -60,7 +60,7 @@ class OpenAIChatMessage(BaseModel):
 
 
 class OpenAIChatCompletionRequest(BaseModel):
-    model: str = Field(default="gemma3_4b_ollama_safe")
+    model: str = Field(default="gemma3_4b_gguf_q4_gpu")
     messages: List[OpenAIChatMessage]
     temperature: Optional[float] = None
     top_p: Optional[float] = None
@@ -100,6 +100,10 @@ def env_bool(name: str, default: bool = False) -> bool:
     if value is None:
         return default
     return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def require_gpu_only() -> bool:
+    return env_bool("REQUIRE_GPU_ONLY", True)
 
 
 def env_int(name: str, default: int) -> int:
@@ -294,7 +298,7 @@ def resolve_profile(
         request_data.get("profile")
         or os.getenv("DEFAULT_MODEL_PROFILE")
         or config.get("default_profile")
-        or "gemma3_4b_ollama_safe"
+        or "gemma3_4b_gguf_q4_gpu"
     )
     if profile_name not in profiles:
         return None, None, f"Unknown profile '{profile_name}'. Check config.json."
@@ -324,6 +328,19 @@ def resolve_profile(
     if backend not in {"ollama", "llamacpp"}:
         return profile_name, profile, f"Unsupported backend '{backend}' in profile '{profile_name}'."
 
+    if require_gpu_only():
+        gpu_layers = str(profile.get("gpu_layers") or "").strip().lower()
+        if backend != "llamacpp":
+            return profile_name, profile, (
+                f"GPU-only mode is enabled, but profile '{profile_name}' uses backend '{backend}'. "
+                "Select a llama.cpp profile with gpu_layers=all."
+            )
+        if gpu_layers != "all":
+            return profile_name, profile, (
+                f"GPU-only mode is enabled, but profile '{profile_name}' has gpu_layers={profile.get('gpu_layers')!r}. "
+                "Set gpu_layers to 'all' so startup fails instead of falling back to CPU."
+            )
+
     if backend == "llamacpp" and not env_bool("ENABLE_LLAMA_CPP", False):
         return (
             profile_name,
@@ -351,7 +368,7 @@ def profile_for_openai_model(config: Dict[str, Any], model_name: str) -> Tuple[s
     default_profile = (
         os.getenv("DEFAULT_MODEL_PROFILE")
         or config.get("default_profile")
-        or "gemma3_4b_ollama_safe"
+        or "gemma3_4b_gguf_q4_gpu"
     )
     return default_profile, model_name
 
@@ -648,6 +665,8 @@ def ollama_error_message(response: requests.Response, model_id: str) -> str:
 
 
 def call_ollama(prepared: Dict[str, Any]) -> str:
+    if require_gpu_only():
+        raise BackendCallError("GPU-only mode is enabled; refusing to call Ollama.")
     profile = prepared["profile"]
     base_url = get_backend_base_url(profile, "ollama")
     messages: List[Dict[str, Any]] = []
@@ -892,7 +911,7 @@ def run_benchmark(request_data: Dict[str, Any]) -> Dict[str, Any]:
             data.get("profile")
             or os.getenv("DEFAULT_MODEL_PROFILE")
             or config.get("default_profile")
-            or "gemma3_4b_ollama_safe"
+            or "gemma3_4b_gguf_q4_gpu"
         ]
 
     if not profile_names:
@@ -1110,7 +1129,12 @@ if env_bool("ENABLE_CORS", False):
 def health() -> Dict[str, Any]:
     config = load_config()
     ollama_base = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-    models, ollama_error = ollama_models(ollama_base)
+    if require_gpu_only():
+        models, ollama_error = [], "disabled by GPU-only mode"
+        ollama_reachable = False
+    else:
+        models, ollama_error = ollama_models(ollama_base)
+        ollama_reachable = ollama_error is None
     llama_base = os.getenv("LLAMACPP_BASE_URL", "http://localhost:8080")
     llama_status = llama_health(llama_base) if env_bool("ENABLE_LLAMA_CPP", False) else {"enabled": False}
     return {
@@ -1118,9 +1142,10 @@ def health() -> Dict[str, Any]:
         "server": "ok",
         "config_path": str(get_config_path()),
         "default_profile": os.getenv("DEFAULT_MODEL_PROFILE") or config.get("default_profile"),
+        "require_gpu_only": require_gpu_only(),
         "ollama": {
             "base_url": ollama_base,
-            "reachable": ollama_error is None,
+            "reachable": ollama_reachable,
             "models": models,
             "error": ollama_error,
         },
@@ -1133,7 +1158,10 @@ def health() -> Dict[str, Any]:
 def models() -> Dict[str, Any]:
     config = load_config()
     ollama_base = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-    models_available, ollama_error = ollama_models(ollama_base)
+    if require_gpu_only():
+        models_available, ollama_error = [], "disabled by GPU-only mode"
+    else:
+        models_available, ollama_error = ollama_models(ollama_base)
     llama_profiles = [
         {
             "profile": name,

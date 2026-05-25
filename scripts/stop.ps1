@@ -55,6 +55,21 @@ else {
     Write-Host "LocalDeploy API stopped successfully" -ForegroundColor Green
 }
 
+$llamaPidFile = ".\logs\llama_server.pid"
+if (Test-Path -LiteralPath $llamaPidFile) {
+    $llamaPid = Get-Content -LiteralPath $llamaPidFile -Raw | ForEach-Object { $_.Trim() }
+    if ($llamaPid) {
+        Stop-Process -Id $llamaPid -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $llamaPidFile -Force -ErrorAction SilentlyContinue
+        Write-Step "Stopped llama.cpp server (PID: $llamaPid)"
+    }
+}
+
+Get-Process "llama-server" -ErrorAction SilentlyContinue | ForEach-Object {
+    Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue
+    Write-Step "Stopped additional llama.cpp server process (PID: $($_.Id))"
+}
+
 # Stop Ollama if requested
 if ($StopOllama) {
     $ollama = Get-Process "ollama" -ErrorAction SilentlyContinue
