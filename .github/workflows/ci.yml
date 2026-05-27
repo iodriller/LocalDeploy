@@ -5,8 +5,8 @@ on:
   pull_request:
 
 jobs:
-  validate:
-    name: Validate project
+  smoke-windows:
+    name: Smoke checks (Windows)
     runs-on: windows-latest
 
     steps:
@@ -24,3 +24,28 @@ jobs:
       - name: Run smoke checks
         shell: pwsh
         run: ./scripts/smoke_test.ps1
+
+  tests-linux:
+    name: Pytest (Linux)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: python -m pip install -r requirements-dev.txt
+
+      - name: Run pytest
+        run: pytest -q
+        env:
+          CONFIG_PATH: config.example.json
+          DEFAULT_MODEL_PROFILE: gemma3_4b_ollama_safe
+          REQUIRE_GPU_ONLY: "false"
+          ENABLE_LLAMA_CPP: "false"
+          ENABLE_CORS: "false"

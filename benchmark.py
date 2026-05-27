@@ -1,0 +1,1471 @@
+"""Capability benchmark for local LLM profiles (v2 — harder tests).
+
+Tests each enabled profile against five task categories:
+    planning        software-project decomposition (not domestic tasks)
+    classification  multi-class label with ambiguity
+    code            non-trivial Python (DP, intervals, LRU cache, SQL)
+    math            multi-step arithmetic, algebra, probability, matrices
+    structured      JSON-schema-shaped output with field-level grading
+
+Captures: success, elapsed seconds, response length, approx tokens/sec, accuracy
+per test, and VRAM snapshots (via nvidia-smi) before/peak/after each profile.
+
+Writes:
+    reports/benchmark_<UTC-timestamp>.json   detailed results
+    reports/benchmark_<UTC-timestamp>.md     human-readable summary
+
+Run:
+    python benchmark.py                      # all enabled profiles
+    python benchmark.py --profile gemma3_4b_ollama_safe --profile qwen3vl_4b_ollama
+    python benchmark.py --skip-categories math
+"""
+from __future__ import annotations
+
+import argparse
+import ast
+import json
+import os
+import re
+import statistics
+import subprocess
+import sys
+import time
+from dataclasses import asdict, dataclass, field
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Callable, Dict, List, Optional, Tuple
+
+import requests
+from dotenv import load_dotenv
+
+from api_server import load_config
+
+APP_DIR = Path(__file__).resolve().parent
+load_dotenv(APP_DIR / ".env")
+
+REPORTS_DIR = APP_DIR / "reports"
+
+
+def api_base_url() -> str:
+    host = os.getenv("API_HOST", "127.0.0.1")
+    port = os.getenv("API_PORT", "8000")
+    return f"http://{host}:{port}"
+
+
+# ---------------------------------------------------------------------------
+# Test cases
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class TestCase:
+    name: str
+    category: str
+    prompt: str
+    grader: Callable[[str], float]
+    grader_explainer: str
+    max_output_tokens: int = 768
+
+
+# ----- helpers ----------------------------------------------------------------
+
+
+def _extract_json(text: str) -> Optional[Any]:
+    """Best-effort JSON extraction: fenced, bracketed, or raw."""
+    candidates: List[str] = []
+    fence = re.search(r"```(?:json)?\s*(.*?)\s*```", text, flags=re.DOTALL | re.IGNORECASE)
+    if fence:
+        candidates.append(fence.group(1))
+    # Largest balanced object or array
+    obj = re.search(r"(\{.*\})", text, flags=re.DOTALL)
+    if obj:
+        candidates.append(obj.group(1))
+    arr = re.search(r"(\[.*\])", text, flags=re.DOTALL)
+    if arr:
+        candidates.append(arr.group(1))
+    candidates.append(text.strip())
+    for cand in candidates:
+        try:
+            return json.loads(cand)
+        except Exception:
+            continue
+    return None
+
+
+def _extract_python_code(text: str) -> str:
+    fence = re.search(r"```(?:python|py)?\s*(.*?)\s*```", text, flags=re.DOTALL | re.IGNORECASE)
+    return fence.group(1) if fence else text
+
+
+def _first_word(text: str) -> str:
+    line = text.strip().splitlines()[0] if text.strip() else ""
+    cleaned = re.sub(r"[^a-z0-9_+-]", " ", line.lower()).split()
+    return cleaned[0] if cleaned else ""
+
+
+# ----- planning graders -------------------------------------------------------
+
+
+def _grade_chat_backend_plan(text: str) -> float:
+    """Looks for 6 numbered milestones, each with name + deliverables + dependencies + effort."""
+    score = 0.0
+    # 6 top-level numbered items
+    numbers = re.findall(r"^\s*(\d+)\.\s", text, flags=re.MULTILINE)
+    if len(numbers) >= 6:
+        score += 0.4
+    elif len(numbers) >= 4:
+        score += 0.2
+    # Field markers
+    lowered = text.lower()
+    field_hits = sum(1 for kw in ["deliverable", "depend", "effort", "milestone"] if kw in lowered)
+    score += 0.15 * (field_hits / 4)
+    # T-shirt sizing presence
+    if re.search(r"\b(xs|s|m|l|xl)\b", lowered):
+        score += 0.15
+    # Concrete tech topics (auth, websocket, db, persistence, scaling, deploy)
+    topic_hits = sum(1 for kw in ["websocket", "database", "auth", "scal", "deploy", "persist", "message", "presence"] if kw in lowered)
+    score += 0.3 * min(1.0, topic_hits / 4)
+    return min(1.0, score)
+
+
+def _grade_refactor_json(text: str) -> float:
+    data = _extract_json(text)
+    if not isinstance(data, dict):
+        return 0.0
+    score = 0.2  # parsed
+    phases = data.get("phases")
+    if isinstance(phases, list) and len(phases) == 4:
+        score += 0.25
+        # Each phase has name/description/risks/success_criteria
+        per_phase = []
+        for p in phases:
+            if not isinstance(p, dict):
+                per_phase.append(0)
+                continue
+            ok = sum(
+                1
+                for key in ("name", "description", "risks", "success_criteria")
+                if key in p
+            )
+            # risks and success_criteria are lists >= 2
+            list_ok = sum(
+                1
+                for key in ("risks", "success_criteria")
+                if isinstance(p.get(key), list) and len(p[key]) >= 2
+            )
+            per_phase.append((ok / 4) * 0.7 + (list_ok / 2) * 0.3)
+        score += 0.3 * (sum(per_phase) / 4)
+    if isinstance(data.get("rollback_plan"), str) and len(data["rollback_plan"]) > 30:
+        score += 0.1
+    if isinstance(data.get("estimated_duration_days"), int):
+        score += 0.15
+    return min(1.0, score)
+
+
+def _grade_p99_plan(text: str) -> float:
+    score = 0.0
+    numbers = re.findall(r"^\s*(\d+)\.\s", text, flags=re.MULTILINE)
+    if len(numbers) >= 5:
+        score += 0.4
+    elif len(numbers) >= 3:
+        score += 0.2
+    lowered = text.lower()
+    # Field markers required per step
+    field_hits = sum(1 for kw in ["expected", "time", "access", "signal", "check"] if kw in lowered)
+    score += 0.2 * (field_hits / 5)
+    # Cheap-to-invasive ordering signals (check dashboards / logs / traces before code)
+    cheap = any(kw in lowered for kw in ["dashboard", "metric", "log", "grafana", "alert"])
+    invasive = any(kw in lowered for kw in ["redeploy", "rollback", "ssh", "production debug", "code change", "git bisect"])
+    if cheap and invasive:
+        cheap_idx = min((lowered.find(kw) for kw in ["dashboard", "metric", "log"] if kw in lowered), default=10_000)
+        invasive_idx = min((lowered.find(kw) for kw in ["redeploy", "rollback", "ssh", "git bisect"] if kw in lowered), default=10_000)
+        if cheap_idx < invasive_idx:
+            score += 0.2
+    # Plausible diagnostic terms
+    diag_hits = sum(1 for kw in ["latency", "p99", "trace", "noisy neighbor", "gc", "memory", "cpu", "downstream", "throughput"] if kw in lowered)
+    score += 0.2 * min(1.0, diag_hits / 5)
+    return min(1.0, score)
+
+
+# ----- classification graders -------------------------------------------------
+
+
+def _grade_first_word(answer: str) -> Callable[[str], float]:
+    def grader(text: str) -> float:
+        word = _first_word(text)
+        if word == answer:
+            return 1.0
+        if answer in text.lower():
+            return 0.5
+        return 0.0
+
+    return grader
+
+
+# ----- code graders -----------------------------------------------------------
+
+
+def _grade_levenshtein(text: str) -> float:
+    code = _extract_python_code(text)
+    try:
+        tree = ast.parse(code)
+    except SyntaxError:
+        return 0.0
+    score = 0.0
+    fns = [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)]
+    if not any(f.name == "levenshtein" for f in fns):
+        return 0.1
+    score += 0.4
+    # Functional test
+    try:
+        ns: Dict[str, Any] = {}
+        exec(compile(tree, "<lev>", "exec"), ns)
+        fn = ns.get("levenshtein")
+        if callable(fn):
+            cases = [("", "", 0), ("a", "a", 0), ("kitten", "sitting", 3), ("flaw", "lawn", 2), ("abc", "", 3)]
+            passes = 0
+            for a, b, expected in cases:
+                try:
+                    got = fn(a, b)
+                    if got == expected:
+                        passes += 1
+                except Exception:
+                    pass
+            score += 0.6 * (passes / len(cases))
+    except Exception:
+        pass
+    return min(1.0, score)
+
+
+def _grade_merge_intervals(text: str) -> float:
+    code = _extract_python_code(text)
+    try:
+        tree = ast.parse(code)
+    except SyntaxError:
+        return 0.0
+    if not any(isinstance(n, ast.FunctionDef) and n.name == "merge_intervals" for n in ast.walk(tree)):
+        return 0.1
+    score = 0.4
+    try:
+        ns: Dict[str, Any] = {}
+        exec(compile(tree, "<merge>", "exec"), ns)
+        fn = ns["merge_intervals"]
+        cases = [
+            ([(1, 3), (2, 6), (8, 10), (15, 18)], {(1, 6), (8, 10), (15, 18)}),
+            ([(1, 4), (4, 5)], {(1, 5)}),
+            ([], set()),
+            ([(1, 10), (2, 3), (4, 5)], {(1, 10)}),
+        ]
+        passes = 0
+        for inp, expected in cases:
+            try:
+                got = fn(list(inp))
+                got_set = {tuple(x) for x in got}
+                if got_set == expected:
+                    passes += 1
+            except Exception:
+                pass
+        score += 0.6 * (passes / len(cases))
+    except Exception:
+        pass
+    return min(1.0, score)
+
+
+def _grade_lru_cache(text: str) -> float:
+    code = _extract_python_code(text)
+    try:
+        tree = ast.parse(code)
+    except SyntaxError:
+        return 0.0
+    classes = [n for n in ast.walk(tree) if isinstance(n, ast.ClassDef) and n.name == "LRUCache"]
+    if not classes:
+        return 0.1
+    score = 0.3
+    methods = {m.name for m in ast.walk(classes[0]) if isinstance(m, ast.FunctionDef)}
+    if {"__init__", "get", "put"}.issubset(methods):
+        score += 0.2
+    try:
+        ns: Dict[str, Any] = {}
+        exec(compile(tree, "<lru>", "exec"), ns)
+        cache = ns["LRUCache"](2)
+        cache.put(1, 1)
+        cache.put(2, 2)
+        passes = 0
+        # Standard LeetCode sequence
+        if cache.get(1) == 1:
+            passes += 1
+        cache.put(3, 3)
+        if cache.get(2) == -1:
+            passes += 1
+        cache.put(4, 4)
+        if cache.get(1) == -1:
+            passes += 1
+        if cache.get(3) == 3:
+            passes += 1
+        if cache.get(4) == 4:
+            passes += 1
+        score += 0.5 * (passes / 5)
+    except Exception:
+        pass
+    return min(1.0, score)
+
+
+def _grade_sql_second_highest(text: str) -> float:
+    cleaned = text.strip().lower()
+    score = 0.0
+    if "select" in cleaned:
+        score += 0.2
+    # Acceptable patterns
+    if "limit 1" in cleaned and "offset 1" in cleaned:
+        score += 0.5
+    elif re.search(r"dense_rank|rank\(\)\s*over", cleaned):
+        score += 0.5
+    elif "distinct" in cleaned and re.search(r"order\s+by\s+salary\s+desc", cleaned):
+        score += 0.4
+    elif "max" in cleaned and "where" in cleaned and "<" in cleaned:
+        score += 0.4
+    if "null" in cleaned or "ifnull" in cleaned or "coalesce" in cleaned:
+        score += 0.2
+    if "employee" in cleaned:
+        score += 0.1
+    return min(1.0, score)
+
+
+# ----- math graders -----------------------------------------------------------
+
+
+def _grade_number(expected: float, tolerance: float = 0.5) -> Callable[[str], float]:
+    def grader(text: str) -> float:
+        for cand in re.findall(r"-?\d+(?:\.\d+)?", text):
+            try:
+                if abs(float(cand) - expected) <= tolerance:
+                    return 1.0
+            except ValueError:
+                continue
+        return 0.0
+
+    return grader
+
+
+def _grade_time_953(text: str) -> float:
+    # Accept 9:52, 9:53, 9:54 AM
+    for hr, mn in re.findall(r"(\d{1,2}):(\d{2})", text):
+        try:
+            h = int(hr)
+            m = int(mn)
+        except ValueError:
+            continue
+        if h == 9 and abs(m - 53) <= 1:
+            return 1.0
+    return 0.0
+
+
+def _grade_fraction(target_num: int, target_den: int) -> Callable[[str], float]:
+    def grader(text: str) -> float:
+        for num, den in re.findall(r"(\d+)\s*/\s*(\d+)", text):
+            try:
+                n, d = int(num), int(den)
+                if d != 0 and n * target_den == target_num * d:
+                    return 1.0
+            except ValueError:
+                continue
+        return 0.0
+
+    return grader
+
+
+# ----- structured output graders ----------------------------------------------
+
+
+def _grade_request_parse(text: str) -> float:
+    data = _extract_json(text)
+    if not isinstance(data, dict):
+        return 0.0
+    score = 0.2
+    if data.get("action") == "read":
+        score += 0.2
+    entity = str(data.get("entity") or "").lower()
+    if "invoice" in entity:
+        score += 0.15
+    filters = data.get("filters")
+    if isinstance(filters, dict):
+        f_lower = json.dumps(filters).lower()
+        if "overdue" in f_lower:
+            score += 0.15
+        if "acme-42" in f_lower or "acme_42" in f_lower or "acme" in f_lower:
+            score += 0.15
+    if str(data.get("output_format") or "").lower() == "csv":
+        score += 0.15
+    return min(1.0, score)
+
+
+def _grade_flight_extract(text: str) -> float:
+    data = _extract_json(text)
+    if not isinstance(data, dict):
+        return 0.0
+    score = 0.2
+    if "united" in str(data.get("airline", "")).lower():
+        score += 0.15
+    flight = data.get("flight", {})
+    if isinstance(flight, dict):
+        if str(flight.get("origin", "")).upper() == "ORD":
+            score += 0.15
+        if str(flight.get("destination", "")).upper() == "LAX":
+            score += 0.15
+        if re.match(r"^\d{1,2}:\d{2}", str(flight.get("departure_time", ""))):
+            score += 0.1
+    pax = data.get("passenger", {})
+    if isinstance(pax, dict):
+        if "smith" in str(pax.get("last_name", "")).lower():
+            score += 0.1
+        if "4429" in str(pax.get("ff_number", "")):
+            score += 0.15
+    return min(1.0, score)
+
+
+def _grade_function_schema(text: str) -> float:
+    data = _extract_json(text)
+    if not isinstance(data, dict):
+        return 0.0
+    score = 0.15
+    params = data.get("parameters") or data
+    if not isinstance(params, dict):
+        return score
+    if params.get("type") == "object":
+        score += 0.15
+    props = params.get("properties") or {}
+    if not isinstance(props, dict):
+        return score
+    needed = {"title", "participants", "duration_minutes", "location"}
+    score += 0.3 * (len(needed & set(props.keys())) / len(needed))
+    if isinstance(props.get("participants"), dict) and props["participants"].get("type") == "array":
+        score += 0.1
+    if isinstance(props.get("duration_minutes"), dict) and props["duration_minutes"].get("type") == "integer":
+        score += 0.1
+    required = params.get("required") or []
+    if isinstance(required, list) and "title" in required and "participants" in required:
+        score += 0.2
+    return min(1.0, score)
+
+
+# ----- HARD structured graders (modeled on YBM pydantic schemas) --------------
+# These exercise nested enums, conditional fields, capability-subset constraints,
+# multi-entity extraction, and reasoning-then-output — patterns the easy tests miss.
+
+
+_INTENT_ROUTES = {
+    "conversation", "status", "desktop.observe", "computer.use", "browser.open",
+    "browser.control", "filesystem.manage", "document.manage", "artifact.deliver",
+    "code.interpreter", "coding.agent", "schedule.manage", "configuration", "unknown",
+}
+_TASK_TYPES = {"development", "configuration", "admin_control", "desktop_observation", "question", "status_request", "other"}
+_RISK_LEVELS = {"low", "medium", "high", "critical"}
+_CAPABILITIES = {
+    "telegram.send", "telegram.receive", "llm.generate", "stt.transcribe", "tts.synthesize",
+    "vscode.read_state", "vscode.write_files", "terminal.run", "filesystem.read", "filesystem.write",
+    "desktop.screenshot", "desktop.control", "browser.open", "browser.control", "schedule.manage",
+    "github.read", "github.push", "dependencies.install",
+}
+_DELIVERY_KINDS = {"none", "latest", "file", "screenshot"}
+
+
+def _grade_intent_classify(text: str) -> float:
+    """User said: 'Open chrome go to news.ycombinator.com take a screenshot of the front page and send it to me.'
+
+    Expected MessageClassification + nested OrchestrationIntent.
+    """
+    data = _extract_json(text)
+    if not isinstance(data, dict):
+        return 0.0
+    score = 0.0
+    # is_task=true
+    if data.get("is_task") is True:
+        score += 0.1
+    # task_type in valid enum, prefer "other" (browser→other per YBM rule)
+    tt = str(data.get("task_type", "")).lower()
+    if tt in _TASK_TYPES:
+        score += 0.05
+        if tt == "other":
+            score += 0.05
+    # confidence is number in [0,1]
+    conf = data.get("confidence")
+    if isinstance(conf, (int, float)) and 0.0 <= float(conf) <= 1.0:
+        score += 0.05
+        if float(conf) >= 0.7:
+            score += 0.05
+    # normalized_objective mentions key entities
+    obj = str(data.get("normalized_objective") or "").lower()
+    if "screenshot" in obj and ("ycombinator" in obj or "hacker news" in obj or "front page" in obj):
+        score += 0.1
+    elif "screenshot" in obj or "ycombinator" in obj:
+        score += 0.05
+    # reason is a non-empty string
+    reason = data.get("reason")
+    if isinstance(reason, str) and len(reason.strip()) >= 5:
+        score += 0.05
+    # nested intent
+    intent = data.get("intent")
+    if isinstance(intent, dict):
+        score += 0.05
+        route = str(intent.get("route", "")).lower()
+        if route in _INTENT_ROUTES:
+            score += 0.05
+            if route in {"browser.open", "browser.control"}:
+                score += 0.1
+        url = str(intent.get("url") or "")
+        if "ycombinator" in url.lower():
+            score += 0.1
+        delivery = str(intent.get("delivery", "")).lower()
+        if delivery in _DELIVERY_KINDS:
+            score += 0.05
+            if delivery in {"screenshot", "file", "latest"}:
+                score += 0.05
+        if isinstance(intent.get("needs_plan_first"), bool):
+            score += 0.05
+    return min(1.0, score)
+
+
+def _grade_plan_orchestration(text: str) -> float:
+    """Task: 'Take a screenshot of the current desktop and send it to me.'
+
+    Expected PlanModel-like JSON with desktop.screenshot + telegram.send capabilities
+    and the capability-subset constraint between top-level and per-step.
+    """
+    data = _extract_json(text)
+    if not isinstance(data, dict):
+        return 0.0
+    score = 0.05  # parsed
+    # objective mentions screenshot
+    obj = str(data.get("objective") or "").lower()
+    if "screenshot" in obj or "desktop" in obj:
+        score += 0.1
+    # required_capabilities is array of valid enum values
+    top_caps = data.get("required_capabilities")
+    if isinstance(top_caps, list):
+        score += 0.05
+        cap_set = {str(c).lower() for c in top_caps if isinstance(c, str)}
+        valid_caps = cap_set & _CAPABILITIES
+        if "desktop.screenshot" in valid_caps:
+            score += 0.1
+        if "telegram.send" in valid_caps or "artifact.deliver" in {str(c).lower() for c in top_caps}:
+            score += 0.1
+    # steps is array of objects with required keys
+    steps = data.get("steps")
+    if isinstance(steps, list) and len(steps) >= 2:
+        score += 0.1
+        # Each step has title, description, required_capabilities, risk_level
+        per_step_ok = 0
+        capability_subset_ok = True
+        top_cap_set = {str(c).lower() for c in (top_caps or []) if isinstance(c, str)}
+        for step in steps:
+            if not isinstance(step, dict):
+                capability_subset_ok = False
+                continue
+            field_hits = sum(1 for k in ("title", "description", "required_capabilities", "risk_level") if k in step)
+            if field_hits >= 3:
+                per_step_ok += 1
+            # capability subset check
+            step_caps = step.get("required_capabilities") or []
+            if isinstance(step_caps, list) and top_cap_set:
+                if not {str(c).lower() for c in step_caps if isinstance(c, str)}.issubset(top_cap_set):
+                    capability_subset_ok = False
+            # risk_level is valid enum
+            if str(step.get("risk_level", "")).lower() in _RISK_LEVELS:
+                pass  # rolled into field_hits
+        score += 0.1 * (per_step_ok / max(1, len(steps)))
+        if capability_subset_ok and top_cap_set:
+            score += 0.15
+    # success_criteria is array
+    sc = data.get("success_criteria")
+    if isinstance(sc, list) and len(sc) >= 1:
+        score += 0.1
+    # approval_gates is array (may be empty)
+    ag = data.get("approval_gates")
+    if isinstance(ag, list):
+        score += 0.05
+    return min(1.0, score)
+
+
+def _grade_approval_decision(text: str) -> float:
+    """Action: delete user's document. Expected: cautious decision with conditional field.
+
+    Conditional constraint: confirmation_prompt is required iff needs_user_confirmation=True.
+    Cautious decision: 'reject' or 'needs_clarification', NOT auto-approve.
+    """
+    data = _extract_json(text)
+    if not isinstance(data, dict):
+        return 0.0
+    score = 0.05  # parsed
+    decision = str(data.get("decision", "")).lower()
+    if decision in {"reject", "needs_clarification"}:
+        score += 0.2
+    elif decision == "approve":
+        score += 0.0  # wrong call for destructive action
+    risk = str(data.get("risk_level", "")).lower()
+    if risk in {"high", "critical"}:
+        score += 0.15
+    elif risk == "medium":
+        score += 0.05
+    reasons = data.get("reasons")
+    if isinstance(reasons, list) and len(reasons) >= 2:
+        score += 0.1
+    needs_conf = data.get("needs_user_confirmation")
+    conf_prompt = data.get("confirmation_prompt")
+    # Conditional: confirmation_prompt iff needs_user_confirmation
+    if isinstance(needs_conf, bool):
+        score += 0.05
+        if needs_conf is True and isinstance(conf_prompt, str) and len(conf_prompt.strip()) >= 5:
+            score += 0.15
+        elif needs_conf is False and (conf_prompt is None or conf_prompt == ""):
+            score += 0.1
+        elif needs_conf is True and not isinstance(conf_prompt, str):
+            pass  # constraint violation
+    caps = data.get("required_capabilities")
+    if isinstance(caps, list):
+        cap_set = {str(c).lower() for c in caps if isinstance(c, str)}
+        if "filesystem.delete" in cap_set or "filesystem.write" in cap_set:
+            score += 0.1
+    alt = data.get("alternative_action")
+    if isinstance(alt, dict) and "action" in alt and "rationale" in alt:
+        score += 0.1
+    elif alt is None:
+        score += 0.05
+    return min(1.0, score)
+
+
+def _grade_multi_task_extract(text: str) -> float:
+    """User asked for 2 tasks: watch Downloads for PDFs, schedule daily 9am report.
+
+    Plus a negative constraint about Codex.
+    """
+    data = _extract_json(text)
+    if not isinstance(data, dict):
+        return 0.0
+    score = 0.05  # parsed
+    tasks = data.get("tasks")
+    if not isinstance(tasks, list):
+        return score
+    if len(tasks) == 2:
+        score += 0.2
+    elif len(tasks) == 1 or len(tasks) == 3:
+        score += 0.1
+    # Find task with filesystem/document route and watch trigger
+    found_watch = False
+    found_schedule = False
+    codex_constraint = False
+    for t in tasks:
+        if not isinstance(t, dict):
+            continue
+        route = str(t.get("route", "")).lower()
+        trigger = t.get("trigger")
+        trigger_kind = ""
+        if isinstance(trigger, dict):
+            trigger_kind = str(trigger.get("kind", "")).lower()
+        if route in {"filesystem.manage", "document.manage"} and trigger_kind == "watch":
+            found_watch = True
+        if route == "schedule.manage" and trigger_kind == "schedule":
+            found_schedule = True
+        constraints = t.get("constraints")
+        if isinstance(constraints, list):
+            joined = " ".join(str(c).lower() for c in constraints)
+            if "codex" in joined or "copilot" in joined or "no advanced" in joined or "advanced" in joined:
+                codex_constraint = True
+    if found_watch:
+        score += 0.2
+    if found_schedule:
+        score += 0.2
+    # Schedule task should mention 9am or daily
+    for t in tasks:
+        if not isinstance(t, dict):
+            continue
+        if str(t.get("route", "")).lower() == "schedule.manage":
+            trigger = t.get("trigger") or {}
+            details = str(trigger.get("details", "") if isinstance(trigger, dict) else "").lower()
+            if "9am" in details or "9:00" in details or "0900" in details or "daily" in details:
+                score += 0.1
+                break
+    if codex_constraint:
+        score += 0.15
+    # ignored_instructions is array (can be empty)
+    if isinstance(data.get("ignored_instructions"), list):
+        score += 0.05
+    # Sequential ids
+    ids = [t.get("id") for t in tasks if isinstance(t, dict)]
+    if ids and all(isinstance(i, int) for i in ids) and ids == list(range(1, len(ids) + 1)):
+        score += 0.05
+    return min(1.0, score)
+
+
+def _grade_review_extract(text: str) -> float:
+    data = _extract_json(text)
+    if not isinstance(data, dict):
+        return 0.0
+    score = 0.2
+    if "eternal drift" in str(data.get("title", "")).lower():
+        score += 0.2
+    try:
+        if abs(float(data.get("score", -1)) - 7) <= 0.01:
+            score += 0.2
+    except (TypeError, ValueError):
+        pass
+    pros = data.get("pros")
+    cons = data.get("cons")
+    if isinstance(pros, list) and len(pros) >= 1:
+        score += 0.2
+    if isinstance(cons, list) and len(cons) >= 1:
+        score += 0.2
+    return min(1.0, score)
+
+
+# ---------------------------------------------------------------------------
+# Test catalog
+# ---------------------------------------------------------------------------
+
+
+TEST_CASES: List[TestCase] = [
+    # --- Planning (software/project oriented) ---
+    TestCase(
+        name="plan_chat_backend",
+        category="planning",
+        prompt=(
+            "Plan the implementation of a real-time chat application backend (1-on-1 + group rooms, presence, "
+            "message history, scalable to 50k concurrent users). Output 6 ordered milestones as a numbered "
+            "Markdown list. For each milestone include: name, 2-3 concrete deliverables, dependencies on earlier "
+            "milestones, and effort estimate as XS/S/M/L/XL. Use indented sub-items for the deliverables."
+        ),
+        grader=_grade_chat_backend_plan,
+        grader_explainer="6 numbered milestones with deliverables/dependencies/effort fields + concrete tech topics",
+        max_output_tokens=1024,
+    ),
+    TestCase(
+        name="plan_refactor_json",
+        category="planning",
+        prompt=(
+            "I need to refactor a 5000-line monolithic Python file into modules. Output ONLY a JSON object "
+            "(no markdown fence) with keys: 'phases' (array of exactly 4 objects, each having 'name', "
+            "'description', 'risks' as array of at least 2 strings, 'success_criteria' as array of at least 2 "
+            "strings), 'rollback_plan' (string of 2-3 sentences), 'estimated_duration_days' (integer)."
+        ),
+        grader=_grade_refactor_json,
+        grader_explainer="Valid JSON with 4 phases (each w/ name+description+risks[≥2]+criteria[≥2]) + rollback + days",
+        max_output_tokens=1024,
+    ),
+    TestCase(
+        name="plan_p99_investigation",
+        category="planning",
+        prompt=(
+            "Production microservice p99 latency just doubled from 200ms to 400ms with no recent deploys. "
+            "Outline a 5-step investigation plan, ordered from cheapest/fastest to most invasive. "
+            "For each step include: what to check, expected signal of a hit, time estimate, required access. "
+            "Numbered Markdown list."
+        ),
+        grader=_grade_p99_plan,
+        grader_explainer="5 ordered steps, cheap-before-invasive, all 4 fields per step + diagnostic vocabulary",
+        max_output_tokens=900,
+    ),
+    # --- Classification (multi-class, some ambiguity) ---
+    TestCase(
+        name="cls_tone",
+        category="classification",
+        prompt=(
+            "Classify the tone of this sentence as exactly one of: sarcastic, sincere, anxious, defiant. "
+            "'Oh sure, because what could possibly go wrong with another all-hands meeting.' "
+            "Reply with one word, lowercase, no punctuation."
+        ),
+        grader=_grade_first_word("sarcastic"),
+        grader_explainer="First word equals 'sarcastic'",
+        max_output_tokens=16,
+    ),
+    TestCase(
+        name="cls_intensity",
+        category="classification",
+        prompt=(
+            "Pick one: strong_positive, mild_positive, neutral, mild_negative, strong_negative. "
+            "'The interface is fine I guess, gets the job done eventually.' "
+            "Reply with the label only."
+        ),
+        grader=_grade_first_word("mild_negative"),
+        grader_explainer="First word equals 'mild_negative'",
+        max_output_tokens=16,
+    ),
+    TestCase(
+        name="cls_bug_severity",
+        category="classification",
+        prompt=(
+            "Bug severity (one of: critical, major, minor, trivial): 'Form labels are missing for 3 fields "
+            "in our internal admin panel; screen readers cannot announce which field is focused.' "
+            "Reply with the label only."
+        ),
+        grader=_grade_first_word("major"),
+        grader_explainer="First word equals 'major'",
+        max_output_tokens=16,
+    ),
+    TestCase(
+        name="cls_code_review",
+        category="classification",
+        prompt=(
+            "Code review comment type (one of: nitpick, suggestion, blocker, question): "
+            "'This violates our auth policy — every endpoint needs the @require_auth decorator before merge.' "
+            "Reply with the label only."
+        ),
+        grader=_grade_first_word("blocker"),
+        grader_explainer="First word equals 'blocker'",
+        max_output_tokens=16,
+    ),
+    TestCase(
+        name="cls_emotion",
+        category="classification",
+        prompt=(
+            "Dominant emotion (one of: anger, fear, joy, sadness, surprise, disgust): "
+            "'Wait. They scheduled the deploy for Friday afternoon?' "
+            "Reply with the label only."
+        ),
+        grader=_grade_first_word("surprise"),
+        grader_explainer="First word equals 'surprise'",
+        max_output_tokens=16,
+    ),
+    # --- Code (harder) ---
+    TestCase(
+        name="code_levenshtein",
+        category="code",
+        prompt=(
+            "Write a Python function `levenshtein(a: str, b: str) -> int` returning the Levenshtein edit "
+            "distance using dynamic programming. Handle empty strings. Reply with only the function in a "
+            "single ```python``` block."
+        ),
+        grader=_grade_levenshtein,
+        grader_explainer="Parses; defines levenshtein; passes 5 unit cases incl. empty + kitten/sitting=3",
+        max_output_tokens=900,
+    ),
+    TestCase(
+        name="code_merge_intervals",
+        category="code",
+        prompt=(
+            "Write a Python function `merge_intervals(intervals: list[tuple[int,int]]) -> list[tuple[int,int]]` "
+            "that merges overlapping intervals. Example: [(1,3),(2,6),(8,10)] -> [(1,6),(8,10)]. "
+            "Empty input returns []. Reply with only the function in a ```python``` block."
+        ),
+        grader=_grade_merge_intervals,
+        grader_explainer="Parses; merges 4 unit cases correctly including empty + chained overlaps",
+        max_output_tokens=700,
+    ),
+    TestCase(
+        name="code_lru_cache",
+        category="code",
+        prompt=(
+            "Write a Python class `LRUCache` with __init__(capacity), get(key) -> value or -1, put(key, value). "
+            "Both O(1). Use dict + doubly-linked list (or OrderedDict). Reply with only the class in a "
+            "```python``` block."
+        ),
+        grader=_grade_lru_cache,
+        grader_explainer="Parses; standard LeetCode LRU sequence passes (5 assertions)",
+        max_output_tokens=900,
+    ),
+    TestCase(
+        name="code_sql_second_highest",
+        category="code",
+        prompt=(
+            "Write SQL to find the second-highest salary from an Employee table with columns id, name, salary. "
+            "Return NULL when there is no second-highest. Use standard SQL. Reply with only the SQL statement, "
+            "no explanation."
+        ),
+        grader=_grade_sql_second_highest,
+        grader_explainer="SELECT + (LIMIT 1 OFFSET 1 | DENSE_RANK | MAX <) + NULL handling + Employee table",
+        max_output_tokens=300,
+    ),
+    # --- Math (harder) ---
+    TestCase(
+        name="math_power",
+        category="math",
+        prompt="What is 23 to the 4th power (23^4)? Reply with only the integer answer.",
+        grader=_grade_number(23 ** 4),
+        grader_explainer=f"Answer is {23 ** 4}",
+        max_output_tokens=32,
+    ),
+    TestCase(
+        name="math_trains",
+        category="math",
+        prompt=(
+            "Train A leaves station A at 8:00 AM going 60 mph east. Train B leaves station B (180 miles east "
+            "of A) at 9:00 AM going 75 mph west, toward A. At what time do they meet? "
+            "Reply with only the time in HH:MM AM/PM format."
+        ),
+        grader=_grade_time_953,
+        grader_explainer="9:53 AM ± 1 minute",
+        max_output_tokens=64,
+    ),
+    TestCase(
+        name="math_algebra",
+        category="math",
+        prompt="Solve for x: 2x + 5 = 3(x - 4) + 7. Reply with only the integer value of x.",
+        grader=_grade_number(10),
+        grader_explainer="x = 10",
+        max_output_tokens=32,
+    ),
+    TestCase(
+        name="math_determinant",
+        category="math",
+        prompt=(
+            "Compute the determinant of the 3x3 matrix [[1,2,3],[4,5,6],[7,8,10]]. "
+            "Reply with only the integer."
+        ),
+        grader=_grade_number(-3),
+        grader_explainer="det = -3",
+        max_output_tokens=64,
+    ),
+    TestCase(
+        name="math_probability",
+        category="math",
+        prompt=(
+            "A fair coin is flipped 5 times. What's the probability of getting exactly 3 heads? "
+            "Reply with only a reduced fraction like 5/16."
+        ),
+        grader=_grade_fraction(5, 16),
+        grader_explainer="5/16",
+        max_output_tokens=32,
+    ),
+    # --- Structured output (JSON) ---
+    TestCase(
+        name="json_request_parse",
+        category="structured",
+        prompt=(
+            "Parse this user request into a JSON object. Schema: "
+            "{action: one of [create, read, update, delete], entity: string, filters: object of key-value pairs, "
+            "output_format: one of [json, csv, markdown]}. "
+            "User said: 'Show me all overdue invoices for customer ACME-42 as a CSV'. "
+            "Reply with valid JSON only, no markdown fence, no prose."
+        ),
+        grader=_grade_request_parse,
+        grader_explainer="JSON with action=read, entity=invoices, filters contain overdue + ACME-42, output=csv",
+        max_output_tokens=300,
+    ),
+    TestCase(
+        name="json_flight_extract",
+        category="structured",
+        prompt=(
+            "Extract structured data from this booking request: "
+            "'Book the 8:30am ORD to LAX on United for Mr. James Smith, frequent flyer 4429-XK.' "
+            "Output a JSON object matching: {airline: string, flight: {origin: string, destination: string, "
+            "departure_time: string in HH:MM format}, passenger: {first_name: string, last_name: string, "
+            "title: string, ff_number: string}}. Reply with JSON only, no markdown fence."
+        ),
+        grader=_grade_flight_extract,
+        grader_explainer="JSON with airline=United, ORD->LAX, 8:30, Smith, 4429-XK",
+        max_output_tokens=400,
+    ),
+    TestCase(
+        name="json_function_schema",
+        category="structured",
+        prompt=(
+            "Generate the JSON Schema for an OpenAI function-calling parameters object for a function named "
+            "schedule_meeting. Parameters: title (string, required), participants (array of strings, required), "
+            "duration_minutes (integer, min 15), location (string, optional). Output a JSON object with a top-"
+            "level 'parameters' key whose value is the JSON Schema (type=object, properties, required). "
+            "Reply with JSON only, no markdown fence, no prose."
+        ),
+        grader=_grade_function_schema,
+        grader_explainer="JSON has parameters.type=object, properties has 4 fields, required contains title+participants",
+        max_output_tokens=500,
+    ),
+    TestCase(
+        name="json_review_extract",
+        category="structured",
+        prompt=(
+            "From this review extract structured data: 'The Eternal Drift movie was visually stunning with great "
+            "cinematography but the pacing dragged in act two, ultimately 7 out of 10.' "
+            "Output JSON: {title: string, score: number 0-10, pros: array of strings, cons: array of strings}. "
+            "JSON only, no markdown fence."
+        ),
+        grader=_grade_review_extract,
+        grader_explainer="JSON: title=The Eternal Drift, score=7, ≥1 pro, ≥1 con",
+        max_output_tokens=400,
+    ),
+    # --- Hard structured output (modeled on YBM pydantic schemas) ---
+    TestCase(
+        name="json_intent_classify",
+        category="structured_hard",
+        prompt=(
+            "You are a router for a local agent-control bot. Classify this user message into JSON matching:\n"
+            "{\n"
+            "  \"is_task\": boolean,\n"
+            "  \"task_type\": one of [development, configuration, admin_control, desktop_observation, question, status_request, other],\n"
+            "  \"normalized_objective\": string or null,\n"
+            "  \"confidence\": number 0.0-1.0,\n"
+            "  \"reason\": string (one sentence),\n"
+            "  \"intent\": {\n"
+            "    \"route\": one of [conversation, status, desktop.observe, computer.use, browser.open, browser.control, filesystem.manage, document.manage, artifact.deliver, code.interpreter, coding.agent, schedule.manage, configuration, unknown],\n"
+            "    \"objective\": string or null,\n"
+            "    \"url\": string or null,\n"
+            "    \"folder_path\": string or null,\n"
+            "    \"file_path\": string or null,\n"
+            "    \"page_limit\": integer or null,\n"
+            "    \"delivery\": one of [none, latest, file, screenshot],\n"
+            "    \"needs_plan_first\": boolean\n"
+            "  } or null\n"
+            "}\n\n"
+            "Rule: anything browser/file/automation/code → task_type=other (the specific route lives in intent.route).\n\n"
+            "User message: \"Open chrome go to news.ycombinator.com take a screenshot of the front page and send it to me.\"\n\n"
+            "Reply with JSON only, no markdown fence, no prose."
+        ),
+        grader=_grade_intent_classify,
+        grader_explainer="is_task=true, task_type=other, route=browser.open, url has ycombinator, delivery=screenshot, nested intent shape",
+        max_output_tokens=600,
+    ),
+    TestCase(
+        name="json_plan_orchestration",
+        category="structured_hard",
+        prompt=(
+            "Generate a JSON execution plan for: \"Take a screenshot of the current desktop and send it to me.\"\n\n"
+            "Schema:\n"
+            "{\n"
+            "  \"objective\": string,\n"
+            "  \"assumptions\": array of strings,\n"
+            "  \"required_capabilities\": array of capability strings (from: telegram.send, llm.generate, vscode.read_state, terminal.run, filesystem.read, filesystem.write, desktop.screenshot, desktop.control, browser.open, browser.control, schedule.manage, github.read, github.push, dependencies.install),\n"
+            "  \"steps\": array of {\n"
+            "    \"title\": string,\n"
+            "    \"description\": string,\n"
+            "    \"required_capabilities\": array of capability strings (subset of the plan's top-level required_capabilities),\n"
+            "    \"risk_level\": one of [low, medium, high, critical],\n"
+            "    \"requires_approval\": boolean,\n"
+            "    \"tool_name\": string,\n"
+            "    \"tool_input\": object,\n"
+            "    \"expected_output\": string\n"
+            "  },\n"
+            "  \"success_criteria\": array of strings,\n"
+            "  \"approval_gates\": array of {capability: string, risk_level: enum, summary: string}\n"
+            "}\n\n"
+            "Hard constraints:\n"
+            "- The plan MUST include at least one step using desktop.screenshot AND at least one using telegram.send.\n"
+            "- Each step's required_capabilities MUST be a subset of the plan's top-level required_capabilities.\n"
+            "- desktop.screenshot and telegram.send are both risk_level=low and do NOT require approval.\n\n"
+            "Reply with JSON only, no markdown fence, no prose."
+        ),
+        grader=_grade_plan_orchestration,
+        grader_explainer="Valid PlanModel with screenshot+send caps, ≥2 steps, capability-subset constraint holds",
+        max_output_tokens=1200,
+    ),
+    TestCase(
+        name="json_approval_decision",
+        category="structured_hard",
+        prompt=(
+            "A user wants to delete the file C:\\Users\\me\\Documents\\proposal_draft.docx. "
+            "This is a destructive action on a user document. Generate a cautious approval decision as JSON:\n\n"
+            "{\n"
+            "  \"decision\": one of [approve, reject, needs_clarification],\n"
+            "  \"risk_level\": one of [low, medium, high, critical],\n"
+            "  \"reasons\": array of at least 2 strings,\n"
+            "  \"required_capabilities\": array of strings (from: filesystem.read, filesystem.write, filesystem.delete, telegram.send),\n"
+            "  \"mitigations\": array of strings (can be empty),\n"
+            "  \"alternative_action\": object with {action: string, rationale: string} OR null,\n"
+            "  \"needs_user_confirmation\": boolean,\n"
+            "  \"confirmation_prompt\": string OR null\n"
+            "}\n\n"
+            "Hard constraint: confirmation_prompt MUST be a non-empty string when needs_user_confirmation=true, "
+            "and MUST be null when needs_user_confirmation=false.\n\n"
+            "Reply with JSON only, no markdown fence, no prose."
+        ),
+        grader=_grade_approval_decision,
+        grader_explainer="Cautious decision (reject/needs_clarification), high risk, ≥2 reasons, conditional confirmation_prompt holds",
+        max_output_tokens=600,
+    ),
+    TestCase(
+        name="json_multi_task_extract",
+        category="structured_hard",
+        prompt=(
+            "Extract a task list from this user message:\n"
+            "\"Hey can you do these: Watch my Downloads folder for new PDFs and send a summary of each one to me. "
+            "Also schedule a daily 9am report on yesterday's commits in my github.com/iodriller/LocalDeploy repo. "
+            "Don't bother me about Codex or anything advanced.\"\n\n"
+            "Schema:\n"
+            "{\n"
+            "  \"tasks\": array of {\n"
+            "    \"id\": integer (sequential starting at 1),\n"
+            "    \"objective\": string (concise),\n"
+            "    \"route\": one of [filesystem.manage, document.manage, schedule.manage, browser.open, coding.agent],\n"
+            "    \"trigger\": {kind: one of [immediate, watch, schedule], details: string},\n"
+            "    \"delivery\": one of [none, latest, file, screenshot],\n"
+            "    \"constraints\": array of strings (user's negative constraints)\n"
+            "  },\n"
+            "  \"ignored_instructions\": array of strings (instructions you cannot fulfill, can be empty)\n"
+            "}\n\n"
+            "Reply with JSON only, no markdown fence, no prose."
+        ),
+        grader=_grade_multi_task_extract,
+        grader_explainer="2 tasks: one fs/doc watch + one schedule.manage with 9am/daily, Codex constraint preserved",
+        max_output_tokens=900,
+    ),
+]
+
+
+# ---------------------------------------------------------------------------
+# Runtime
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class TestResult:
+    name: str
+    category: str
+    success: bool
+    elapsed_seconds: float
+    response_length: int
+    response_preview: str
+    accuracy: float
+    error: Optional[str] = None
+    warning: Optional[str] = None
+    approx_tokens_per_second: Optional[float] = None
+
+
+@dataclass
+class ProfileResult:
+    profile: str
+    model_id: str
+    backend: str
+    enabled: bool
+    recommended_for_8gb_vram: Any
+    vram_before_mb: Optional[int]
+    vram_after_mb: Optional[int]
+    vram_peak_mb: Optional[int]
+    tests: List[TestResult] = field(default_factory=list)
+    fits_in_vram: bool = True
+    notes: List[str] = field(default_factory=list)
+
+
+def nvidia_smi_used_mb() -> Optional[int]:
+    try:
+        output = subprocess.check_output(
+            ["nvidia-smi", "--query-gpu=memory.used", "--format=csv,noheader,nounits"],
+            stderr=subprocess.STDOUT,
+            timeout=5,
+        )
+    except (FileNotFoundError, subprocess.SubprocessError):
+        return None
+    try:
+        return int(output.decode("ascii", errors="ignore").strip().splitlines()[0].strip())
+    except (ValueError, IndexError):
+        return None
+
+
+_THINK_BLOCK = re.compile(r"<think>.*?</think>", flags=re.DOTALL | re.IGNORECASE)
+
+
+def strip_thinking_tags(text: str) -> str:
+    """Remove <think>...</think> blocks emitted by reasoning models (Qwen3, DeepSeek-R1).
+
+    Leaves the final answer that comes after the last </think>. If the response is just
+    thinking with no </think> close (truncated), returns the original so the grader sees
+    something rather than empty.
+    """
+    if "</think>" in text.lower():
+        cleaned = _THINK_BLOCK.sub("", text).strip()
+        return cleaned if cleaned else text
+    return text
+
+
+def call_chat(base_url: str, profile_name: str, profile_cfg: Dict[str, Any], test: TestCase, timeout: int) -> Dict[str, Any]:
+    suffix = str(profile_cfg.get("prompt_suffix") or "")
+    prompt = test.prompt + (("\n\n" + suffix) if suffix else "")
+    payload = {
+        "profile": profile_name,
+        "prompt": prompt,
+        "safe_mode": True,
+        "max_output_tokens": test.max_output_tokens,
+    }
+    try:
+        response = requests.post(f"{base_url}/chat", json=payload, timeout=timeout + 10)
+    except requests.Timeout:
+        return {"success": False, "error": f"client-side timeout after {timeout}s", "elapsed_seconds": float(timeout)}
+    except requests.ConnectionError:
+        return {"success": False, "error": f"could not reach {base_url}", "elapsed_seconds": 0.0}
+    try:
+        data = response.json()
+    except ValueError:
+        return {"success": False, "error": f"HTTP {response.status_code}: {response.text[:200]}", "elapsed_seconds": 0.0}
+
+    # Strip <think> blocks if the profile is a reasoning model — the answer lives
+    # after </think> for these. Leave the raw response intact when not requested.
+    if profile_cfg.get("strip_thinking_tags") and isinstance(data.get("response"), str):
+        data["response"] = strip_thinking_tags(data["response"])
+    return data
+
+
+def run_profile(base_url: str, profile_name: str, profile: Dict[str, Any], tests: List[TestCase], timeout: int) -> ProfileResult:
+    print(f"\n=== {profile_name} ({profile.get('model_id')}) ===", flush=True)
+    vram_before = nvidia_smi_used_mb()
+    print(f"  VRAM before: {vram_before} MB" if vram_before is not None else "  VRAM before: unavailable", flush=True)
+
+    result = ProfileResult(
+        profile=profile_name,
+        model_id=str(profile.get("model_id") or ""),
+        backend=str(profile.get("backend") or ""),
+        enabled=bool(profile.get("enabled", False)),
+        recommended_for_8gb_vram=profile.get("recommended_for_8gb_vram"),
+        vram_before_mb=vram_before,
+        vram_after_mb=None,
+        vram_peak_mb=vram_before,
+    )
+
+    consecutive_fail = 0
+    for test in tests:
+        started = time.perf_counter()
+        data = call_chat(base_url, profile_name, profile, test, timeout)
+        elapsed = float(data.get("elapsed_seconds") or (time.perf_counter() - started))
+        raw_resp = data.get("response")
+        response_text = raw_resp if isinstance(raw_resp, str) else json.dumps(raw_resp or "", ensure_ascii=False)
+        response_text = str(response_text or "")
+        success = bool(data.get("success"))
+        try:
+            accuracy = test.grader(response_text) if success else 0.0
+        except Exception as exc:  # grader bug should not crash the run
+            accuracy = 0.0
+            print(f"  WARN grader for {test.name} raised: {exc}", flush=True)
+        approx_tps = ((len(response_text) / 4) / elapsed) if success and elapsed > 0 else None
+
+        vram_now = nvidia_smi_used_mb()
+        if vram_now is not None and (result.vram_peak_mb is None or vram_now > result.vram_peak_mb):
+            result.vram_peak_mb = vram_now
+
+        item = TestResult(
+            name=test.name,
+            category=test.category,
+            success=success,
+            elapsed_seconds=round(elapsed, 3),
+            response_length=len(response_text),
+            response_preview=response_text[:240].replace("\n", " "),
+            accuracy=round(accuracy, 3),
+            error=data.get("error"),
+            warning=data.get("warning"),
+            approx_tokens_per_second=round(approx_tps, 2) if approx_tps is not None else None,
+        )
+        result.tests.append(item)
+
+        status = "PASS" if success else "FAIL"
+        acc_label = f"acc={accuracy:.2f}" if success else "acc=n/a"
+        tps_label = f"~{approx_tps:.1f} tok/s" if approx_tps else ""
+        err_label = f" ({data.get('error')})" if not success else ""
+        print(
+            f"  [{status}] {test.category:14} {test.name:26} {elapsed:6.2f}s  {acc_label}  {tps_label}{err_label}",
+            flush=True,
+        )
+
+        if not success:
+            consecutive_fail += 1
+            err_text = str(data.get("error") or "").lower()
+            if any(k in err_text for k in ("memory", "cuda", "out of memory")):
+                result.fits_in_vram = False
+                result.notes.append(f"OOM-like failure on {test.name}")
+            if "not available" in err_text or "not found" in err_text or "pull" in err_text:
+                result.notes.append(f"Model not pulled: {data.get('error')}")
+                break
+            if consecutive_fail >= 4:
+                result.notes.append(f"Aborted after 4 consecutive failures starting at {test.name}.")
+                break
+        else:
+            consecutive_fail = 0
+
+    result.vram_after_mb = nvidia_smi_used_mb()
+    print(f"  VRAM after:  {result.vram_after_mb} MB  peak: {result.vram_peak_mb} MB", flush=True)
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Reporting
+# ---------------------------------------------------------------------------
+
+
+def category_summary(tests: List[TestResult]) -> Dict[str, Dict[str, float]]:
+    out: Dict[str, Dict[str, float]] = {}
+    for cat in {t.category for t in tests}:
+        subset = [t for t in tests if t.category == cat]
+        successes = [t for t in subset if t.success]
+        elapsed = [t.elapsed_seconds for t in successes]
+        accs = [t.accuracy for t in subset]
+        out[cat] = {
+            "n": len(subset),
+            "passed": len(successes),
+            "avg_elapsed_seconds": round(statistics.mean(elapsed), 3) if elapsed else 0.0,
+            "avg_accuracy": round(statistics.mean(accs), 3) if accs else 0.0,
+        }
+    return out
+
+
+def write_reports(results: List[ProfileResult], run_meta: Dict[str, Any]) -> Tuple[Path, Path]:
+    REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H%M%SZ")
+    json_path = REPORTS_DIR / f"benchmark_{stamp}.json"
+    md_path = REPORTS_DIR / f"benchmark_{stamp}.md"
+
+    payload = {
+        "meta": run_meta,
+        "results": [
+            {**asdict(p), "tests": [asdict(t) for t in p.tests], "category_summary": category_summary(p.tests)}
+            for p in results
+        ],
+    }
+    json_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    lines: List[str] = [
+        f"# LocalDeploy benchmark v2 — {stamp}",
+        "",
+        f"- GPU: `{run_meta.get('gpu_name')}` ({run_meta.get('gpu_total_mb')} MB total)",
+        f"- API: `{run_meta.get('base_url')}`",
+        f"- Test cases per profile: {run_meta.get('test_count')}",
+        f"- Total elapsed: {run_meta.get('elapsed_seconds')}s",
+        "",
+        "## Categories",
+        "",
+        "- **planning** — software-project decomposition (3 tests)",
+        "- **classification** — multi-class label with ambiguity (5 tests)",
+        "- **code** — non-trivial Python + SQL, graded by AST + unit tests (4 tests)",
+        "- **math** — multi-step arithmetic, algebra, probability, matrices (5 tests)",
+        "- **structured** — JSON-schema-shaped output, field-level grading (4 tests)",
+        "",
+        "## Overall scoreboard",
+        "",
+        "| Profile | Model | Pass | Avg accuracy | Avg latency | Peak VRAM | Verdict |",
+        "|---|---|---:|---:|---:|---:|---|",
+    ]
+
+    def overall_acc(p: ProfileResult) -> float:
+        accs = [t.accuracy for t in p.tests if t.success]
+        return statistics.mean(accs) if accs else 0.0
+
+    for p in sorted(results, key=lambda x: (-overall_acc(x), -sum(1 for t in x.tests if t.success))):
+        passed = sum(1 for t in p.tests if t.success)
+        total = len(p.tests)
+        accs = [t.accuracy for t in p.tests if t.success]
+        avg_acc = statistics.mean(accs) if accs else 0.0
+        lat = [t.elapsed_seconds for t in p.tests if t.success]
+        avg_lat = statistics.mean(lat) if lat else 0.0
+        peak = p.vram_peak_mb or 0
+        if not p.fits_in_vram:
+            verdict = "OOM"
+        elif passed == 0:
+            verdict = "not pulled / unreachable"
+        elif passed == total:
+            verdict = "fits"
+        else:
+            verdict = f"partial ({passed}/{total})"
+        lines.append(
+            f"| `{p.profile}` | `{p.model_id}` | {passed}/{total} | "
+            f"{avg_acc:.2f} | {avg_lat:.2f}s | {peak} MB | {verdict} |"
+        )
+
+    # Category-by-model breakdown
+    lines.extend(["", "## Per-category accuracy (avg, per profile)", "", "| Profile | planning | classification | code | math | structured |", "|---|---:|---:|---:|---:|---:|"])
+    for p in results:
+        cs = category_summary(p.tests)
+        cells = [f"`{p.profile}`"]
+        for cat in ("planning", "classification", "code", "math", "structured"):
+            s = cs.get(cat, {"avg_accuracy": 0.0, "n": 0})
+            cells.append(f"{s['avg_accuracy']:.2f}" if s.get("n", 0) else "-")
+        lines.append("| " + " | ".join(cells) + " |")
+
+    lines.append("")
+    for p in results:
+        lines.append(f"## `{p.profile}`")
+        lines.append("")
+        lines.append(f"- Model: `{p.model_id}` ({p.backend}) — recommended_for_8gb_vram: `{p.recommended_for_8gb_vram}`")
+        lines.append(f"- VRAM: before {p.vram_before_mb} MB, peak {p.vram_peak_mb} MB, after {p.vram_after_mb} MB")
+        if p.notes:
+            for note in p.notes:
+                lines.append(f"- Note: {note}")
+        lines.append("")
+        cs = category_summary(p.tests)
+        lines.append("| Category | n | passed | avg latency | avg accuracy |")
+        lines.append("|---|---:|---:|---:|---:|")
+        for cat, s in sorted(cs.items()):
+            lines.append(f"| {cat} | {int(s['n'])} | {int(s['passed'])} | {s['avg_elapsed_seconds']}s | {s['avg_accuracy']} |")
+        lines.append("")
+        lines.append("| Test | Result | Latency | tok/s | Accuracy | Response preview |")
+        lines.append("|---|---|---:|---:|---:|---|")
+        for t in p.tests:
+            status = "PASS" if t.success else "FAIL"
+            tps = f"{t.approx_tokens_per_second}" if t.approx_tokens_per_second else "-"
+            preview = (t.response_preview or t.error or "").replace("|", "\\|")[:160]
+            lines.append(f"| {t.name} | {status} | {t.elapsed_seconds}s | {tps} | {t.accuracy} | {preview} |")
+        lines.append("")
+
+    md_path.write_text("\n".join(lines), encoding="utf-8")
+    return json_path, md_path
+
+
+def gpu_info() -> Dict[str, Any]:
+    try:
+        output = subprocess.check_output(
+            ["nvidia-smi", "--query-gpu=name,memory.total", "--format=csv,noheader,nounits"],
+            stderr=subprocess.STDOUT,
+            timeout=5,
+        ).decode("ascii", errors="ignore").strip().splitlines()[0]
+        name, total = [x.strip() for x in output.split(",", 1)]
+        return {"gpu_name": name, "gpu_total_mb": int(total)}
+    except Exception:
+        return {"gpu_name": None, "gpu_total_mb": None}
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="LocalDeploy capability benchmark (v2).")
+    parser.add_argument("--profile", action="append", help="Limit to one or more named profiles (repeatable).")
+    parser.add_argument("--max-output-tokens", type=int, help="Bump all non-classification tests to this cap (if higher).")
+    parser.add_argument("--timeout", type=int, default=240, help="Per-request timeout seconds.")
+    parser.add_argument("--skip-categories", help="Comma-separated categories to skip.")
+    parser.add_argument("--include-categories", help="Comma-separated categories to ONLY include (whitelist).")
+    args = parser.parse_args()
+
+    config = load_config()
+    profiles = config.get("profiles", {})
+    selected = args.profile or [name for name, p in profiles.items() if p.get("enabled", False)]
+    selected = [name for name in selected if name in profiles]
+    if not selected:
+        print("No profiles selected. Enable some in config.json or pass --profile NAME.")
+        return 2
+
+    skip = {c.strip() for c in (args.skip_categories or "").split(",") if c.strip()}
+    include = {c.strip() for c in (args.include_categories or "").split(",") if c.strip()}
+    tests = [t for t in TEST_CASES if t.category not in skip and (not include or t.category in include)]
+    if args.max_output_tokens:
+        for t in tests:
+            if t.category != "classification":
+                t.max_output_tokens = max(t.max_output_tokens, args.max_output_tokens)
+
+    base_url = api_base_url()
+    try:
+        health = requests.get(f"{base_url}/health", timeout=10).json()
+    except Exception as exc:
+        print(f"API server is not reachable at {base_url}: {exc}")
+        print("Start it with: .\\scripts\\start.ps1 -Background  (or API_PORT=8011 python api_server.py)")
+        return 2
+    if not health.get("server"):
+        print(f"API server at {base_url} returned unexpected health: {health}")
+        return 2
+
+    print(f"Profiles selected ({len(selected)}): {', '.join(selected)}")
+    print(f"Tests per profile: {len(tests)}")
+    print(f"Timeout: {args.timeout}s per request")
+
+    info = gpu_info()
+    run_meta = {
+        "base_url": base_url,
+        "default_profile": health.get("default_profile"),
+        "test_count": len(tests),
+        "tests": [t.name for t in tests],
+        "categories": sorted({t.category for t in tests}),
+        **info,
+    }
+
+    started = time.perf_counter()
+    results: List[ProfileResult] = []
+    for name in selected:
+        result = run_profile(base_url, name, profiles[name], tests, args.timeout)
+        results.append(result)
+
+    elapsed = time.perf_counter() - started
+    run_meta["elapsed_seconds"] = round(elapsed, 2)
+
+    json_path, md_path = write_reports(results, run_meta)
+    print(f"\nReports written:\n  {json_path}\n  {md_path}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

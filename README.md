@@ -155,6 +155,8 @@ Edit `config.json` to enable, disable, or tune model profiles. The example confi
 
 For smaller GPUs, start with lower context limits and smaller output limits. Larger models may work but can be slower or memory constrained.
 
+See [docs/MODELS.md](docs/MODELS.md) for a full catalog of recommended models, quantizations, and KV-cache settings tuned for 8 GB VRAM.
+
 ## llama.cpp Optional Mode
 
 llama.cpp is not required for Ollama usage. Enable it only after starting a local `llama-server` and setting:

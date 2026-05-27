@@ -31,11 +31,13 @@ Start the server if it is not already running:
 .\scripts\chat.ps1 -StartServer -Prompt "Say ready."
 ```
 
-Use the 12B profile:
+Use a specific profile (pass the profile name from `config.json`):
 
 ```powershell
-.\scripts\chat.ps1 -Profile gemma3_12b_ollama_safe -Prompt "Answer in one paragraph: what are you best at?"
+.\scripts\chat.ps1 -ProfileName gemma3_12b_ollama_safe -Prompt "Answer in one paragraph: what are you best at?"
 ```
+
+If `-ProfileName` is omitted, the script falls back to the `DEFAULT_MODEL_PROFILE` env var, then to the profile configured in `config.json`.
 
 Show the full JSON response:
 

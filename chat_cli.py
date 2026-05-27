@@ -147,7 +147,7 @@ def repl(args: argparse.Namespace) -> int:
     print("LocalDeploy terminal chat")
     print("Type a prompt and press Enter. Commands: :quit, :profiles, :profile NAME, :tokens N, :raw, :help")
     print(f"Server: {args.base_url}")
-    print(f"Profile: {args.profile}")
+    print(f"Profile: {args.profile or '(server default)'}")
     print()
 
     profile = args.profile
@@ -203,7 +203,11 @@ def repl(args: argparse.Namespace) -> int:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Simple terminal chat client for LocalDeploy.")
     parser.add_argument("--base-url", default=default_base_url(), help="LocalDeploy API base URL.")
-    parser.add_argument("--profile", default=os.getenv("DEFAULT_MODEL_PROFILE", "gemma3_4b_ollama_safe"))
+    parser.add_argument(
+        "--profile",
+        default=os.getenv("DEFAULT_MODEL_PROFILE"),
+        help="Profile name from config.json. If omitted, the server selects its configured default.",
+    )
     parser.add_argument("--prompt", help="One-shot prompt. If omitted, starts interactive chat.")
     parser.add_argument("--max-output-tokens", type=int, default=256)
     parser.add_argument("--temperature", type=float)

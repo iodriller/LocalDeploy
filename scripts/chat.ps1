@@ -1,6 +1,6 @@
 param(
     [string]$Prompt,
-    [string]$Profile = "gemma3_12b_ollama_safe",
+    [string]$ProfileName,
     [int]$MaxOutputTokens = 768,
     [switch]$Raw,
     [switch]$Profiles,
@@ -16,7 +16,10 @@ if (-not (Test-Path -LiteralPath $Python)) {
     $Python = "python"
 }
 
-$argsList = @("chat_cli.py", "--profile", $Profile, "--max-output-tokens", [string]$MaxOutputTokens)
+$argsList = @("chat_cli.py", "--max-output-tokens", [string]$MaxOutputTokens)
+if ($ProfileName) {
+    $argsList += @("--profile", $ProfileName)
+}
 if ($Prompt) {
     $argsList += @("--prompt", $Prompt)
 }

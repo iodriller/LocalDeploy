@@ -7,15 +7,26 @@ import os
 import re
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
-from urllib.parse import urlparse
+from typing import Any, Dict, Iterator, List, Optional, Tuple
 
-import requests
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
+
+from localdeploy.backends.llamacpp import call_llamacpp, llama_health
+from localdeploy.backends.ollama import call_ollama, ollama_models, stream_ollama
+from localdeploy.utils import (
+    BackendCallError,
+    env_bool,
+    env_float,
+    env_int,
+    get_backend_base_url,
+    model_dump_compat,
+    model_validate_compat,
+    require_gpu_only,
+)
 
 
 APP_DIR = Path(__file__).resolve().parent
@@ -35,7 +46,6 @@ class ChatRequest(BaseModel):
     context_limit: Optional[int] = None
     safe_mode: bool = True
     allow_clamp: bool = False
-    stream: bool = False
     timeout_seconds: Optional[int] = None
 
 
@@ -91,53 +101,6 @@ class LocalLLMResponse(BaseModel):
     error: Optional[str] = None
 
 
-class BackendCallError(Exception):
-    pass
-
-
-def env_bool(name: str, default: bool = False) -> bool:
-    value = os.getenv(name)
-    if value is None:
-        return default
-    return value.strip().lower() in {"1", "true", "yes", "y", "on"}
-
-
-def require_gpu_only() -> bool:
-    return env_bool("REQUIRE_GPU_ONLY", False)
-
-
-def env_int(name: str, default: int) -> int:
-    value = os.getenv(name)
-    if value is None or not str(value).strip():
-        return default
-    try:
-        return int(value)
-    except ValueError:
-        return default
-
-
-def env_float(name: str, default: float) -> float:
-    value = os.getenv(name)
-    if value is None or not str(value).strip():
-        return default
-    try:
-        return float(value)
-    except ValueError:
-        return default
-
-
-def model_dump_compat(model: BaseModel) -> Dict[str, Any]:
-    if hasattr(model, "model_dump"):
-        return model.model_dump()
-    return model.dict()
-
-
-def model_validate_compat(model_cls: Any, data: Dict[str, Any]) -> BaseModel:
-    if hasattr(model_cls, "model_validate"):
-        return model_cls.model_validate(data)
-    return model_cls(**data)
-
-
 def get_config_path() -> Path:
     configured = os.getenv("CONFIG_PATH", "config.json")
     path = Path(configured)
@@ -163,34 +126,6 @@ def get_global_limits() -> Dict[str, Any]:
         "request_timeout_seconds": env_int("REQUEST_TIMEOUT_SECONDS", 180),
         "slow_response_seconds": env_int("SLOW_RESPONSE_SECONDS", 60),
     }
-
-
-def is_loopback_url(base_url: str) -> bool:
-    try:
-        parsed = urlparse(base_url)
-    except Exception:
-        return False
-    hostname = (parsed.hostname or "").lower()
-    return parsed.scheme in {"http", "https"} and hostname in {"localhost", "127.0.0.1", "::1"}
-
-
-def strip_trailing_slash(url: str) -> str:
-    return url.rstrip("/")
-
-
-def get_backend_base_url(profile: Dict[str, Any], backend: str) -> str:
-    if backend == "ollama":
-        base_url = profile.get("base_url") or os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-    elif backend == "llamacpp":
-        base_url = profile.get("base_url") or os.getenv("LLAMACPP_BASE_URL", "http://localhost:8080")
-    else:
-        raise BackendCallError(f"Unsupported backend '{backend}'.")
-    base_url = strip_trailing_slash(str(base_url))
-    if not is_loopback_url(base_url):
-        raise BackendCallError(
-            f"Refusing to call non-local backend URL '{base_url}'. Only localhost or 127.0.0.1 are allowed."
-        )
-    return base_url
 
 
 def profile_warning(profile: Dict[str, Any]) -> Optional[str]:
@@ -406,7 +341,6 @@ def openai_request_to_local_payload(request_model: OpenAIChatCompletionRequest) 
         "context_limit": request_model.context_limit,
         "safe_mode": request_model.safe_mode,
         "allow_clamp": request_model.allow_clamp,
-        "stream": request_model.stream,
         "timeout_seconds": request_model.timeout_seconds,
     }
     if model_override:
@@ -486,9 +420,6 @@ def prepare_request(
     estimated_prompt_tokens = estimate_tokens_from_chars(estimated_prompt_chars)
     allow_clamp = bool(data.get("allow_clamp", False))
     safe_mode = bool(data.get("safe_mode", True))
-
-    if data.get("stream"):
-        errors.append("Streaming is not implemented in this local server yet. Set stream=false.")
 
     profile_prompt_limit = int(profile.get("max_prompt_chars") or limits["max_prompt_chars"])
     prompt_limit = min(profile_prompt_limit, int(limits["max_prompt_chars"]))
@@ -636,180 +567,6 @@ def make_success_response(prepared: Dict[str, Any], content: Any, elapsed_second
             error=None,
         )
     )
-
-
-def options_payload(prepared: Dict[str, Any]) -> Dict[str, Any]:
-    options: Dict[str, Any] = {
-        "num_ctx": prepared["context_limit_used"],
-        "num_predict": prepared["max_output_tokens_used"],
-    }
-    for key in ("temperature", "top_p", "repeat_penalty"):
-        if prepared.get(key) is not None:
-            options[key] = prepared[key]
-    return options
-
-
-def ollama_error_message(response: requests.Response, model_id: str) -> str:
-    body = response.text.strip()
-    try:
-        parsed = response.json()
-        body = parsed.get("error") or body
-    except Exception:
-        pass
-    lowered = body.lower()
-    if response.status_code == 404 or "not found" in lowered or "pull" in lowered:
-        return f"Ollama model '{model_id}' is not available. Run: ollama pull {model_id}. Details: {body}"
-    if "out of memory" in lowered or "cuda" in lowered or "memory" in lowered:
-        return f"Ollama reported a memory-related failure. Lower context/output limits or use a smaller profile. Details: {body}"
-    return f"Ollama request failed with HTTP {response.status_code}. Details: {body}"
-
-
-def call_ollama(prepared: Dict[str, Any]) -> str:
-    if require_gpu_only():
-        raise BackendCallError("GPU-only mode is enabled; refusing to call Ollama.")
-    profile = prepared["profile"]
-    base_url = get_backend_base_url(profile, "ollama")
-    messages: List[Dict[str, Any]] = []
-    if prepared["system_prompt"]:
-        messages.append({"role": "system", "content": prepared["system_prompt"]})
-    user_message: Dict[str, Any] = {"role": "user", "content": prepared["prompt"]}
-    if prepared["images_base64"]:
-        user_message["images"] = prepared["images_base64"]
-    messages.append(user_message)
-
-    payload = {
-        "model": prepared["model"],
-        "messages": messages,
-        "stream": False,
-        "options": options_payload(prepared),
-    }
-    try:
-        response = requests.post(f"{base_url}/api/chat", json=payload, timeout=prepared["timeout_seconds"])
-    except requests.Timeout as exc:
-        raise BackendCallError(
-            f"Ollama request timed out after {prepared['timeout_seconds']} seconds. Lower context/output limits or try a smaller profile."
-        ) from exc
-    except requests.ConnectionError as exc:
-        raise BackendCallError(f"Ollama is not running or is unreachable at {base_url}. Start Ollama and retry.") from exc
-
-    if not response.ok:
-        raise BackendCallError(ollama_error_message(response, prepared["model"]))
-
-    try:
-        data = response.json()
-    except Exception as exc:
-        raise BackendCallError(f"Ollama returned invalid JSON: {response.text[:500]}") from exc
-
-    if isinstance(data.get("message"), dict):
-        return str(data["message"].get("content", ""))
-    if "response" in data:
-        return str(data.get("response", ""))
-    return json.dumps(data, ensure_ascii=False)
-
-
-def gguf_path_exists(model_id: str) -> bool:
-    if not model_id.lower().endswith(".gguf"):
-        return True
-    return Path(model_id).expanduser().exists()
-
-
-def llama_cpp_error_message(response: requests.Response) -> str:
-    body = response.text.strip()
-    try:
-        parsed = response.json()
-        body = parsed.get("error") or parsed.get("message") or body
-    except Exception:
-        pass
-    lowered = str(body).lower()
-    if "out of memory" in lowered or "cuda" in lowered or "memory" in lowered:
-        return f"llama.cpp reported a memory-related failure. Lower context/output limits or reduce GPU layers. Details: {body}"
-    return f"llama.cpp request failed with HTTP {response.status_code}. Details: {body}"
-
-
-def llama_completion_prompt(system_prompt: str, prompt: str) -> str:
-    parts: List[str] = []
-    if system_prompt:
-        parts.append(f"System:\n{system_prompt}")
-    parts.append(f"User:\n{prompt}")
-    parts.append("Assistant:")
-    return "\n\n".join(parts)
-
-
-def call_llamacpp(prepared: Dict[str, Any]) -> str:
-    profile = prepared["profile"]
-    model_id = prepared["model"]
-    if not gguf_path_exists(model_id):
-        raise BackendCallError(f"GGUF file path not found: {model_id}. Update config.json or start the matching local llama-server.")
-
-    base_url = get_backend_base_url(profile, "llamacpp")
-    messages: List[Dict[str, str]] = []
-    if prepared["system_prompt"]:
-        messages.append({"role": "system", "content": prepared["system_prompt"]})
-    messages.append({"role": "user", "content": prepared["prompt"]})
-
-    openai_payload: Dict[str, Any] = {
-        "model": Path(model_id).stem if model_id.lower().endswith(".gguf") else model_id,
-        "messages": messages,
-        "temperature": prepared["temperature"],
-        "top_p": prepared["top_p"],
-        "max_tokens": prepared["max_output_tokens_used"],
-        "stream": False,
-    }
-    if prepared.get("repeat_penalty") is not None:
-        openai_payload["repeat_penalty"] = prepared["repeat_penalty"]
-
-    try:
-        response = requests.post(
-            f"{base_url}/v1/chat/completions",
-            json=openai_payload,
-            timeout=prepared["timeout_seconds"],
-        )
-    except requests.Timeout as exc:
-        raise BackendCallError(
-            f"llama.cpp request timed out after {prepared['timeout_seconds']} seconds. Lower context/output limits or GPU layers."
-        ) from exc
-    except requests.ConnectionError as exc:
-        raise BackendCallError(f"llama.cpp server is not running or is unreachable at {base_url}.") from exc
-
-    if response.status_code != 404:
-        if not response.ok:
-            raise BackendCallError(llama_cpp_error_message(response))
-        data = response.json()
-        try:
-            return str(data["choices"][0]["message"]["content"])
-        except Exception:
-            return json.dumps(data, ensure_ascii=False)
-
-    completion_payload = {
-        "prompt": llama_completion_prompt(prepared["system_prompt"], prepared["prompt"]),
-        "n_predict": prepared["max_output_tokens_used"],
-        "temperature": prepared["temperature"],
-        "top_p": prepared["top_p"],
-        "repeat_penalty": prepared["repeat_penalty"],
-        "stream": False,
-    }
-    try:
-        response = requests.post(
-            f"{base_url}/completion",
-            json=completion_payload,
-            timeout=prepared["timeout_seconds"],
-        )
-    except requests.Timeout as exc:
-        raise BackendCallError(
-            f"llama.cpp completion timed out after {prepared['timeout_seconds']} seconds. Lower context/output limits."
-        ) from exc
-    except requests.ConnectionError as exc:
-        raise BackendCallError(f"llama.cpp server is not running or is unreachable at {base_url}.") from exc
-
-    if not response.ok:
-        raise BackendCallError(llama_cpp_error_message(response))
-
-    data = response.json()
-    if "content" in data:
-        return str(data.get("content", ""))
-    if "response" in data:
-        return str(data.get("response", ""))
-    return json.dumps(data, ensure_ascii=False)
 
 
 def run_local_request(kind: str, request_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -975,36 +732,6 @@ def run_benchmark(request_data: Dict[str, Any]) -> Dict[str, Any]:
     )
 
 
-def ollama_models(base_url: str) -> Tuple[List[str], Optional[str]]:
-    if not is_loopback_url(base_url):
-        return [], f"Refusing non-local Ollama URL: {base_url}"
-    try:
-        response = requests.get(f"{strip_trailing_slash(base_url)}/api/tags", timeout=3)
-        response.raise_for_status()
-        data = response.json()
-        return [item.get("name", "") for item in data.get("models", []) if item.get("name")], None
-    except requests.ConnectionError:
-        return [], f"Ollama is not reachable at {base_url}."
-    except Exception as exc:
-        return [], str(exc)
-
-
-def llama_health(base_url: str) -> Dict[str, Any]:
-    if not is_loopback_url(base_url):
-        return {"reachable": False, "error": f"Refusing non-local llama.cpp URL: {base_url}"}
-    base_url = strip_trailing_slash(base_url)
-    for path in ("/health", "/v1/models"):
-        try:
-            response = requests.get(f"{base_url}{path}", timeout=2)
-            if response.ok:
-                return {"reachable": True, "endpoint": f"{base_url}{path}"}
-        except requests.ConnectionError:
-            return {"reachable": False, "error": f"llama.cpp is not reachable at {base_url}."}
-        except requests.Timeout:
-            return {"reachable": False, "error": f"llama.cpp health check timed out at {base_url}."}
-    return {"reachable": False, "error": f"llama.cpp did not answer /health or /v1/models at {base_url}."}
-
-
 def sanitize_profiles(config: Dict[str, Any]) -> Dict[str, Any]:
     sanitized: Dict[str, Any] = {}
     for name, profile in config.get("profiles", {}).items():
@@ -1051,6 +778,76 @@ def openai_error_response(result: Dict[str, Any]) -> JSONResponse:
             },
         },
     )
+
+
+def openai_sse_chunk(completion_id: str, model_name: str, delta: Dict[str, Any], finish_reason: Optional[str]) -> str:
+    payload = {
+        "id": completion_id,
+        "object": "chat.completion.chunk",
+        "created": int(time.time()),
+        "model": model_name,
+        "choices": [{"index": 0, "delta": delta, "finish_reason": finish_reason}],
+    }
+    return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
+
+def openai_sse_error(completion_id: str, model_name: str, message: str) -> str:
+    payload = {
+        "id": completion_id,
+        "object": "chat.completion.chunk",
+        "created": int(time.time()),
+        "model": model_name,
+        "choices": [{"index": 0, "delta": {}, "finish_reason": "error"}],
+        "error": {
+            "message": message,
+            "type": "localdeploy_error",
+            "code": "localdeploy_request_failed",
+        },
+    }
+    return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
+
+def openai_stream_response(request_model: OpenAIChatCompletionRequest) -> StreamingResponse:
+    completion_id = f"chatcmpl-localdeploy-{int(time.time() * 1000)}"
+    model_name = request_model.model
+
+    payload, has_images = openai_request_to_local_payload(request_model)
+    prepared, error_response = prepare_request("vision" if has_images else "chat", payload, require_enabled=True)
+
+    def emit() -> Iterator[str]:
+        if error_response:
+            yield openai_sse_error(completion_id, model_name, str(error_response.get("error") or "LocalDeploy request failed."))
+            yield "data: [DONE]\n\n"
+            return
+        assert prepared is not None
+
+        if prepared["backend"] != "ollama":
+            try:
+                content = call_llamacpp(prepared)
+            except BackendCallError as exc:
+                yield openai_sse_error(completion_id, model_name, str(exc))
+                yield "data: [DONE]\n\n"
+                return
+            yield openai_sse_chunk(completion_id, model_name, {"role": "assistant"}, None)
+            if content:
+                yield openai_sse_chunk(completion_id, model_name, {"content": content}, None)
+            yield openai_sse_chunk(completion_id, model_name, {}, "stop")
+            yield "data: [DONE]\n\n"
+            return
+
+        yield openai_sse_chunk(completion_id, model_name, {"role": "assistant"}, None)
+        try:
+            for chunk in stream_ollama(prepared):
+                if chunk:
+                    yield openai_sse_chunk(completion_id, model_name, {"content": chunk}, None)
+        except BackendCallError as exc:
+            yield openai_sse_error(completion_id, model_name, str(exc))
+            yield "data: [DONE]\n\n"
+            return
+        yield openai_sse_chunk(completion_id, model_name, {}, "stop")
+        yield "data: [DONE]\n\n"
+
+    return StreamingResponse(emit(), media_type="text/event-stream")
 
 
 def openai_chat_completion_response(request_model: OpenAIChatCompletionRequest, result: Dict[str, Any]) -> Dict[str, Any]:
@@ -1231,11 +1028,31 @@ def chat(request: ChatRequest) -> Dict[str, Any]:
 
 @app.post("/v1/chat/completions", response_model=None)
 def openai_chat_completions(request: OpenAIChatCompletionRequest) -> Any:
+    if request.stream:
+        return openai_stream_response(request)
     payload, has_images = openai_request_to_local_payload(request)
     result = run_local_request("vision" if has_images else "chat", payload)
     if not result.get("success"):
         return openai_error_response(result)
     return openai_chat_completion_response(request, result)
+
+
+@app.post("/v1/embeddings")
+def openai_embeddings(_request: Request) -> JSONResponse:
+    return JSONResponse(
+        status_code=501,
+        content={
+            "error": {
+                "message": (
+                    "LocalDeploy does not implement /v1/embeddings. "
+                    "Call Ollama directly at POST http://localhost:11434/api/embeddings, "
+                    "or run a dedicated embedding server."
+                ),
+                "type": "localdeploy_not_implemented",
+                "code": "embeddings_not_implemented",
+            }
+        },
+    )
 
 
 def parse_scalar(value: Any) -> Any:
