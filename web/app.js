@@ -8,10 +8,46 @@ const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 
 const state = {
   profiles: [],
+  profileModels: {},
   defaultProfile: null,
   freeVramMb: null,
   servedModels: [],
+  lastHardware: null,
+  lastRun: null,
+  cardA: null,
+  cardB: null,
 };
+
+function downloadFile(filename, content, mime) {
+  const blob = new Blob([content], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+// Extract a report card's JSON from an uploaded file (raw JSON or embedded HTML).
+function extractCard(text) {
+  try {
+    const j = JSON.parse(text);
+    if (j && (j.kind === "localdeploy.report_card" || Array.isArray(j.tests))) return j;
+  } catch {
+    /* not raw JSON; try embedded */
+  }
+  const m = text.match(/<script[^>]*id=["']localdeploy-card["'][^>]*>([\s\S]*?)<\/script>/);
+  if (m) {
+    try {
+      return JSON.parse(m[1].replace(/&amp;/g, "&"));
+    } catch {
+      /* fall through */
+    }
+  }
+  return null;
+}
 
 function esc(value) {
   return String(value ?? "").replace(/[&<>"']/g, (c) =>
@@ -134,6 +170,8 @@ async function loadProfiles() {
     const data = await getJSON("/profiles");
     const profiles = data.profiles || {};
     state.profiles = Object.keys(profiles);
+    state.profileModels = {};
+    state.profiles.forEach((name) => (state.profileModels[name] = profiles[name]?.model_id || name));
     state.defaultProfile = data.default_profile || state.profiles[0] || null;
     const options = state.profiles
       .map((name) => {
@@ -170,12 +208,14 @@ async function checkHardware() {
     const body = $("#hardware-body");
     if (!hw.gpu_available) {
       state.freeVramMb = null;
+      state.lastHardware = { gpu: null, vram_total_mb: null, vram_free_mb: null };
       body.innerHTML = `<div class="muted">${esc(hw.message || "No GPU detected.")}</div>
         <div class="muted small">Logical cores: ${esc(hw.system?.logical_cores ?? "?")}</div>`;
       return;
     }
     const g = hw.gpus[0];
     state.freeVramMb = g.vram_free_mb ?? null;
+    state.lastHardware = { gpu: g.name, vram_total_mb: g.vram_total_mb, vram_free_mb: g.vram_free_mb };
     if (state.freeVramMb != null && $("#vram-target").value.trim() === "") {
       $("#vram-target").value = state.freeVramMb;
     }
@@ -551,15 +591,24 @@ async function runBenchmark() {
   summary.className = "result";
   summary.textContent = "Running…";
 
+  const selectedProfile = $("#bench-profile-select").value;
   const body = {
-    profiles: [$("#bench-profile-select").value],
+    profiles: [selectedProfile],
     timeout: Number($("#bench-timeout").value) || 240,
   };
   if (questions) body.questions = questions;
 
+  const collected = [];
   try {
     const out = await postMaybeStream("/benchmark/run", body, (evt) => {
       if (evt.event === "test_result") {
+        collected.push({
+          name: evt.name,
+          category: evt.category,
+          success: evt.success,
+          accuracy: evt.accuracy,
+          elapsed_seconds: evt.elapsed_seconds,
+        });
         const tr = document.createElement("tr");
         const result = evt.success
           ? `<span class="pass">PASS</span>`
@@ -579,6 +628,16 @@ async function runBenchmark() {
           .join(" · ");
         summary.className = "result ok";
         summary.innerHTML = `Done in ${esc(evt.elapsed_seconds)}s — ${parts}`;
+        if (collected.length) {
+          state.lastRun = {
+            profile: selectedProfile,
+            model_id: state.profileModels[selectedProfile] || selectedProfile,
+            hardware: state.lastHardware || {},
+            tests: collected,
+          };
+          $("#btn-export").disabled = false;
+          $("#btn-export").title = "Download a shareable report card";
+        }
       } else if (evt.event === "error") {
         summary.className = "result err";
         summary.textContent = `Run error: ${evt.error}`;
@@ -600,6 +659,130 @@ async function runBenchmark() {
   } catch (err) {
     summary.className = "result err";
     summary.textContent = `Run failed: ${err.message}`;
+  } finally {
+    busy(btn, false);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Tab 2 — Report cards: export + compare (Step 13)
+// ---------------------------------------------------------------------------
+async function exportCard() {
+  if (!state.lastRun) {
+    toast("Run a benchmark first.", "error");
+    return;
+  }
+  const btn = $("#btn-export");
+  busy(btn, true);
+  try {
+    const out = await postJSON("/benchmark/export", state.lastRun);
+    if (!out.success) throw new Error(out.error || "export failed");
+    const name = (state.lastRun.profile || "model").replace(/[^\w.-]+/g, "_");
+    downloadFile(`localdeploy-card-${name}.html`, out.html, "text/html");
+    toast("Report card downloaded.", "success");
+  } catch (err) {
+    toast(`Export failed: ${err.message}`, "error");
+  } finally {
+    busy(btn, false);
+  }
+}
+
+function readCardFile(input, slot) {
+  const file = input.files?.[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    const card = extractCard(String(reader.result || ""));
+    if (!card) {
+      toast(`${file.name}: not a LocalDeploy report card.`, "error");
+      return;
+    }
+    state[slot] = card;
+    updateCompareStatus();
+  };
+  reader.onerror = () => toast("Could not read file.", "error");
+  reader.readAsText(file);
+  input.value = "";
+}
+
+function updateCompareStatus() {
+  const label = (c) => (c ? esc(c.model_id || c.profile || "card") : "—");
+  $("#compare-status").innerHTML = `A: ${label(state.cardA)} &nbsp;·&nbsp; B: ${label(state.cardB)}`;
+}
+
+async function compareCards() {
+  if (!state.cardA || !state.cardB) {
+    toast("Load both Card A and Card B first.", "error");
+    return;
+  }
+  const btn = $("#btn-compare");
+  busy(btn, true);
+  try {
+    const diff = await postJSON("/benchmark/compare", { card_a: state.cardA, card_b: state.cardB });
+    const sd = diff.summary_delta || {};
+    const arrow = (d) => (d == null ? "" : d > 0 ? ` ▲ +${d}` : d < 0 ? ` ▼ ${d}` : " =");
+    const rows = (diff.tests || [])
+      .map(
+        (r) => `<tr><td>${esc(r.name)}</td>
+          <td class="num">${esc(r.accuracy_a ?? "—")} → ${esc(r.accuracy_b ?? "—")}${esc(arrow(r.accuracy_delta))}</td>
+          <td class="num">${esc(r.latency_a ?? "—")} → ${esc(r.latency_b ?? "—")}${esc(arrow(r.latency_delta))}</td></tr>`
+      )
+      .join("");
+    $("#compare-body").innerHTML = `
+      <div class="result">${esc(diff.label_a)} → ${esc(diff.label_b)} &nbsp;·&nbsp;
+        avg accuracy${esc(arrow(sd.avg_accuracy))} &nbsp;·&nbsp; avg latency${esc(arrow(sd.avg_latency_s))} &nbsp;·&nbsp;
+        passed ${esc(sd.passed_a ?? "?")} → ${esc(sd.passed_b ?? "?")}</div>
+      <div class="table-wrap"><table class="results">
+        <thead><tr><th>Test</th><th class="num">Accuracy (A → B)</th><th class="num">Latency (A → B)</th></tr></thead>
+        <tbody>${rows}</tbody></table></div>`;
+  } catch (err) {
+    toast(`Compare failed: ${err.message}`, "error");
+  } finally {
+    busy(btn, false);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Tab 1 — Tune for my GPU (Step 14)
+// ---------------------------------------------------------------------------
+async function recommendTune() {
+  const btn = $("#btn-recommend");
+  const body = $("#recommend-body");
+  busy(btn, true);
+  body.innerHTML = `<div class="muted">Fit-checking and benchmarking… this can take a moment.</div>`;
+  try {
+    const res = await postJSON("/system/recommend", { free_vram_mb: targetVram() });
+    if (!res.success) {
+      body.innerHTML = `<div class="muted">${esc(res.error || "Could not run.")}</div>`;
+      return;
+    }
+    if (!res.recommended) {
+      body.innerHTML = `<div class="muted">${esc(res.message || "No profile fits the available VRAM.")}</div>`;
+      return;
+    }
+    const rec = res.recommended;
+    const rows = (res.candidates || [])
+      .map((c) => {
+        const star = c.profile === rec.profile ? " ★" : "";
+        return `<tr><td>${esc(c.profile)}${star}</td>
+          <td class="num">${esc(c.avg_accuracy)}</td>
+          <td class="num">${esc(c.avg_latency_s)}s</td>
+          <td class="num">${esc(c.margin_gb ?? "—")}</td>
+          <td class="num">${esc(c.score)}</td></tr>`;
+      })
+      .join("");
+    const skipped = (res.skipped || [])
+      .map((s) => `<li>${esc(s.profile)} — ${esc(s.reason)}${s.required_gb ? ` (~${esc(s.required_gb)} GB)` : ""}</li>`)
+      .join("");
+    body.innerHTML = `
+      <div class="result ok">Recommended: <b>${esc(rec.profile)}</b> — ${esc(rec.reasoning)}</div>
+      <div class="table-wrap" style="margin-top:.5rem"><table class="results">
+        <thead><tr><th>Profile</th><th class="num">Accuracy</th><th class="num">Latency</th><th class="num">Headroom</th><th class="num">Score</th></tr></thead>
+        <tbody>${rows}</tbody></table></div>
+      ${skipped ? `<h3 class="sub">Skipped (won’t fit)</h3><ul class="err-list">${skipped}</ul>` : ""}`;
+  } catch (err) {
+    body.innerHTML = `<div class="muted">Tuning failed.</div>`;
+    toast(`Tune failed: ${err.message}`, "error");
   } finally {
     busy(btn, false);
   }
@@ -633,6 +816,11 @@ $("#btn-example").addEventListener("click", loadExample);
 $("#btn-validate").addEventListener("click", validateSet);
 $("#btn-run").addEventListener("click", runBenchmark);
 $("#upload-json").addEventListener("change", (e) => uploadFile(e.target));
+$("#btn-recommend").addEventListener("click", recommendTune);
+$("#btn-export").addEventListener("click", exportCard);
+$("#btn-compare").addEventListener("click", compareCards);
+$("#card-a").addEventListener("change", (e) => readCardFile(e.target, "cardA"));
+$("#card-b").addEventListener("change", (e) => readCardFile(e.target, "cardB"));
 
 // Keyboard shortcuts: Enter pulls; Cmd/Ctrl+Enter runs the benchmark from the editor.
 $("#pull-model").addEventListener("keydown", (e) => {
