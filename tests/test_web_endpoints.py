@@ -25,6 +25,16 @@ def test_ui_is_served() -> None:
     response = client.get("/ui/")
     assert response.status_code == 200
     assert "LocalDeploy" in response.text
+    assert "Serve &amp; Diagnose" in response.text  # two-tab shell present
+
+
+def test_ui_static_assets_served() -> None:
+    js = client.get("/ui/app.js")
+    assert js.status_code == 200
+    assert js.headers["content-type"].startswith("text/javascript")
+    css = client.get("/ui/styles.css")
+    assert css.status_code == 200
+    assert css.headers["content-type"].startswith("text/css")
 
 
 def test_existing_endpoints_still_present() -> None:

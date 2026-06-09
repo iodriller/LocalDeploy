@@ -4,37 +4,150 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>LocalDeploy</title>
-    <style>
-      body {
-        margin: 0;
-        font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
-        background: #0f1115;
-        color: #e6e6e6;
-        display: flex;
-        min-height: 100vh;
-        align-items: center;
-        justify-content: center;
-      }
-      main {
-        text-align: center;
-        max-width: 32rem;
-        padding: 2rem;
-      }
-      h1 { margin: 0 0 0.5rem; font-size: 1.6rem; }
-      p { color: #9aa0a6; line-height: 1.5; }
-      code { color: #8ab4f8; }
-    </style>
+    <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
+    <header class="topbar">
+      <div class="brand">
+        <span class="logo">◆</span>
+        <span>LocalDeploy</span>
+      </div>
+      <nav class="tabs" role="tablist">
+        <button class="tab active" data-tab="serve" role="tab">Serve &amp; Diagnose</button>
+        <button class="tab" data-tab="bench" role="tab">Deploy &amp; Benchmark</button>
+      </nav>
+      <div class="conn" id="conn-pill" title="API connection">API: …</div>
+    </header>
+
     <main>
-      <h1>LocalDeploy</h1>
-      <p>
-        The control-plane UI is being assembled. The diagnostics and benchmark
-        tabs arrive in later steps.
-      </p>
-      <p>
-        API health: <code>/health</code> &middot; API docs: <code>/docs</code>
-      </p>
+      <!-- ===================== TAB 1: Serve & Diagnose ===================== -->
+      <section id="tab-serve" class="tab-panel active">
+        <div class="grid">
+          <!-- Hardware -->
+          <div class="card">
+            <div class="card-head">
+              <h2>Hardware</h2>
+              <button class="btn" id="btn-hardware">Check My Hardware</button>
+            </div>
+            <div id="hardware-body" class="muted">Not checked yet.</div>
+            <div class="row gap" style="margin-top: 0.75rem">
+              <label class="field">
+                <span>Target free VRAM (MB)</span>
+                <input type="number" id="vram-target" min="0" step="256" placeholder="auto from probe" />
+              </label>
+            </div>
+          </div>
+
+          <!-- Served model / status -->
+          <div class="card">
+            <div class="card-head">
+              <h2>Served model</h2>
+              <button class="btn" id="btn-status">Refresh status</button>
+            </div>
+            <div id="status-body" class="muted">Not loaded yet.</div>
+          </div>
+        </div>
+
+        <!-- Serve controls -->
+        <div class="card">
+          <div class="card-head"><h2>Start / Stop / Switch</h2></div>
+          <div class="row gap wrap">
+            <label class="field grow">
+              <span>Profile</span>
+              <select id="profile-select"></select>
+            </label>
+            <label class="field">
+              <span>Keep-alive</span>
+              <input type="text" id="keep-alive" value="5m" />
+            </label>
+            <div class="row gap actions">
+              <button class="btn primary" id="btn-serve">Start</button>
+              <button class="btn" id="btn-stop">Stop</button>
+              <button class="btn" id="btn-switch">Switch to this</button>
+            </div>
+          </div>
+          <div id="serve-result" class="result"></div>
+        </div>
+
+        <!-- Models -->
+        <div class="card">
+          <div class="card-head">
+            <h2>Models</h2>
+            <div class="row gap">
+              <button class="btn" id="btn-installed">Refresh installed</button>
+              <button class="btn" id="btn-updates">Check New Models</button>
+            </div>
+          </div>
+
+          <div class="row gap wrap" style="margin-bottom: 0.75rem">
+            <label class="field grow">
+              <span>Pull a model (Ollama name, e.g. <code>gemma3:4b</code>)</span>
+              <input type="text" id="pull-model" placeholder="gemma3:4b" />
+            </label>
+            <label class="check">
+              <input type="checkbox" id="pull-override" />
+              <span>Override fit check</span>
+            </label>
+            <button class="btn primary" id="btn-pull">Pull</button>
+          </div>
+          <pre id="pull-log" class="log hidden"></pre>
+
+          <h3 class="sub">Installed</h3>
+          <div id="installed-body" class="muted">Not loaded yet.</div>
+
+          <h3 class="sub">New on Hugging Face</h3>
+          <div id="updates-body" class="muted">Not checked yet.</div>
+        </div>
+      </section>
+
+      <!-- ===================== TAB 2: Deploy & Benchmark ===================== -->
+      <section id="tab-bench" class="tab-panel">
+        <div class="card">
+          <div class="card-head">
+            <h2>Question set</h2>
+            <div class="row gap">
+              <button class="btn" id="btn-example">Load example</button>
+              <label class="btn file">
+                Upload .json
+                <input type="file" id="upload-json" accept="application/json,.json" hidden />
+              </label>
+              <button class="btn" id="btn-validate">Validate</button>
+            </div>
+          </div>
+          <p class="muted small">
+            Each question: <code>name</code>, <code>category</code>, <code>prompt</code>,
+            <code>max_output_tokens</code>, and a <code>grader</code> (one of
+            <span id="grader-types">…</span>).
+          </p>
+          <textarea id="qs-editor" class="editor" spellcheck="false" placeholder="Paste or load a question set as JSON…"></textarea>
+          <div id="validate-result" class="result"></div>
+        </div>
+
+        <div class="card">
+          <div class="card-head"><h2>Run</h2></div>
+          <div class="row gap wrap">
+            <label class="field grow">
+              <span>Profile</span>
+              <select id="bench-profile-select"></select>
+            </label>
+            <label class="field">
+              <span>Timeout (s)</span>
+              <input type="number" id="bench-timeout" value="240" min="1" />
+            </label>
+            <button class="btn primary" id="btn-run">Run benchmark ▶</button>
+          </div>
+          <div id="run-summary" class="result"></div>
+          <table id="run-table" class="results hidden">
+            <thead>
+              <tr><th>Profile</th><th>Test</th><th>Category</th><th>Result</th><th class="num">Latency</th><th class="num">Accuracy</th></tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
     </main>
+
+    <div id="toasts" class="toasts" aria-live="polite"></div>
+    <script src="app.js"></script>
   </body>
 </html>
