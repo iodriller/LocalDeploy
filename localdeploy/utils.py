@@ -53,6 +53,12 @@ def offline_mode() -> bool:
     return env_bool("OFFLINE", False)
 
 
+def api_token() -> str:
+    """Optional shared secret. When set (API_TOKEN), the HTTP API requires it;
+    when empty (default), there is no auth and zero overhead. Opt-in security."""
+    return (os.getenv("API_TOKEN") or "").strip()
+
+
 def model_dump_compat(model: BaseModel) -> Dict[str, Any]:
     if hasattr(model, "model_dump"):
         return model.model_dump()

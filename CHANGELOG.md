@@ -4,6 +4,10 @@ All notable changes to this project should be documented here.
 
 ## Unreleased
 
+- Added **opt-in token auth**: set `API_TOKEN` to require it (`X-API-Token` /
+  `Authorization: Bearer` / `?token=`); no auth and zero overhead when unset.
+- "Check New Models" now filters to GGUF repos and offers a one-click **Pull** via Ollama's
+  `hf.co/<id>` shortcut.
 - Added an optional **web UI** at `/ui` (two tabs: Serve & Diagnose, Deploy & Benchmark);
   static, no build step, gated by `ENABLE_WEB_UI` (default on). See `docs/UI.md`.
 - Added a control-plane API: `/system/hardware`, `/system/fit-check`, `/system/status`,

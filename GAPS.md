@@ -32,12 +32,12 @@ set-default).
 
 ## 2. Feature gaps vs. the original vision
 
-### 2.1 No Hugging Face → pull bridge — **Open**
-"Check New Models" lists/links newer Hugging Face models, but you cannot pull one straight from
-that list: HF repo ids (e.g. `google/gemma-3-4b-it`) are not Ollama pull names (`gemma3:4b`).
-Pulling still requires typing the Ollama name into the Pull field. Closing this needs either a
-curated HF-repo → Ollama-name mapping or direct GGUF download/registration — a real feature, not a
-quick fix. *Impact: the "see new models and pull them" loop is two manual steps, not one.*
+### 2.1 Hugging Face → pull bridge — **Done (for GGUF repos)**
+"Check New Models" now filters to **GGUF** repos (`filter="gguf"`) and gives each candidate a
+**Pull** button that pulls it via Ollama's `hf.co/<id>` shortcut (fit-checked like any pull).
+Remaining limitation: non-GGUF repos (e.g. safetensors-only `google/gemma-3-4b-it`) are still
+link-only, because Ollama can't pull those directly. *Impact: the common GGUF case is one click;
+safetensors-only repos remain manual.*
 
 ### 2.2 `recommend` is synchronous (no progress streaming) — **Open**
 `POST /system/recommend` runs several models × N tests in one blocking request; the UI just shows a
@@ -77,15 +77,16 @@ reason as 2.1.
 
 ---
 
-## 4. Security posture (control-plane has no auth) — **By design, documented**
+## 4. Security posture — **Opt-in auth available; off by default**
 
-The web control-plane is unauthenticated, matching the project's existing loopback-only assumption.
-With `API_HOST=0.0.0.0` (the Docker default, and any LAN bind), anyone who can reach the port can:
-pull models (fill disk), load/unload models, run benchmarks (consume GPU/CPU), and rewrite
-`config.json` via `set-default`. This is called out in `SECURITY.md`. Mitigations available today:
-keep the bind on loopback, or set `ENABLE_WEB_UI=false`. A real token/auth middleware is **not**
-implemented and would be the right fast-follow before any non-trusted-network exposure. The backend
-loopback guard (no prompts sent to remote inference hosts) remains enforced and is unaffected.
+The control-plane is unauthenticated **by default** (zero overhead, matching the loopback-only
+assumption). Opt-in auth now exists: set `API_TOKEN=<secret>` and every data endpoint requires it
+(via `X-API-Token`, `Authorization: Bearer`, or `?token=`); the static UI and `/health` stay open so
+the page can load and remember the token. This is the recommended control before any LAN exposure
+(`API_HOST=0.0.0.0`). Remaining caveats: a shared token is **not** transport security (use a tunnel/
+TLS for real exposure), and there's still no rate limiting or per-user accounting. Other mitigations:
+keep the bind on loopback, or `ENABLE_WEB_UI=false`. The backend loopback guard (no prompts to remote
+inference hosts) is always enforced.
 
 ---
 

@@ -66,8 +66,52 @@ function toast(message, kind = "info") {
   setTimeout(() => node.remove(), 5000);
 }
 
+// ---- optional API token (opt-in; nothing happens unless the server sets one) -
+function getToken() {
+  try {
+    return localStorage.getItem("localdeploy_token") || "";
+  } catch {
+    return "";
+  }
+}
+function setToken(t) {
+  try {
+    localStorage.setItem("localdeploy_token", t);
+  } catch {
+    /* ignore */
+  }
+}
+// Bootstrap: a `?token=…` in the URL is stored once, then stripped from the bar.
+(function bootstrapToken() {
+  const params = new URLSearchParams(window.location.search);
+  const t = params.get("token");
+  if (t) {
+    setToken(t);
+    params.delete("token");
+    const q = params.toString();
+    history.replaceState(null, "", window.location.pathname + (q ? `?${q}` : ""));
+  }
+})();
+function authHeaders() {
+  const t = getToken();
+  return t ? { "X-API-Token": t } : {};
+}
+// If the server rejects us, prompt for the token once and let the user retry.
+function handle401(resp) {
+  if (resp && resp.status === 401) {
+    const t = window.prompt("This server requires an API token. Enter it:");
+    if (t) {
+      setToken(t.trim());
+      toast("Token saved — retry your action.", "success");
+    }
+    return true;
+  }
+  return false;
+}
+
 async function getJSON(url) {
-  const resp = await fetch(url);
+  const resp = await fetch(url, { headers: authHeaders() });
+  if (handle401(resp)) throw new Error("unauthorized");
   if (!resp.ok && resp.headers.get("content-type")?.includes("application/json") !== true) {
     throw new Error(`${url} -> HTTP ${resp.status}`);
   }
@@ -77,9 +121,10 @@ async function getJSON(url) {
 async function postJSON(url, body) {
   const resp = await fetch(url, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify(body ?? {}),
   });
+  if (handle401(resp)) throw new Error("unauthorized");
   return resp.json();
 }
 
@@ -115,9 +160,10 @@ async function streamSSE(response, onEvent) {
 async function postMaybeStream(url, body, onEvent) {
   const resp = await fetch(url, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify(body ?? {}),
   });
+  if (handle401(resp)) throw new Error("unauthorized");
   const ct = resp.headers.get("content-type") || "";
   if (ct.includes("text/event-stream")) {
     await streamSSE(resp, onEvent);
@@ -425,10 +471,13 @@ async function checkUpdates() {
           .map((c) => {
             const flag = c.installed_match ? `<span class="badge on">installed</span>` : "";
             const date = c.last_modified ? c.last_modified.slice(0, 10) : "";
+            const pull = c.pullable && c.pull_name
+              ? `<button class="btn hf-pull-btn" data-model="${esc(c.pull_name)}">Pull</button>`
+              : "";
             return `<div class="mrow">
               <a class="name" href="https://huggingface.co/${esc(c.id)}" target="_blank" rel="noopener">${esc(c.id)}</a>
               <span class="meta">${esc(date)}</span>
-              <span class="spacer"></span>${flag}
+              <span class="spacer"></span>${flag}${pull}
             </div>`;
           })
           .join("");
@@ -437,6 +486,13 @@ async function checkUpdates() {
       .join("");
     const note = data.online ? "" : `<div class="muted small">${esc(data.message || "")}</div>`;
     body.innerHTML = blocks + note;
+    // Wire the per-candidate Pull buttons (GGUF repos via Ollama's hf.co/ shortcut).
+    $$(".hf-pull-btn", body).forEach((b) =>
+      b.addEventListener("click", () => {
+        $("#pull-model").value = b.dataset.model;
+        pullModel(b.dataset.model);
+      })
+    );
   } catch (err) {
     body.innerHTML = `<div class="muted">Check failed.</div>`;
     toast(`Update check failed: ${err.message}`, "error");
@@ -448,8 +504,9 @@ async function checkUpdates() {
 // ---------------------------------------------------------------------------
 // Tab 1 — Pull (streamed, fit-gated)
 // ---------------------------------------------------------------------------
-async function pullModel() {
-  const model = $("#pull-model").value.trim();
+async function pullModel(modelArg) {
+  // Called from the Pull button (no string arg) or a candidate row (a name).
+  const model = typeof modelArg === "string" && modelArg ? modelArg : $("#pull-model").value.trim();
   if (!model) {
     toast("Enter a model name to pull.", "error");
     return;
@@ -836,7 +893,7 @@ $("#btn-stop").addEventListener("click", stopModel);
 $("#btn-switch").addEventListener("click", switchModel);
 $("#btn-installed").addEventListener("click", refreshInstalled);
 $("#btn-updates").addEventListener("click", checkUpdates);
-$("#btn-pull").addEventListener("click", pullModel);
+$("#btn-pull").addEventListener("click", () => pullModel());
 $("#btn-example").addEventListener("click", loadExample);
 $("#btn-validate").addEventListener("click", validateSet);
 $("#btn-run").addEventListener("click", runBenchmark);

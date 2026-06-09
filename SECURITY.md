@@ -51,7 +51,7 @@ These are deliberate trade-offs for the single-user, local-only design. They bec
 
 | Gap | Why it exists | When it becomes risky |
 |---|---|---|
-| No HTTP auth | Loopback-only assumption | Binding to LAN, exposing via tunnel, or running on a shared host |
+| No HTTP auth *by default* | Loopback-only assumption; opt-in `API_TOKEN` available | Binding to LAN without setting `API_TOKEN`, or exposing via tunnel / shared host |
 | No rate limiting | Single-user workload | More than one client / shared host / a misbehaving script loop |
 | No concurrency cap on backend calls | 8 GB VRAM serves ~1 in-flight request anyway | If you increase VRAM and add parallel callers |
 | No prompt-injection filter | Operator-supplied prompts assumed trusted | Feeding the model with untrusted external content |

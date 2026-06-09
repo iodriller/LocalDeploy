@@ -30,6 +30,7 @@ def registry_installed() -> Dict[str, Any]:
 class CheckUpdatesRequest(BaseModel):
     queries: Optional[List[str]] = None
     limit: int = 5
+    gguf_only: bool = True
 
 
 def _base_name(name: str) -> str:
@@ -52,8 +53,15 @@ def _derive_queries(installed: List[Dict[str, Any]]) -> List[str]:
     return queries
 
 
-def _list_hf(query: str, limit: int) -> Tuple[Optional[List[Dict[str, Any]]], Optional[str]]:
-    """Newest HF models matching `query`. Lazy import; returns (items, error)."""
+def _list_hf(
+    query: str, limit: int, gguf_only: bool = True
+) -> Tuple[Optional[List[Dict[str, Any]]], Optional[str]]:
+    """Newest HF models matching `query`. Lazy import; returns (items, error).
+
+    When `gguf_only` is true, the search is filtered to GGUF repos, which Ollama
+    can pull directly via `ollama pull hf.co/<id>` — so each candidate carries a
+    ready-to-use `pull_name`.
+    """
     if offline_mode():
         return None, "offline mode (OFFLINE=true): Hugging Face check skipped — no egress"
     try:
@@ -64,16 +72,23 @@ def _list_hf(query: str, limit: int) -> Tuple[Optional[List[Dict[str, Any]]], Op
         api = HfApi()
         # sort="lastModified" returns most-recent-first; `direction` was removed in
         # huggingface_hub 1.x, so we rely on the default ordering.
-        models = api.list_models(search=query, sort="lastModified", limit=limit)
+        kwargs: Dict[str, Any] = {"search": query, "sort": "lastModified", "limit": limit}
+        if gguf_only:
+            kwargs["filter"] = "gguf"
+        models = api.list_models(**kwargs)
         items: List[Dict[str, Any]] = []
         for model in models:
+            mid = getattr(model, "id", None) or getattr(model, "modelId", None)
             items.append(
                 {
-                    "id": getattr(model, "id", None) or getattr(model, "modelId", None),
+                    "id": mid,
                     "last_modified": (str(getattr(model, "lastModified", "")) or None),
                     "downloads": getattr(model, "downloads", None),
                     "likes": getattr(model, "likes", None),
                     "gated": getattr(model, "gated", None),
+                    # GGUF repos are pullable through Ollama's hf.co/ shortcut.
+                    "pullable": bool(gguf_only and mid),
+                    "pull_name": f"hf.co/{mid}" if (gguf_only and mid) else None,
                 }
             )
         return items, None
@@ -92,7 +107,7 @@ def check_updates(req: CheckUpdatesRequest) -> Dict[str, Any]:
     last_error: Optional[str] = None
     online = True
     for query in queries:
-        items, error = _list_hf(query, req.limit)
+        items, error = _list_hf(query, req.limit, req.gguf_only)
         if error:
             last_error, online = error, False
             continue
