@@ -225,10 +225,16 @@ By default the server binds to `127.0.0.1` (local machine only). To reach it fro
 on your LAN, set `API_HOST=0.0.0.0` (the Docker image already does this inside the container, and
 publishes port 8000).
 
-> **No authentication.** The API has no auth layer, so anyone who can reach the bound address can
-> drive your models. Only expose `0.0.0.0` on a trusted network, and do not put it directly on the
-> public internet. The server still refuses non-loopback *backend* URLs (it will not send prompts
-> to a remote inference host) — see `SECURITY.md`.
+**Optional token auth (opt-in, zero overhead).** By default there is no auth — nothing to set up.
+If you want it, set `API_TOKEN=<secret>` and the HTTP API will require that token (via the
+`X-API-Token` header, `Authorization: Bearer <token>`, or `?token=<token>`). The UI stays open so
+it can load; open it once at `http://host:8000/ui?token=<secret>` and it remembers the token. This
+is also exactly how an OpenAI-style client authenticates (`api_key`), so existing clients work
+unchanged.
+
+> Even with a token, only expose `0.0.0.0` on a trusted network — a shared secret is not a
+> substitute for transport security. The server always refuses non-loopback *backend* URLs (it will
+> not send prompts to a remote inference host) — see `SECURITY.md`.
 
 ## Local-Only Notes
 
