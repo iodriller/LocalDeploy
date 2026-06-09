@@ -33,3 +33,11 @@ router.include_router(models.router)
 from . import bench  # noqa: E402
 
 router.include_router(bench.router)
+
+from . import report  # noqa: E402
+
+router.include_router(report.router)
+
+from . import recommend  # noqa: E402
+
+router.include_router(recommend.router)

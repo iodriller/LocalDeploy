@@ -15,6 +15,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from fastapi import APIRouter
 from pydantic import BaseModel
 
+from ..utils import offline_mode
 from . import _ollama
 
 router = APIRouter()
@@ -53,6 +54,8 @@ def _derive_queries(installed: List[Dict[str, Any]]) -> List[str]:
 
 def _list_hf(query: str, limit: int) -> Tuple[Optional[List[Dict[str, Any]]], Optional[str]]:
     """Newest HF models matching `query`. Lazy import; returns (items, error)."""
+    if offline_mode():
+        return None, "offline mode (OFFLINE=true): Hugging Face check skipped — no egress"
     try:
         from huggingface_hub import HfApi
     except Exception as exc:  # pragma: no cover - dependency missing

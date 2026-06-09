@@ -203,6 +203,20 @@ hardware detection, VRAM fit-checks, model pull/serve/switch, Hugging Face updat
 benchmark runner over the existing HTTP API. Disable it with `ENABLE_WEB_UI=false`. Full guide:
 [docs/UI.md](docs/UI.md).
 
+## Privacy — verifiably local
+
+LocalDeploy has **no telemetry**. It only talks to your local inference backends; the single
+outbound internet call is the optional "Check New Models" lookup to Hugging Face, which you
+trigger explicitly. Set `OFFLINE=true` to block that too — then the server makes **no** outbound
+internet connections at all.
+
+You don't have to take that on faith. The bundled self-test installs a socket guard that fails if
+the app tries to reach any non-loopback address in offline mode:
+
+```bash
+python scripts/egress_selftest.py   # prints OFFLINE_SELFTEST_PASS
+```
+
 ## Network access and security
 
 By default the server binds to `127.0.0.1` (local machine only). To reach it from other machines
