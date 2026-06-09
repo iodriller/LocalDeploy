@@ -4,6 +4,10 @@ All notable changes to this project should be documented here.
 
 ## Unreleased
 
+- Added `run.sh` (macOS/Linux) and `run.ps1` (Windows) one-command launchers: detect and install
+  Docker if absent (via `get.docker.com` on Linux, Homebrew cask on macOS, winget on Windows),
+  clone or update the repo, and start `docker compose up` — no prerequisites needed.
+
 - Added **opt-in token auth**: set `API_TOKEN` to require it (`X-API-Token` /
   `Authorization: Bearer` / `?token=`); no auth and zero overhead when unset.
 - "Check New Models" now filters to GGUF repos and offers a one-click **Pull** via Ollama's
