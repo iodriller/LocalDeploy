@@ -4,18 +4,36 @@ LocalDeploy is a small Windows-friendly project for running local LLMs behind a 
 
 It defaults to Ollama and can optionally call a local llama.cpp server for GGUF experiments. It does not use cloud inference APIs.
 
-## 60-second quickstart (Docker)
+## One-command quickstart — nothing to pre-install
 
-The fastest way to try everything — bundles Ollama, the API, and the web UI in one container:
+**macOS / Linux** (installs Docker automatically if needed, then launches):
 
 ```bash
+curl -fsSL https://raw.githubusercontent.com/iodriller/localdeploy/main/run.sh | sh
+```
+
+**Windows** (PowerShell — installs Docker Desktop via winget if needed, then launches):
+
+```powershell
+irm https://raw.githubusercontent.com/iodriller/localdeploy/main/run.ps1 | iex
+```
+
+Both scripts clone the repo, build the image, and open **http://localhost:8000/ui** — no
+prerequisites beyond a terminal. The image bundles Ollama + the API + the web UI together.
+
+From the UI you can check your hardware, pull a model, start it, and run a benchmark — no config
+editing required.
+
+**If you already have Docker installed**, you can skip the install script entirely:
+
+```bash
+git clone https://github.com/iodriller/localdeploy.git && cd localdeploy
 docker compose up
 ```
 
-Then open **http://localhost:8000/ui**. From the UI you can check your hardware, pull a model,
-start it, and run a benchmark — no config editing required. To use your NVIDIA GPU, uncomment the
-`deploy.resources` block in `docker-compose.yml` (needs the NVIDIA Container Toolkit). To pre-pull
-a model on first boot, set `PULL_MODELS=gemma3:4b` in the compose file.
+To use your NVIDIA GPU, uncomment the `deploy.resources` block in `docker-compose.yml` (needs
+the NVIDIA Container Toolkit). To pre-pull a model on first boot, set `PULL_MODELS=gemma3:4b`
+in the compose file.
 
 On macOS/Linux without Docker (Ollama installed separately), `./scripts/start.sh` does the venv
 setup and starts the same server.
