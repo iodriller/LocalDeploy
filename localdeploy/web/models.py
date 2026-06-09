@@ -1,0 +1,226 @@
+"""Steps 5-6 - model lifecycle.
+
+Step 5:  POST /models/pull    -> stream `ollama pull`, gated by the fit-check
+Step 6:  GET  /system/status  -> served model(s), Ollama health, VRAM
+         POST /models/serve    -> warm a model (Ollama keep-alive)
+         POST /models/stop      -> unload a model
+         POST /models/switch    -> pivot from one model to another
+
+Ollama is driven fully. llama.cpp lifecycle is process-managed by the existing
+scripts, so serve/stop return clear guidance instead of spawning processes.
+"""
+from __future__ import annotations
+
+import json
+import os
+from typing import Any, Dict, Optional, Tuple
+
+import requests
+from fastapi import APIRouter
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
+
+from ..backends.llamacpp import llama_health
+from ..utils import BackendCallError, require_gpu_only
+from . import _ollama
+from .fit import FitRequest, fit_check
+from .hardware import detect_hardware
+
+router = APIRouter()
+
+
+def _sse(obj: Dict[str, Any]) -> str:
+    return f"data: {json.dumps(obj, ensure_ascii=False)}\n\n"
+
+
+def _resolve_target(
+    profile: Optional[str], model: Optional[str], backend: Optional[str]
+) -> Tuple[str, Optional[str], Dict[str, Any]]:
+    """Return (backend, model_id, profile_dict). Raises ValueError on bad input."""
+    if profile:
+        from api_server import load_config  # lazy: api_server owns config loading
+
+        prof = load_config().get("profiles", {}).get(profile)
+        if not prof:
+            raise ValueError(f"Unknown profile '{profile}'.")
+        return prof.get("backend", "ollama"), prof.get("model_id"), prof
+    if not model:
+        raise ValueError("Provide 'profile' or 'model'.")
+    return (backend or "ollama"), model, {}
+
+
+# --- Step 6: status ----------------------------------------------------------
+
+
+@router.get("/system/status")
+def system_status() -> Dict[str, Any]:
+    running, run_error = _ollama.list_running()
+    hardware = detect_hardware()
+    return {
+        "success": True,
+        "ollama": {"reachable": run_error is None, "running": running, "error": run_error},
+        "served_models": [m.get("name") for m in running],
+        "hardware": {"gpu_available": hardware["gpu_available"], "gpus": hardware["gpus"]},
+        "require_gpu_only": require_gpu_only(),
+    }
+
+
+# --- Step 5: pull (streamed, fit-gated) --------------------------------------
+
+
+class PullRequest(BaseModel):
+    model: Optional[str] = None
+    profile: Optional[str] = None
+    allow_override: bool = False
+    free_vram_mb: Optional[int] = None
+
+
+@router.post("/models/pull")
+def models_pull(req: PullRequest):
+    try:
+        backend, model_id, _ = _resolve_target(req.profile, req.model, "ollama")
+    except ValueError as exc:
+        return {"success": False, "error": str(exc)}
+    if backend != "ollama":
+        return {
+            "success": False,
+            "error": "Pull is only supported for Ollama. llama.cpp uses local GGUF files.",
+        }
+    if require_gpu_only():
+        return {"success": False, "error": "GPU-only mode is enabled; refusing Ollama pull."}
+
+    fit = fit_check(FitRequest(profile=req.profile, model_id=model_id, free_vram_mb=req.free_vram_mb))
+    if fit.get("verdict") == "WONT_FIT" and not req.allow_override:
+        return {
+            "success": False,
+            "blocked_by": "fit-check",
+            "fit": fit,
+            "message": "Model is unlikely to fit available VRAM. Re-run with allow_override=true to pull anyway.",
+        }
+
+    def event_stream():
+        yield _sse({"status": f"starting pull for {model_id}", "fit_verdict": fit.get("verdict")})
+        try:
+            for event in _ollama.pull_stream(model_id):
+                yield _sse(event)
+            yield _sse({"status": "success", "done": True})
+        except BackendCallError as exc:
+            yield _sse({"error": str(exc)})
+        except requests.ConnectionError:
+            yield _sse({"error": "Ollama is not running or is unreachable. Start Ollama and retry."})
+        except requests.RequestException as exc:
+            yield _sse({"error": f"Ollama pull failed: {exc}"})
+        yield "data: [DONE]\n\n"
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
+# --- Step 6: serve / stop / switch -------------------------------------------
+
+
+class ServeRequest(BaseModel):
+    model: Optional[str] = None
+    profile: Optional[str] = None
+    keep_alive: str = "5m"
+
+
+class StopRequest(BaseModel):
+    model: Optional[str] = None
+    profile: Optional[str] = None
+
+
+class SwitchRequest(BaseModel):
+    to_model: Optional[str] = None
+    to_profile: Optional[str] = None
+    from_model: Optional[str] = None
+    keep_alive: str = "5m"
+
+
+def _serve_ollama(model_id: str, keep_alive: str) -> Dict[str, Any]:
+    if require_gpu_only():
+        return {"success": False, "error": "GPU-only mode is enabled; refusing Ollama serve."}
+    try:
+        _ollama.load_model(model_id, keep_alive)
+    except BackendCallError as exc:
+        return {"success": False, "error": str(exc)}
+    except requests.ConnectionError:
+        return {"success": False, "error": "Ollama is not running or is unreachable. Start Ollama and retry."}
+    except requests.RequestException as exc:
+        return {"success": False, "error": f"Failed to load '{model_id}': {exc}"}
+    running, _ = _ollama.list_running()
+    return {
+        "success": True,
+        "backend": "ollama",
+        "served": model_id,
+        "running": running,
+        "message": f"'{model_id}' warmed and kept alive for {keep_alive}.",
+    }
+
+
+def _llamacpp_status_message() -> Dict[str, Any]:
+    health = llama_health(os.getenv("LLAMACPP_BASE_URL", "http://localhost:8080"))
+    if health.get("reachable"):
+        return {"success": True, "backend": "llamacpp", "message": "llama.cpp server is running and serving its GGUF model."}
+    return {
+        "success": False,
+        "backend": "llamacpp",
+        "message": "Start the llama.cpp server first (scripts/start_llamacpp.ps1). LocalDeploy does not spawn it automatically.",
+    }
+
+
+@router.post("/models/serve")
+def models_serve(req: ServeRequest) -> Dict[str, Any]:
+    try:
+        backend, model_id, _ = _resolve_target(req.profile, req.model, "ollama")
+    except ValueError as exc:
+        return {"success": False, "error": str(exc)}
+    if backend == "ollama":
+        return _serve_ollama(model_id, req.keep_alive)
+    return _llamacpp_status_message()
+
+
+@router.post("/models/stop")
+def models_stop(req: StopRequest) -> Dict[str, Any]:
+    try:
+        backend, model_id, _ = _resolve_target(req.profile, req.model, "ollama")
+    except ValueError as exc:
+        return {"success": False, "error": str(exc)}
+    if backend != "ollama":
+        return {
+            "success": False,
+            "backend": "llamacpp",
+            "message": "Stop the llama.cpp server with scripts/stop.ps1; LocalDeploy does not manage that process.",
+        }
+    try:
+        _ollama.unload_model(model_id)
+    except BackendCallError as exc:
+        return {"success": False, "error": str(exc)}
+    except requests.ConnectionError:
+        return {"success": False, "error": "Ollama is not running or is unreachable."}
+    except requests.RequestException as exc:
+        return {"success": False, "error": f"Failed to stop '{model_id}': {exc}"}
+    return {"success": True, "backend": "ollama", "stopped": model_id, "message": f"'{model_id}' unloaded."}
+
+
+@router.post("/models/switch")
+def models_switch(req: SwitchRequest) -> Dict[str, Any]:
+    try:
+        backend, to_model, _ = _resolve_target(req.to_profile, req.to_model, "ollama")
+    except ValueError as exc:
+        return {"success": False, "error": str(exc)}
+    if backend != "ollama":
+        return _llamacpp_status_message()
+
+    unloaded = None
+    if req.from_model:
+        try:
+            _ollama.unload_model(req.from_model)
+            unloaded = req.from_model
+        except (BackendCallError, requests.RequestException):
+            unloaded = None  # best-effort; serving the new model is what matters
+
+    result = _serve_ollama(to_model, req.keep_alive)
+    result["switched_from"] = unloaded
+    if result.get("success"):
+        result["message"] = f"Switched to '{to_model}'" + (f" (unloaded '{unloaded}')" if unloaded else "") + "."
+    return result
