@@ -33,7 +33,7 @@ def test_registry_installed_graceful_when_ollama_down() -> None:
 
 
 def test_check_updates_with_mocked_hf(monkeypatch) -> None:
-    def fake_list_hf(query, limit):
+    def fake_list_hf(query, limit, gguf_only=True):
         return ([{"id": f"org/{query}-new", "last_modified": "2026-01-01"}], None)
 
     monkeypatch.setattr(registry, "_list_hf", fake_list_hf)
@@ -45,11 +45,42 @@ def test_check_updates_with_mocked_hf(monkeypatch) -> None:
 
 
 def test_check_updates_offline_is_graceful(monkeypatch) -> None:
-    monkeypatch.setattr(registry, "_list_hf", lambda query, limit: (None, "network down"))
+    monkeypatch.setattr(registry, "_list_hf", lambda query, limit, gguf_only=True: (None, "network down"))
     body = client.post("/registry/check-updates", json={"queries": ["gemma"]}).json()
     assert body["success"] is True
     assert body["online"] is False
     assert "Hugging Face" in body["message"]
+
+
+def test_list_hf_marks_gguf_repos_pullable(monkeypatch) -> None:
+    import huggingface_hub
+
+    class FakeModel:
+        def __init__(self, mid):
+            self.id = mid
+            self.lastModified = "2026-01-01"
+            self.downloads = 1
+            self.likes = 1
+            self.gated = False
+
+    monkeypatch.setattr(
+        huggingface_hub.HfApi, "list_models", lambda self, **kw: [FakeModel("TheBloke/Foo-GGUF")]
+    )
+    items, err = registry._list_hf("foo", 5, gguf_only=True)
+    assert err is None
+    assert items[0]["pullable"] is True
+    assert items[0]["pull_name"] == "hf.co/TheBloke/Foo-GGUF"
+
+
+def test_check_updates_surfaces_pull_name(monkeypatch) -> None:
+    monkeypatch.setattr(
+        registry,
+        "_list_hf",
+        lambda q, limit, gguf_only=True: ([{"id": "x/y-GGUF", "pullable": True, "pull_name": "hf.co/x/y-GGUF"}], None),
+    )
+    body = client.post("/registry/check-updates", json={"queries": ["x"]}).json()
+    candidate = body["results"][0]["candidates"][0]
+    assert candidate["pull_name"] == "hf.co/x/y-GGUF"
 
 
 # --- Step 5: pull ------------------------------------------------------------
@@ -190,7 +221,7 @@ def test_check_updates_derives_queries_from_installed(monkeypatch) -> None:
     # registry imports _ollama as its own reference; patch there too.
     monkeypatch.setattr(registry._ollama, "list_installed", lambda: ([{"name": "gemma3:4b"}], None))
     monkeypatch.setattr(
-        registry, "_list_hf", lambda q, limit: ([{"id": f"google/{q}-3-4b-it"}], None)
+        registry, "_list_hf", lambda q, limit, gguf_only=True: ([{"id": f"google/{q}-3-4b-it"}], None)
     )
     body = client.post("/registry/check-updates", json={}).json()
     assert body["success"] is True

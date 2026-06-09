@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import hmac
 import json
 import math
 import os
@@ -20,6 +21,7 @@ from localdeploy.backends.llamacpp import call_llamacpp, llama_health
 from localdeploy.backends.ollama import call_ollama, ollama_models, stream_ollama
 from localdeploy.utils import (
     BackendCallError,
+    api_token,
     enable_web_ui,
     env_bool,
     env_float,
@@ -922,6 +924,38 @@ if env_bool("ENABLE_CORS", False):
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+
+def _extract_token(request: Request) -> str:
+    auth = request.headers.get("authorization", "")
+    if auth.lower().startswith("bearer "):
+        return auth[7:].strip()
+    return request.headers.get("x-api-token") or request.query_params.get("token", "")
+
+
+@app.middleware("http")
+async def api_token_guard(request: Request, call_next):
+    """Opt-in auth: enforced only when API_TOKEN is set. Zero overhead otherwise.
+
+    The static UI, health check, and CORS preflight stay open so the page can
+    load and prompt for the token; every data endpoint requires it.
+    """
+    token = api_token()
+    if token and request.method != "OPTIONS":
+        path = request.url.path
+        if not (path == "/health" or path == "/favicon.ico" or path.startswith("/ui")):
+            if not hmac.compare_digest(_extract_token(request), token):
+                return JSONResponse(
+                    status_code=401,
+                    content={
+                        "error": {
+                            "message": "Unauthorized: provide the API token via the "
+                            "'X-API-Token' header, 'Authorization: Bearer', or '?token='.",
+                            "code": "unauthorized",
+                        }
+                    },
+                )
+    return await call_next(request)
 
 
 @app.get("/health")
