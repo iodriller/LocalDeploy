@@ -21,3 +21,11 @@ router.include_router(hardware.router)
 from . import fit  # noqa: E402
 
 router.include_router(fit.router)
+
+from . import registry  # noqa: E402
+
+router.include_router(registry.router)
+
+from . import models  # noqa: E402
+
+router.include_router(models.router)
