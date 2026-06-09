@@ -206,9 +206,11 @@ benchmark runner over the existing HTTP API. Disable it with `ENABLE_WEB_UI=fals
 ## Privacy — verifiably local
 
 LocalDeploy has **no telemetry**. It only talks to your local inference backends; the single
-outbound internet call is the optional "Check New Models" lookup to Hugging Face, which you
-trigger explicitly. Set `OFFLINE=true` to block that too — then the server makes **no** outbound
-internet connections at all.
+outbound internet call the server process makes is the optional "Check New Models" lookup to
+Hugging Face, which you trigger explicitly. Set `OFFLINE=true` to block that too — then the
+**LocalDeploy server process** makes no outbound internet connections at all. (A model pull is
+fetched by the separate Ollama daemon, not the server process, so pulling a new model still
+reaches the internet by design — that action is always user-initiated.)
 
 You don't have to take that on faith. The bundled self-test installs a socket guard that fails if
 the app tries to reach any non-loopback address in offline mode:

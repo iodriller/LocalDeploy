@@ -7,12 +7,44 @@ benchmark engine (Step 8) - this is orchestration only, no new scoring engine.
 """
 from __future__ import annotations
 
+import json
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter
 from pydantic import BaseModel
 
 router = APIRouter()
+
+
+class SetDefaultRequest(BaseModel):
+    profile: str
+
+
+@router.post("/system/set-default")
+def set_default(req: SetDefaultRequest) -> Dict[str, Any]:
+    """Persist the chosen profile as the config's default_profile.
+
+    Writes config.json (seeding from the loaded config if it does not exist yet).
+    Refuses to overwrite config.example.json so the bundled example stays pristine.
+    """
+    from api_server import get_config_path, load_config
+
+    config = load_config()
+    if req.profile not in config.get("profiles", {}):
+        return {"success": False, "error": f"Unknown profile '{req.profile}'."}
+    path = get_config_path()
+    if path.name == "config.example.json":
+        return {
+            "success": False,
+            "error": "Refusing to overwrite config.example.json. Point CONFIG_PATH at a real "
+            "config.json (the app seeds from the example when it is missing).",
+        }
+    config["default_profile"] = req.profile
+    try:
+        path.write_text(json.dumps(config, indent=2), encoding="utf-8")
+    except OSError as exc:
+        return {"success": False, "error": f"Could not write {path}: {exc}"}
+    return {"success": True, "default_profile": req.profile, "path": str(path)}
 
 
 class RecommendRequest(BaseModel):
@@ -83,7 +115,18 @@ def recommend(req: RecommendRequest) -> Dict[str, Any]:
     scored: List[Dict[str, Any]] = []
     for cand in candidates:
         name = cand["profile"]
-        results = [bench.execute_test(base_url, name, profiles_map[name], t, req.timeout) for t in tests]
+        results = []
+        for t in tests:
+            try:
+                results.append(bench.execute_test(base_url, name, profiles_map[name], t, req.timeout))
+            except Exception:
+                # An unexpected failure counts as a failed test, never a 500.
+                results.append(
+                    bench.TestResult(
+                        name=t.name, category=t.category, success=False, elapsed_seconds=0.0,
+                        response_length=0, response_preview="", accuracy=0.0, error="execute_test error",
+                    )
+                )
         accs = [r.accuracy for r in results]
         lats = [r.elapsed_seconds for r in results if r.elapsed_seconds]
         scored.append(
