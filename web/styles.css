@@ -185,6 +185,14 @@ table.results td.num, table.results th.num { text-align: right; font-variant-num
 
 .hidden { display: none; }
 
+.hint {
+  background: linear-gradient(90deg, rgba(79, 134, 247, 0.12), rgba(79, 134, 247, 0.03));
+  border: 1px solid rgba(79, 134, 247, 0.3);
+  color: var(--text); border-radius: var(--radius);
+  padding: 0.6rem 0.9rem; margin-bottom: 1rem; font-size: 0.88rem;
+}
+.hint b { color: var(--accent); font-weight: 600; }
+
 kbd {
   font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 0.75rem;
   background: var(--panel-2); border: 1px solid var(--border); border-bottom-width: 2px;
