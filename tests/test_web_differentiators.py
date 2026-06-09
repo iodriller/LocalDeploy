@@ -106,6 +106,29 @@ def test_recommend_when_nothing_fits(monkeypatch):
     assert body["skipped"]
 
 
+def test_set_default_refuses_to_overwrite_example():
+    # conftest points CONFIG_PATH at config.example.json; must not be clobbered.
+    body = client.post("/system/set-default", json={"profile": "gemma3_4b_ollama_safe"}).json()
+    assert body["success"] is False
+    assert "config.example.json" in body["error"]
+
+
+def test_set_default_unknown_profile():
+    body = client.post("/system/set-default", json={"profile": "nope"}).json()
+    assert body["success"] is False
+    assert "Unknown" in body["error"]
+
+
+def test_set_default_writes_config(monkeypatch, tmp_path):
+    import json
+
+    cfg = tmp_path / "config.json"
+    monkeypatch.setenv("CONFIG_PATH", str(cfg))
+    body = client.post("/system/set-default", json={"profile": "gemma3_4b_ollama_safe"}).json()
+    assert body["success"] is True
+    assert json.loads(cfg.read_text())["default_profile"] == "gemma3_4b_ollama_safe"
+
+
 def test_rank_candidates_pure():
     out = recmod.rank_candidates(
         [

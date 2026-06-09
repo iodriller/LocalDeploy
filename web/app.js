@@ -40,8 +40,11 @@ function extractCard(text) {
   }
   const m = text.match(/<script[^>]*id=["']localdeploy-card["'][^>]*>([\s\S]*?)<\/script>/);
   if (m) {
+    // Reverse the server's html.escape(..., quote=False): &lt; and &gt; first,
+    // then &amp; last so escaped entities round-trip correctly.
+    const unescaped = m[1].replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
     try {
-      return JSON.parse(m[1].replace(/&amp;/g, "&"));
+      return JSON.parse(unescaped);
     } catch {
       /* fall through */
     }
@@ -369,6 +372,8 @@ async function refreshInstalled() {
     $$(".fit-btn", body).forEach((b) =>
       b.addEventListener("click", () => fitCheckRow(b.closest(".mrow")))
     );
+    // Auto-run the fit check for each row so warnings appear without a click.
+    $$(".mrow", body).forEach((row) => fitCheckRow(row));
   } catch (err) {
     toast(`Installed list failed: ${err.message}`, "error");
   } finally {
@@ -775,14 +780,34 @@ async function recommendTune() {
       .map((s) => `<li>${esc(s.profile)} — ${esc(s.reason)}${s.required_gb ? ` (~${esc(s.required_gb)} GB)` : ""}</li>`)
       .join("");
     body.innerHTML = `
-      <div class="result ok">Recommended: <b>${esc(rec.profile)}</b> — ${esc(rec.reasoning)}</div>
+      <div class="result ok">Recommended: <b>${esc(rec.profile)}</b> — ${esc(rec.reasoning)}
+        &nbsp; <button class="btn set-default-btn" data-profile="${esc(rec.profile)}">Set as default</button></div>
       <div class="table-wrap" style="margin-top:.5rem"><table class="results">
         <thead><tr><th>Profile</th><th class="num">Accuracy</th><th class="num">Latency</th><th class="num">Headroom</th><th class="num">Score</th></tr></thead>
         <tbody>${rows}</tbody></table></div>
       ${skipped ? `<h3 class="sub">Skipped (won’t fit)</h3><ul class="err-list">${skipped}</ul>` : ""}`;
+    const sd = body.querySelector(".set-default-btn");
+    if (sd) sd.addEventListener("click", () => setDefaultProfile(sd.dataset.profile, sd));
   } catch (err) {
     body.innerHTML = `<div class="muted">Tuning failed.</div>`;
     toast(`Tune failed: ${err.message}`, "error");
+  } finally {
+    busy(btn, false);
+  }
+}
+
+async function setDefaultProfile(profile, btn) {
+  busy(btn, true);
+  try {
+    const res = await postJSON("/system/set-default", { profile });
+    if (res.success) {
+      toast(`Default profile set to ${profile}.`, "success");
+      state.defaultProfile = profile;
+    } else {
+      toast(res.error || "Could not set default.", "error");
+    }
+  } catch (err) {
+    toast(`Set default failed: ${err.message}`, "error");
   } finally {
     busy(btn, false);
   }

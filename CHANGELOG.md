@@ -2,6 +2,22 @@
 
 All notable changes to this project should be documented here.
 
+## Unreleased
+
+- Added an optional **web UI** at `/ui` (two tabs: Serve & Diagnose, Deploy & Benchmark);
+  static, no build step, gated by `ENABLE_WEB_UI` (default on). See `docs/UI.md`.
+- Added a control-plane API: `/system/hardware`, `/system/fit-check`, `/system/status`,
+  `/system/recommend`, `/system/set-default`, `/registry/installed`, `/registry/check-updates`,
+  `/models/pull`, `/models/serve`, `/models/stop`, `/models/switch`.
+- Added benchmark-over-HTTP: `/benchmark/example`, `/benchmark/validate`, `/benchmark/run`
+  (streamed), plus shareable report cards (`/benchmark/export`) and A/B compare
+  (`/benchmark/compare`). `benchmark.py` gained an importable `execute_test`/`iter_run` and a
+  JSON-safe grader registry shared by the CLI and the API.
+- Added one-command Docker run (`Dockerfile`, `docker-compose.yml`) bundling Ollama + the API/UI,
+  plus a `scripts/start.sh` launcher.
+- Added a verifiable offline mode (`OFFLINE=true`) and `scripts/egress_selftest.py`.
+- The original CLI, OpenAI-compatible API, and loopback-only backend guard are unchanged.
+
 ## 0.2.0 - 2026-05-16
 
 - Added OpenAI-compatible `/v1/chat/completions` and `/v1/models` endpoints for local clients.
