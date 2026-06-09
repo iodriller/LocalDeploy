@@ -13,10 +13,13 @@
         <span>LocalDeploy</span>
       </div>
       <nav class="tabs" role="tablist">
-        <button class="tab active" data-tab="serve" role="tab">Serve &amp; Diagnose</button>
-        <button class="tab" data-tab="bench" role="tab">Deploy &amp; Benchmark</button>
+        <button class="tab active" data-tab="serve" role="tab" aria-selected="true">Serve &amp; Diagnose</button>
+        <button class="tab" data-tab="bench" role="tab" aria-selected="false">Deploy &amp; Benchmark</button>
       </nav>
-      <div class="conn" id="conn-pill" title="API connection">API: …</div>
+      <div class="topbar-right">
+        <div id="hw-chip" class="chip hidden" title="Detected GPU / VRAM"></div>
+        <div class="conn" id="conn-pill" title="API connection">API: …</div>
+      </div>
     </header>
 
     <main>
@@ -136,13 +139,16 @@
             </label>
             <button class="btn primary" id="btn-run">Run benchmark ▶</button>
           </div>
+          <p class="muted small">Leave the editor empty to run the built-in capability suite, or load a set above. Tip: <kbd>⌘/Ctrl</kbd>+<kbd>Enter</kbd> in the editor runs it.</p>
           <div id="run-summary" class="result"></div>
-          <table id="run-table" class="results hidden">
-            <thead>
-              <tr><th>Profile</th><th>Test</th><th>Category</th><th>Result</th><th class="num">Latency</th><th class="num">Accuracy</th></tr>
-            </thead>
-            <tbody></tbody>
-          </table>
+          <div class="table-wrap">
+            <table id="run-table" class="results hidden">
+              <thead>
+                <tr><th>Profile</th><th>Test</th><th>Category</th><th>Result</th><th class="num">Latency</th><th class="num">Accuracy</th></tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
         </div>
       </section>
     </main>

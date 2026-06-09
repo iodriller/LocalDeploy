@@ -90,6 +90,18 @@ async function postMaybeStream(url, body, onEvent) {
 function busy(button, on) {
   if (!button) return;
   button.disabled = on;
+  button.classList.toggle("loading", on);
+}
+
+function updateHwChip(hw) {
+  const chip = $("#hw-chip");
+  if (hw && hw.gpu_available && hw.gpus[0]) {
+    const g = hw.gpus[0];
+    chip.innerHTML = `<span class="dot"></span>${esc(g.name)} · ${fmtMb(g.vram_free_mb)} free`;
+  } else {
+    chip.innerHTML = `<span class="dot none"></span>CPU only`;
+  }
+  chip.classList.remove("hidden");
 }
 
 // Read the target VRAM the user wants to validate against (manual or probed).
@@ -108,6 +120,7 @@ function targetVram() {
 $$(".tab").forEach((tab) =>
   tab.addEventListener("click", () => {
     $$(".tab").forEach((t) => t.classList.toggle("active", t === tab));
+    $$(".tab").forEach((t) => t.setAttribute("aria-selected", t === tab ? "true" : "false"));
     const name = tab.dataset.tab;
     $$(".tab-panel").forEach((p) => p.classList.toggle("active", p.id === `tab-${name}`));
   })
@@ -153,6 +166,7 @@ async function checkHardware() {
   busy(btn, true);
   try {
     const hw = await getJSON("/system/hardware");
+    updateHwChip(hw);
     const body = $("#hardware-body");
     if (!hw.gpu_available) {
       state.freeVramMb = null;
@@ -619,6 +633,20 @@ $("#btn-example").addEventListener("click", loadExample);
 $("#btn-validate").addEventListener("click", validateSet);
 $("#btn-run").addEventListener("click", runBenchmark);
 $("#upload-json").addEventListener("change", (e) => uploadFile(e.target));
+
+// Keyboard shortcuts: Enter pulls; Cmd/Ctrl+Enter runs the benchmark from the editor.
+$("#pull-model").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") {
+    e.preventDefault();
+    pullModel();
+  }
+});
+$("#qs-editor").addEventListener("keydown", (e) => {
+  if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+    e.preventDefault();
+    runBenchmark();
+  }
+});
 
 // Initial load
 (async function init() {
