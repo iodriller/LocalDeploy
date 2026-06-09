@@ -83,6 +83,12 @@ Graders are selected by `type` from a fixed registry (uploads stay safe JSON —
 ones that fit, and ranks them by accuracy × speed × VRAM headroom, highlighting the winner
 (`POST /system/recommend`). Requires the API + Ollama running.
 
+## Optional token auth
+
+By default the API has no auth. If the server sets `API_TOKEN`, open the UI once at
+`/ui?token=<secret>` — the token is stored locally and sent on every request (`X-API-Token`). If a
+request is rejected (401), the UI prompts you for the token and remembers it.
+
 ## Offline mode
 
 Set `OFFLINE=true` to block all outbound internet calls (the Hugging Face check is skipped). The
