@@ -105,6 +105,19 @@
           <h3 class="sub">New on Hugging Face</h3>
           <div id="updates-body" class="muted">Not checked yet.</div>
         </div>
+
+        <!-- Tune for my GPU -->
+        <div class="card">
+          <div class="card-head">
+            <h2>Recommended setup</h2>
+            <button class="btn primary" id="btn-recommend">Tune for my GPU</button>
+          </div>
+          <p class="muted small">
+            Fit-checks your profiles, runs a short benchmark on the ones that fit, and ranks them by
+            accuracy × speed × VRAM headroom. Needs the API + Ollama running; may take a moment.
+          </p>
+          <div id="recommend-body" class="muted">Not run yet.</div>
+        </div>
       </section>
 
       <!-- ===================== TAB 2: Deploy & Benchmark ===================== -->
@@ -131,7 +144,10 @@
         </div>
 
         <div class="card">
-          <div class="card-head"><h2>Run</h2></div>
+          <div class="card-head">
+            <h2>Run</h2>
+            <button class="btn" id="btn-export" disabled title="Run a benchmark first">Export card</button>
+          </div>
           <div class="row gap wrap">
             <label class="field grow">
               <span>Profile</span>
@@ -153,6 +169,21 @@
               <tbody></tbody>
             </table>
           </div>
+        </div>
+
+        <!-- Compare report cards -->
+        <div class="card">
+          <div class="card-head"><h2>Compare report cards</h2></div>
+          <p class="muted small">
+            Drop two exported cards (<code>.html</code>) to diff them — old model vs new, or quant A vs B.
+          </p>
+          <div class="row gap wrap">
+            <label class="btn file">Card A <input type="file" id="card-a" accept=".html,.json" hidden /></label>
+            <label class="btn file">Card B <input type="file" id="card-b" accept=".html,.json" hidden /></label>
+            <button class="btn" id="btn-compare">Compare</button>
+          </div>
+          <div id="compare-status" class="muted small" style="margin-top: 0.4rem"></div>
+          <div id="compare-body"></div>
         </div>
       </section>
     </main>

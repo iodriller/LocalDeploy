@@ -69,6 +69,25 @@ Graders are selected by `type` from a fixed registry (uploads stay safe JSON —
 | `exact_match` | `expected`, `case_sensitive?` | trimmed response equals `expected` |
 | `classification_set` | `expected` (list) | the response's label set equals `expected` |
 
+## Report cards & comparison (Tab 2)
+
+- **Export card** (enabled after a run) downloads a self-contained `.html` **report card** —
+  model + hardware + per-test scores, with the data embedded as JSON so it stays reproducible and
+  re-importable (`POST /benchmark/export`).
+- **Compare report cards** takes two exported cards and diffs them per test and in aggregate —
+  old model vs new, or quant A vs B (`POST /benchmark/compare`).
+
+## Tune for my GPU (Tab 1)
+
+**Recommended setup → Tune for my GPU** fit-checks your profiles, runs a short benchmark on the
+ones that fit, and ranks them by accuracy × speed × VRAM headroom, highlighting the winner
+(`POST /system/recommend`). Requires the API + Ollama running.
+
+## Offline mode
+
+Set `OFFLINE=true` to block all outbound internet calls (the Hugging Face check is skipped). The
+UI surfaces this in the "Check New Models" result. Verify with `python scripts/egress_selftest.py`.
+
 ## Keyboard shortcuts
 
 - **Enter** in the Pull field — start the pull.
