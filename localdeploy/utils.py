@@ -42,6 +42,10 @@ def require_gpu_only() -> bool:
     return env_bool("REQUIRE_GPU_ONLY", False)
 
 
+def enable_web_ui() -> bool:
+    return env_bool("ENABLE_WEB_UI", True)
+
+
 def model_dump_compat(model: BaseModel) -> Dict[str, Any]:
     if hasattr(model, "model_dump"):
         return model.model_dump()
