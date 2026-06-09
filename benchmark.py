@@ -33,7 +33,7 @@ import time
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple
 
 import requests
 from dotenv import load_dotenv
@@ -48,6 +48,10 @@ REPORTS_DIR = APP_DIR / "reports"
 
 def api_base_url() -> str:
     host = os.getenv("API_HOST", "127.0.0.1")
+    # 0.0.0.0 / :: are bind-all addresses, not valid connect targets on every
+    # platform. The benchmark self-calls /chat, so normalize to loopback.
+    if host in ("0.0.0.0", "::", ""):
+        host = "127.0.0.1"
     port = os.getenv("API_PORT", "8000")
     return f"http://{host}:{port}"
 
@@ -1189,6 +1193,53 @@ def call_chat(base_url: str, profile_name: str, profile_cfg: Dict[str, Any], tes
     return data
 
 
+def _is_oom(error: Optional[str]) -> bool:
+    err = str(error or "").lower()
+    return "memory" in err or "cuda" in err or "out of memory" in err
+
+
+def _is_not_pulled(error: Optional[str]) -> bool:
+    err = str(error or "").lower()
+    return "not available" in err or "not found" in err or "pull" in err
+
+
+def execute_test(
+    base_url: str, profile_name: str, profile: Dict[str, Any], test: TestCase, timeout: int
+) -> TestResult:
+    """Run one test against one profile and grade it.
+
+    This is the shared per-test unit used by both the CLI run loop (`run_profile`)
+    and the streaming `/benchmark/run` endpoint, so call + grading never diverge.
+    It does not print PASS/FAIL or sample VRAM — those stay with the caller.
+    """
+    started = time.perf_counter()
+    data = call_chat(base_url, profile_name, profile, test, timeout)
+    elapsed = float(data.get("elapsed_seconds") or (time.perf_counter() - started))
+    raw_resp = data.get("response")
+    response_text = raw_resp if isinstance(raw_resp, str) else json.dumps(raw_resp or "", ensure_ascii=False)
+    response_text = str(response_text or "")
+    success = bool(data.get("success"))
+    try:
+        accuracy = test.grader(response_text) if success else 0.0
+    except Exception as exc:  # grader bug should not crash the run
+        accuracy = 0.0
+        print(f"  WARN grader for {test.name} raised: {exc}", flush=True)
+    approx_tps = ((len(response_text) / 4) / elapsed) if success and elapsed > 0 else None
+
+    return TestResult(
+        name=test.name,
+        category=test.category,
+        success=success,
+        elapsed_seconds=round(elapsed, 3),
+        response_length=len(response_text),
+        response_preview=response_text[:240].replace("\n", " "),
+        accuracy=round(accuracy, 3),
+        error=data.get("error"),
+        warning=data.get("warning"),
+        approx_tokens_per_second=round(approx_tps, 2) if approx_tps is not None else None,
+    )
+
+
 def run_profile(base_url: str, profile_name: str, profile: Dict[str, Any], tests: List[TestCase], timeout: int) -> ProfileResult:
     print(f"\n=== {profile_name} ({profile.get('model_id')}) ===", flush=True)
     vram_before = nvidia_smi_used_mb()
@@ -1207,55 +1258,30 @@ def run_profile(base_url: str, profile_name: str, profile: Dict[str, Any], tests
 
     consecutive_fail = 0
     for test in tests:
-        started = time.perf_counter()
-        data = call_chat(base_url, profile_name, profile, test, timeout)
-        elapsed = float(data.get("elapsed_seconds") or (time.perf_counter() - started))
-        raw_resp = data.get("response")
-        response_text = raw_resp if isinstance(raw_resp, str) else json.dumps(raw_resp or "", ensure_ascii=False)
-        response_text = str(response_text or "")
-        success = bool(data.get("success"))
-        try:
-            accuracy = test.grader(response_text) if success else 0.0
-        except Exception as exc:  # grader bug should not crash the run
-            accuracy = 0.0
-            print(f"  WARN grader for {test.name} raised: {exc}", flush=True)
-        approx_tps = ((len(response_text) / 4) / elapsed) if success and elapsed > 0 else None
+        item = execute_test(base_url, profile_name, profile, test, timeout)
 
         vram_now = nvidia_smi_used_mb()
         if vram_now is not None and (result.vram_peak_mb is None or vram_now > result.vram_peak_mb):
             result.vram_peak_mb = vram_now
 
-        item = TestResult(
-            name=test.name,
-            category=test.category,
-            success=success,
-            elapsed_seconds=round(elapsed, 3),
-            response_length=len(response_text),
-            response_preview=response_text[:240].replace("\n", " "),
-            accuracy=round(accuracy, 3),
-            error=data.get("error"),
-            warning=data.get("warning"),
-            approx_tokens_per_second=round(approx_tps, 2) if approx_tps is not None else None,
-        )
         result.tests.append(item)
 
-        status = "PASS" if success else "FAIL"
-        acc_label = f"acc={accuracy:.2f}" if success else "acc=n/a"
-        tps_label = f"~{approx_tps:.1f} tok/s" if approx_tps else ""
-        err_label = f" ({data.get('error')})" if not success else ""
+        status = "PASS" if item.success else "FAIL"
+        acc_label = f"acc={item.accuracy:.2f}" if item.success else "acc=n/a"
+        tps_label = f"~{item.approx_tokens_per_second:.1f} tok/s" if item.approx_tokens_per_second else ""
+        err_label = f" ({item.error})" if not item.success else ""
         print(
-            f"  [{status}] {test.category:14} {test.name:26} {elapsed:6.2f}s  {acc_label}  {tps_label}{err_label}",
+            f"  [{status}] {test.category:14} {test.name:26} {item.elapsed_seconds:6.2f}s  {acc_label}  {tps_label}{err_label}",
             flush=True,
         )
 
-        if not success:
+        if not item.success:
             consecutive_fail += 1
-            err_text = str(data.get("error") or "").lower()
-            if any(k in err_text for k in ("memory", "cuda", "out of memory")):
+            if _is_oom(item.error):
                 result.fits_in_vram = False
                 result.notes.append(f"OOM-like failure on {test.name}")
-            if "not available" in err_text or "not found" in err_text or "pull" in err_text:
-                result.notes.append(f"Model not pulled: {data.get('error')}")
+            if _is_not_pulled(item.error):
+                result.notes.append(f"Model not pulled: {item.error}")
                 break
             if consecutive_fail >= 4:
                 result.notes.append(f"Aborted after 4 consecutive failures starting at {test.name}.")
@@ -1266,6 +1292,66 @@ def run_profile(base_url: str, profile_name: str, profile: Dict[str, Any], tests
     result.vram_after_mb = nvidia_smi_used_mb()
     print(f"  VRAM after:  {result.vram_after_mb} MB  peak: {result.vram_peak_mb} MB", flush=True)
     return result
+
+
+def iter_run(
+    base_url: str,
+    profiles_map: Dict[str, Any],
+    selected: List[str],
+    tests: List[TestCase],
+    timeout: int,
+) -> Iterator[Dict[str, Any]]:
+    """Stream a benchmark run as a sequence of event dicts.
+
+    Shares `execute_test` with the CLI so grading is identical. Emits:
+    run_start, profile_start, test_result(*), profile_aborted?, profile_end,
+    run_end. Used by the streaming /benchmark/run endpoint. No printing, no
+    VRAM tracking — the caller decides how to present events.
+    """
+    yield {
+        "event": "run_start",
+        "profiles": list(selected),
+        "test_count": len(tests),
+        "tests": [t.name for t in tests],
+        "categories": sorted({t.category for t in tests}),
+    }
+    started = time.perf_counter()
+    overall: List[Dict[str, Any]] = []
+    for name in selected:
+        profile = profiles_map[name]
+        yield {"event": "profile_start", "profile": name, "model_id": profile.get("model_id")}
+        consecutive_fail = 0
+        prof: List[TestResult] = []
+        for test in tests:
+            item = execute_test(base_url, name, profile, test, timeout)
+            prof.append(item)
+            event = asdict(item)
+            event["event"] = "test_result"
+            event["profile"] = name
+            yield event
+
+            if not item.success:
+                consecutive_fail += 1
+                if _is_not_pulled(item.error):
+                    yield {"event": "profile_aborted", "profile": name, "reason": f"model not pulled: {item.error}"}
+                    break
+                if consecutive_fail >= 4:
+                    yield {"event": "profile_aborted", "profile": name, "reason": "4 consecutive failures"}
+                    break
+            else:
+                consecutive_fail = 0
+
+        passed = sum(1 for t in prof if t.success)
+        avg_acc = round(statistics.mean([t.accuracy for t in prof]), 3) if prof else 0.0
+        summary = {"tests": len(prof), "passed": passed, "avg_accuracy": avg_acc}
+        overall.append({"profile": name, **summary})
+        yield {"event": "profile_end", "profile": name, "summary": summary}
+
+    yield {
+        "event": "run_end",
+        "elapsed_seconds": round(time.perf_counter() - started, 2),
+        "profiles": overall,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -1401,6 +1487,191 @@ def gpu_info() -> Dict[str, Any]:
         return {"gpu_name": name, "gpu_total_mb": int(total)}
     except Exception:
         return {"gpu_name": None, "gpu_total_mb": None}
+
+
+# ---------------------------------------------------------------------------
+# Question-set grader registry (safe, JSON-driven graders for uploaded sets)
+# ---------------------------------------------------------------------------
+
+GRADER_TYPES = [
+    "contains_all",
+    "json_array_min_len",
+    "number_within",
+    "exact_match",
+    "classification_set",
+]
+
+
+def build_grader(spec: Any) -> Callable[[str], float]:
+    """Build a grader callable from a JSON spec. Raises ValueError on a bad spec.
+
+    Keeps uploaded question sets safe JSON (no arbitrary code): each grader is
+    selected by `type` from a fixed registry and reuses the helpers already in
+    this module (`_extract_json`, `_grade_number`).
+    """
+    if not isinstance(spec, dict):
+        raise ValueError("grader must be an object with a 'type' field")
+    gtype = spec.get("type")
+
+    if gtype == "contains_all":
+        keywords = spec.get("keywords")
+        if not isinstance(keywords, list) or not keywords:
+            raise ValueError("contains_all requires a non-empty 'keywords' list")
+        case_sensitive = bool(spec.get("case_sensitive", False))
+        needles = [str(k) if case_sensitive else str(k).lower() for k in keywords]
+
+        def grade_contains(text: str) -> float:
+            hay = text if case_sensitive else text.lower()
+            hits = sum(1 for needle in needles if needle in hay)
+            return hits / len(needles)
+
+        return grade_contains
+
+    if gtype == "json_array_min_len":
+        minimum = spec.get("min", 1)
+        if not isinstance(minimum, int) or isinstance(minimum, bool) or minimum < 0:
+            raise ValueError("json_array_min_len requires a non-negative integer 'min'")
+
+        def grade_array(text: str) -> float:
+            data = _extract_json(text)
+            return 1.0 if isinstance(data, list) and len(data) >= minimum else 0.0
+
+        return grade_array
+
+    if gtype == "number_within":
+        if "expected" not in spec:
+            raise ValueError("number_within requires 'expected'")
+        try:
+            expected = float(spec["expected"])
+            tolerance = float(spec.get("tolerance", 0.5))
+        except (TypeError, ValueError):
+            raise ValueError("number_within 'expected'/'tolerance' must be numbers")
+        return _grade_number(expected, tolerance)
+
+    if gtype == "exact_match":
+        if "expected" not in spec:
+            raise ValueError("exact_match requires 'expected'")
+        expected_str = str(spec["expected"])
+        case_sensitive = bool(spec.get("case_sensitive", False))
+
+        def grade_exact(text: str) -> float:
+            got, want = text.strip(), expected_str.strip()
+            if not case_sensitive:
+                got, want = got.lower(), want.lower()
+            return 1.0 if got == want else 0.0
+
+        return grade_exact
+
+    if gtype == "classification_set":
+        expected = spec.get("expected")
+        if not isinstance(expected, list):
+            raise ValueError("classification_set requires an 'expected' list")
+        expected_set = {str(x).strip().lower() for x in expected}
+
+        def grade_set(text: str) -> float:
+            data = _extract_json(text)
+            if isinstance(data, list):
+                got = {str(x).strip().lower() for x in data}
+            else:
+                got = {p.strip().lower() for p in re.split(r"[,\n]", text) if p.strip()}
+            return 1.0 if got == expected_set else 0.0
+
+        return grade_set
+
+    raise ValueError(f"unknown grader type '{gtype}' (allowed: {', '.join(GRADER_TYPES)})")
+
+
+def validate_question_set(payload: Any) -> Dict[str, Any]:
+    """Validate an uploaded question set against the schema and grader registry.
+
+    Returns a structured report with per-row errors; never raises.
+    """
+    errors: List[Dict[str, Any]] = []
+    if not isinstance(payload, dict):
+        return {
+            "success": True,
+            "valid": False,
+            "question_count": 0,
+            "errors": [{"index": -1, "error": "top-level must be a JSON object"}],
+            "grader_types": GRADER_TYPES,
+        }
+
+    questions = payload.get("questions")
+    if not isinstance(questions, list) or not questions:
+        errors.append({"index": -1, "error": "'questions' must be a non-empty list"})
+        questions = []
+
+    seen_names: set = set()
+    for index, question in enumerate(questions):
+        if not isinstance(question, dict):
+            errors.append({"index": index, "error": "question must be an object"})
+            continue
+        name = question.get("name")
+        if not name or not isinstance(name, str):
+            errors.append({"index": index, "error": "missing or invalid 'name'"})
+        elif name in seen_names:
+            errors.append({"index": index, "name": name, "error": "duplicate 'name'"})
+        else:
+            seen_names.add(name)
+        if not question.get("category") or not isinstance(question.get("category"), str):
+            errors.append({"index": index, "name": question.get("name"), "error": "missing or invalid 'category'"})
+        if not question.get("prompt") or not isinstance(question.get("prompt"), str):
+            errors.append({"index": index, "name": question.get("name"), "error": "missing or invalid 'prompt'"})
+        mot = question.get("max_output_tokens", 256)
+        if not isinstance(mot, int) or isinstance(mot, bool) or mot <= 0:
+            errors.append({"index": index, "name": question.get("name"), "error": "'max_output_tokens' must be a positive integer"})
+        try:
+            build_grader(question.get("grader"))
+        except ValueError as exc:
+            errors.append({"index": index, "name": question.get("name"), "error": f"grader: {exc}"})
+
+    return {
+        "success": True,
+        "valid": len(errors) == 0,
+        "question_count": len(questions),
+        "errors": errors,
+        "grader_types": GRADER_TYPES,
+    }
+
+
+def build_test_cases(payload: Dict[str, Any]) -> List[TestCase]:
+    """Turn a validated question set into TestCase objects for a run."""
+    cases: List[TestCase] = []
+    for question in payload.get("questions", []):
+        cases.append(
+            TestCase(
+                name=str(question["name"]),
+                category=str(question.get("category", "custom")),
+                prompt=str(question["prompt"]),
+                grader=build_grader(question.get("grader")),
+                grader_explainer=str(question.get("grader_explainer", "")),
+                max_output_tokens=int(question.get("max_output_tokens", 256)),
+            )
+        )
+    return cases
+
+
+EXAMPLE_QUESTION_SET: Dict[str, Any] = {
+    "version": 1,
+    "questions": [
+        {
+            "name": "planning_triage_basic",
+            "category": "planning",
+            "prompt": "List 3 first steps to triage a service outage. Return a JSON array of strings.",
+            "max_output_tokens": 512,
+            "grader": {"type": "json_array_min_len", "min": 3},
+            "grader_explainer": "Passes if the model returns a JSON array with at least 3 steps.",
+        },
+        {
+            "name": "math_tolerance",
+            "category": "reasoning",
+            "prompt": "What is 12.5% of 240? Answer with the number only.",
+            "max_output_tokens": 32,
+            "grader": {"type": "number_within", "expected": 30, "tolerance": 0.5},
+            "grader_explainer": "Passes if the parsed number is within 0.5 of 30.",
+        },
+    ],
+}
 
 
 def main() -> int:

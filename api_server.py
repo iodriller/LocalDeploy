@@ -13,12 +13,14 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from localdeploy.backends.llamacpp import call_llamacpp, llama_health
 from localdeploy.backends.ollama import call_ollama, ollama_models, stream_ollama
 from localdeploy.utils import (
     BackendCallError,
+    enable_web_ui,
     env_bool,
     env_float,
     env_int,
@@ -1102,6 +1104,15 @@ async def vision(request: Request) -> Dict[str, Any]:
 @app.post("/benchmark", response_model=LocalLLMResponse)
 def benchmark(request: BenchmarkRequest) -> Dict[str, Any]:
     return run_benchmark(model_dump_compat(request))
+
+
+# Web UI and control-plane endpoints are additive and opt-out via ENABLE_WEB_UI.
+# When disabled, the server behaves exactly as it did before this package existed.
+if enable_web_ui():
+    from localdeploy.web import router as web_router
+
+    app.include_router(web_router)
+    app.mount("/ui", StaticFiles(directory=str(APP_DIR / "web"), html=True), name="ui")
 
 
 if __name__ == "__main__":
