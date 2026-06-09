@@ -42,6 +42,17 @@ def require_gpu_only() -> bool:
     return env_bool("REQUIRE_GPU_ONLY", False)
 
 
+def enable_web_ui() -> bool:
+    return env_bool("ENABLE_WEB_UI", True)
+
+
+def offline_mode() -> bool:
+    """When true, the server makes no outbound internet calls (Hugging Face
+    update checks are skipped). Local backend calls to loopback are unaffected.
+    LocalDeploy has no telemetry; this is a hard, verifiable guarantee."""
+    return env_bool("OFFLINE", False)
+
+
 def model_dump_compat(model: BaseModel) -> Dict[str, Any]:
     if hasattr(model, "model_dump"):
         return model.model_dump()
