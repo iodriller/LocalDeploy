@@ -35,6 +35,11 @@ def _base_name(name: str) -> str:
     return (name or "").split(":")[0].split("/")[-1]
 
 
+def _norm(text: str) -> str:
+    """Alphanumeric-only lowercase, so 'gemma3' matches 'google/gemma-3-4b-it'."""
+    return re.sub(r"[^a-z0-9]", "", (text or "").lower())
+
+
 def _derive_queries(installed: List[Dict[str, Any]]) -> List[str]:
     """Turn installed model names into HF search terms (e.g. gemma3:4b -> gemma)."""
     queries: List[str] = []
@@ -77,7 +82,8 @@ def _list_hf(query: str, limit: int) -> Tuple[Optional[List[Dict[str, Any]]], Op
 def check_updates(req: CheckUpdatesRequest) -> Dict[str, Any]:
     installed, _ = _ollama.list_installed()
     queries = req.queries or (_derive_queries(installed) if installed else ["gemma", "qwen"])
-    installed_bases = {_base_name(m.get("name") or "").lower() for m in installed if m.get("name")}
+    installed_bases = {_norm(_base_name(m.get("name") or "")) for m in installed if m.get("name")}
+    installed_bases.discard("")
 
     results: List[Dict[str, Any]] = []
     last_error: Optional[str] = None
@@ -88,8 +94,8 @@ def check_updates(req: CheckUpdatesRequest) -> Dict[str, Any]:
             last_error, online = error, False
             continue
         for item in items or []:
-            hid = (item.get("id") or "").lower()
-            item["installed_match"] = any(base and base in hid for base in installed_bases)
+            hid = _norm(item.get("id") or "")
+            item["installed_match"] = any(base in hid for base in installed_bases)
         results.append({"query": query, "candidates": items or []})
 
     if not results:

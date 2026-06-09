@@ -14,6 +14,7 @@ except ImportError:  # pragma: no cover
     pytest.skip("FastAPI TestClient requires httpx", allow_module_level=True)
 
 from api_server import app
+from localdeploy.web import models as models_mod
 from localdeploy.web import registry
 
 client = TestClient(app)
@@ -115,3 +116,86 @@ def test_serve_unknown_profile() -> None:
     body = client.post("/models/serve", json={"profile": "nope"}).json()
     assert body["success"] is False
     assert "Unknown profile" in body["error"]
+
+
+# --- success paths (simulate Ollama/HF reachable via patching) ---------------
+# Existing tests only cover the offline branch; these exercise the parsing of a
+# healthy backend so a response-shape bug cannot hide in the success path.
+
+
+def test_status_success_path(monkeypatch) -> None:
+    monkeypatch.setattr(
+        models_mod._ollama,
+        "list_running",
+        lambda: ([{"name": "gemma3:4b", "size_vram": 4_000_000_000}], None),
+    )
+    body = client.get("/system/status").json()
+    assert body["success"] is True
+    assert body["ollama"]["reachable"] is True
+    assert body["served_models"] == ["gemma3:4b"]
+
+
+def test_serve_success_path(monkeypatch) -> None:
+    calls = {}
+    monkeypatch.setattr(
+        models_mod._ollama, "load_model", lambda m, k: calls.update(model=m, keep_alive=k) or {}
+    )
+    monkeypatch.setattr(models_mod._ollama, "list_running", lambda: ([{"name": "gemma3:4b"}], None))
+    body = client.post("/models/serve", json={"model": "gemma3:4b", "keep_alive": "10m"}).json()
+    assert body["success"] is True
+    assert body["served"] == "gemma3:4b"
+    assert calls == {"model": "gemma3:4b", "keep_alive": "10m"}
+
+
+def test_stop_success_path(monkeypatch) -> None:
+    monkeypatch.setattr(models_mod._ollama, "unload_model", lambda m: {})
+    body = client.post("/models/stop", json={"model": "gemma3:4b"}).json()
+    assert body["success"] is True
+    assert body["stopped"] == "gemma3:4b"
+
+
+def test_switch_success_path(monkeypatch) -> None:
+    unloaded = []
+    monkeypatch.setattr(models_mod._ollama, "unload_model", lambda m: unloaded.append(m) or {})
+    monkeypatch.setattr(models_mod._ollama, "load_model", lambda m, k: {})
+    monkeypatch.setattr(models_mod._ollama, "list_running", lambda: ([{"name": "gemma3:4b"}], None))
+    body = client.post(
+        "/models/switch", json={"to_model": "gemma3:4b", "from_model": "qwen3:8b"}
+    ).json()
+    assert body["success"] is True
+    assert body["switched_from"] == "qwen3:8b"
+    assert unloaded == ["qwen3:8b"]
+
+
+def test_pull_success_path_streams_events(monkeypatch) -> None:
+    def fake_pull(model):
+        yield {"status": "pulling manifest"}
+        yield {"status": "downloading", "completed": 5, "total": 10}
+        yield {"status": "verifying"}
+
+    monkeypatch.setattr(models_mod._ollama, "pull_stream", fake_pull)
+    response = client.post("/models/pull", json={"model": "gemma3:4b", "free_vram_mb": 8192})
+    assert response.status_code == 200
+    text = response.text
+    assert "pulling manifest" in text
+    assert "downloading" in text
+    assert '"status": "success"' in text
+    assert "[DONE]" in text
+
+
+def test_check_updates_derives_queries_from_installed(monkeypatch) -> None:
+    monkeypatch.setattr(
+        models_mod._ollama, "list_installed", lambda: ([{"name": "gemma3:4b"}], None)
+    )
+    # registry imports _ollama as its own reference; patch there too.
+    monkeypatch.setattr(registry._ollama, "list_installed", lambda: ([{"name": "gemma3:4b"}], None))
+    monkeypatch.setattr(
+        registry, "_list_hf", lambda q, limit: ([{"id": f"google/{q}-3-4b-it"}], None)
+    )
+    body = client.post("/registry/check-updates", json={}).json()
+    assert body["success"] is True
+    assert body["queries"] == ["gemma"]  # gemma3 -> gemma
+    candidate = body["results"][0]["candidates"][0]
+    assert candidate["id"] == "google/gemma-3-4b-it"
+    # normalized matching: installed 'gemma3:4b' should flag the hyphenated HF id
+    assert candidate["installed_match"] is True
