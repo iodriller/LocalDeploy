@@ -353,3 +353,57 @@ api_server.py             # flag-guarded UI mount + include_router       [edited
 requirements.txt          # + huggingface_hub (and optional pynvml)      [edited]
 LICENSE                   # change "All rights reserved" → OSS license   [owner decision, Phase 7]
 ```
+
+---
+
+# Extra additions — high-value differentiators (post-core)
+
+> Reviewed after the core plan. These are **not** filler. Each one (a) is something the obvious
+> competitors (Ollama, LM Studio, Jan, GPT4All, Open WebUI) do **not** do well, (b) is built
+> almost entirely from machinery this repo **already has** (benchmark engine, profile metadata,
+> fit-check, hardware probe), and (c) earns its place on launch day. Build them only **after**
+> Phases 0–6 are green; none is on the critical path. Listed in priority order.
+
+### D1 — Shareable, reproducible "Report Cards" (the growth loop)
+- **What:** export any benchmark run as a single self-contained file (`.html` + `.md`) that
+  bundles **model + exact profile/config + detected hardware + per-test scores + latencies**.
+  An "Export / Share card" button in Tab 2.
+- **Why it's a differentiator:** nobody else produces *hardware-specific, reproducible* model
+  report cards. Every card someone posts ("gemma3:4b on an RTX 4060: 7/8, 1.6 s avg") is both
+  honest proof and free distribution that points back to the project. This is the cheapest
+  organic-growth lever available and it raises trust at the same time.
+- **Built-in A/B compare (subsumes regression-guarding):** drop two cards in to diff them —
+  old model vs new model, or quant A vs quant B. This directly answers *"is the Hugging Face
+  update actually better, or just newer?"* before a user commits to switching.
+- **Minimal build:** a serializer over the existing `benchmark.py` result dicts +
+  `/system/hardware`. No new engine. ~1 endpoint (`/benchmark/export`) + a static template.
+
+### D2 — One-click "Tune for my GPU" (kills the config burden)
+- **What:** a single button that, given the detected hardware, picks the candidate profiles that
+  *fit*, runs a short benchmark subset, and recommends the best by a transparent
+  speed × quality × headroom score — then offers to set it as the default.
+- **Why it's a differentiator:** every competing tool makes the user *guess* a model/quant/context
+  combo and discover failure by OOM or slowness. Turning `config.json` from homework into one
+  button is the strongest possible expression of the "super easy, don't make people set it up"
+  goal — and it's defensible because it leans on the fit-check + benchmark this repo uniquely has.
+- **Minimal build:** orchestration only — loop fit-check over profiles, call the existing
+  benchmark generator with a small case subset, rank. 1 endpoint (`/system/recommend`), reuses
+  Appendix B math and Phase 4 streaming.
+
+### D3 — Verifiable "truly local" / privacy posture (the trust anchor)
+- **What:** an explicit **offline/airplane mode** (`OFFLINE=true`) that blocks all outbound
+  network except user-initiated model pulls, a **no-telemetry-ever** promise stated plainly, and
+  a one-command **egress self-test** users can run to confirm nothing phones home.
+- **Why it's a differentiator:** "local LLM" tools are adopted largely *for* privacy, yet most
+  ask you to take it on faith. A claim a user can **verify themselves** is a credibility moat,
+  especially for the privacy-conscious / regulated audiences most likely to share a public repo.
+- **Minimal build:** one env flag honored at the HTTP-client boundary, a short pytest that asserts
+  no egress in offline mode, and a README badge + section. Mostly wiring and docs, little code.
+
+### Deliberately excluded (kept out on purpose, to stay focused)
+Considered and **rejected for v1** — each would broaden scope, add heavy deps, or dilute the
+"local serving + honest benchmarking" identity: general **RAG / document chat** (a different
+product), **multi-user accounts / sharing server**, **in-app fine-tuning or training**, a
+**plugin/model marketplace**, and a **mobile app**. The OpenAI-compatible endpoints already in
+`api_server.py` cover "use it from my existing app," so no new integration surface is needed.
+Revisit only if real post-launch demand appears.
