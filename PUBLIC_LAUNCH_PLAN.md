@@ -407,3 +407,141 @@ product), **multi-user accounts / sharing server**, **in-app fine-tuning or trai
 **plugin/model marketplace**, and a **mobile app**. The OpenAI-compatible endpoints already in
 `api_server.py` cover "use it from my existing app," so no new integration surface is needed.
 Revisit only if real post-launch demand appears.
+
+---
+
+# Step-by-step implementation (invoke one at a time)
+
+> Each step is a **self-contained, digestible chunk**: small enough to finish in one session
+> without blowing context, and it leaves the repo **working and tests green** when done. Tell me
+> "do Step N" and I'll execute exactly that step. Dependencies are noted so steps stay ordered.
+> Everything stays **flag-guarded and additive** — the existing CLI/API is never broken.
+>
+> The repo being private → public is **out of scope** (owner handles it); no license/visibility
+> work appears below.
+
+### Step 1 — Scaffolding & flag-guarded mount
+- **Do:** add `enable_web_ui()` env helper (reads `ENABLE_WEB_UI`, default true); create
+  `localdeploy/web/__init__.py` with an empty `APIRouter`; create `web/index.html` placeholder;
+  add the guarded mount block to `api_server.py` (`include_router` + `StaticFiles` at `/ui`).
+  Add `huggingface_hub` and optional `pynvml` to `requirements.txt` as optional imports.
+- **Files:** `localdeploy/web/__init__.py` [new], `web/index.html` [new], `api_server.py` [edit],
+  `requirements.txt` [edit], env helper [edit].
+- **Accept:** with `ENABLE_WEB_UI=false` server is unchanged; with it on, `/ui` serves the
+  placeholder and `/docs` still lists all original endpoints. Existing tests pass.
+- **Depends on:** nothing.
+
+### Step 2 — Hardware probe endpoint
+- **Do:** implement `GET /system/hardware` (parse `nvidia-smi` query, or `pynvml`; clean
+  CPU-only fallback returning "no NVIDIA GPU detected"). Return GPU name, total/free VRAM,
+  driver/CUDA, CPU/RAM.
+- **Files:** `localdeploy/web/` (hardware module + route), 1 small test.
+- **Accept:** endpoint returns structured JSON on a GPU box and a graceful payload with no GPU.
+- **Depends on:** Step 1.
+
+### Step 3 — VRAM fit-check endpoint
+- **Do:** implement `POST /system/fit-check` using Appendix B math; read params/quant/context
+  from the profile (`config.json`) or model metadata. Return verdict + numeric breakdown +
+  margin + suggested knobs.
+- **Files:** `localdeploy/web/` (fit module + route), unit test for the math.
+- **Accept:** 12B Q4 long-context → `WONT_FIT` on 8 GB with numbers; 4B safe → `FITS`.
+- **Depends on:** Step 2.
+
+### Step 4 — Registry: installed + Hugging Face update check
+- **Do:** `GET /registry/installed` (Ollama `/api/tags`); `POST /registry/check-updates`
+  (HF Hub `list_models`/revision compare, diffed vs installed). Network failures degrade with a
+  clear message, no crash.
+- **Files:** `localdeploy/web/` (registry module + routes), test with HF call mocked.
+- **Accept:** installed list returns; update check lists candidates or a clean "offline/none".
+- **Depends on:** Step 1.
+
+### Step 5 — Model pull (streamed), gated by fit-check
+- **Do:** `POST /models/pull` streaming `ollama pull` progress; refuse (or require explicit
+  override) when Step 3 says it won't fit.
+- **Files:** `localdeploy/web/` (pull route), test with pull mocked.
+- **Accept:** pulling streams progress; pulled model then appears in `/registry/installed`; an
+  unfitting pull is blocked unless overridden.
+- **Depends on:** Steps 3, 4.
+
+### Step 6 — Serve / stop / switch + status
+- **Do:** `GET /system/status` (served model, health, VRAM in use via Ollama `/api/ps`);
+  `POST /models/serve` (warmup/keep-alive; llama.cpp start); `POST /models/stop`
+  (`keep_alive: 0` / stop process); `POST /models/switch` (stop→serve).
+- **Files:** `localdeploy/web/` (lifecycle module + routes), test with backend mocked.
+- **Accept:** serve shows model in status; switch swaps; stop frees VRAM (seen via Step 2).
+- **Depends on:** Steps 1, 2; uses backends already present.
+
+### Step 7 — Benchmark refactor + validate + example
+- **Do:** extract `benchmark.py`'s per-test loop into an importable generator
+  (`iter_run(...) -> yields result dicts`); make the CLI a thin wrapper (behavior preserved).
+  Add `POST /benchmark/validate` (Appendix A schema + grader registry) and
+  `GET /benchmark/example`.
+- **Files:** `benchmark.py` [edit, behavior-preserving], `localdeploy/web/` (routes), tests for
+  the generator and the validator.
+- **Accept:** CLI output unchanged; valid set passes validation, a malformed row gets a
+  row-specific error.
+- **Depends on:** Step 1.
+
+### Step 8 — Benchmark run (streamed)
+- **Do:** `POST /benchmark/run` streaming per-test results (score, latency, pass/fail) then an
+  aggregate summary, using the Step 7 generator.
+- **Files:** `localdeploy/web/` (run route), streaming test.
+- **Accept:** running the example set streams each result and ends with a summary table.
+- **Depends on:** Step 7.
+
+### Step 9 — UI Tab 1 (Serve & Diagnose)
+- **Do:** build the static shell (`web/index.html`, `app.js`, `styles.css`, no CDN); wire
+  **Check My Hardware**, served-model card + status, **Start/Stop/Switch**, model list with
+  **Check New Models** + per-row fit warning and **Pull**.
+- **Files:** `web/` assets [new/edit].
+- **Accept:** a user can probe hardware, see status, serve/stop/switch, and pull from the UI.
+- **Depends on:** Steps 2, 4, 5, 6.
+
+### Step 10 — UI Tab 2 (Deploy & Benchmark)
+- **Do:** question-set editor with **Load example**, **Upload .json**, **Validate**, **Run**,
+  and a **live streaming** results panel + summary.
+- **Files:** `web/` assets [edit].
+- **Accept:** load example → validate → run streams results; malformed upload is rejected with a
+  clear message.
+- **Depends on:** Steps 7, 8.
+
+### Step 11 — UI polish & one-screen flow
+- **Do:** two clean tabs, empty-state hints, error toasts, dark-friendly CSS, reuse existing
+  guardrail messages; offline-friendly (no external assets).
+- **Files:** `web/` assets [edit], `docs/UI.md` [new].
+- **Accept:** a first-timer goes hardware → pull → serve → benchmark without reading docs.
+- **Depends on:** Steps 9, 10.
+
+### Step 12 — One-command run (Docker + launcher)
+- **Do:** `Dockerfile`, `docker-compose.yml` (API + UI + Ollama), `scripts/start.sh`, and a
+  README "60-second quickstart". Document GPU passthrough and LAN bind (`API_HOST=0.0.0.0`) with
+  the no-auth caveat.
+- **Files:** `Dockerfile` [new], `docker-compose.yml` [new], `scripts/start.sh` [new],
+  `README.md` [edit].
+- **Accept:** on a clean machine `docker compose up` (or `./scripts/start.sh`) yields a working
+  `/ui` with no manual config editing.
+- **Depends on:** Steps 9–11.
+
+### Step 13 — Differentiator D1: shareable Report Cards + A/B compare
+- **Do:** `POST /benchmark/export` → self-contained `.html`/`.md` card (model + config +
+  hardware + scores); "Export / Share card" button; drop-in **compare two cards** view.
+- **Files:** `localdeploy/web/` (export route + template), `web/` assets, test.
+- **Accept:** a run exports a portable card; comparing two cards shows a clear diff.
+- **Depends on:** Steps 2, 8.
+
+### Step 14 — Differentiator D2: one-click "Tune for my GPU"
+- **Do:** `POST /system/recommend` → fit-filter profiles, run a short benchmark subset, rank by
+  speed × quality × headroom, recommend (and offer to set default). Button in Tab 1.
+- **Files:** `localdeploy/web/` (recommend route), `web/` assets, test.
+- **Accept:** on a given GPU it returns a ranked recommendation with the reasoning shown.
+- **Depends on:** Steps 3, 8.
+
+### Step 15 — Differentiator D3: verifiable offline / privacy
+- **Do:** `OFFLINE=true` honored at the HTTP-client boundary (block egress except user-initiated
+  pulls), a "no telemetry" statement, a one-command egress self-test, README badge/section.
+- **Files:** client boundary [edit], test asserting no egress in offline mode, `README.md` [edit].
+- **Accept:** offline mode blocks unexpected egress; the self-test passes and is documented.
+- **Depends on:** Steps 4, 5 (so pulls remain the one allowed egress).
+
+**Suggested order:** 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 → 9 → 10 → 11 → 12, then differentiators
+13 → 14 → 15. Steps 2/3, 4/5, and 7/8 are natural pairs; the rest can be paused between.
