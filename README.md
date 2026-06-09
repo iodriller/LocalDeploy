@@ -4,7 +4,25 @@ LocalDeploy is a small Windows-friendly project for running local LLMs behind a 
 
 It defaults to Ollama and can optionally call a local llama.cpp server for GGUF experiments. It does not use cloud inference APIs.
 
+## 60-second quickstart (Docker)
+
+The fastest way to try everything — bundles Ollama, the API, and the web UI in one container:
+
+```bash
+docker compose up
+```
+
+Then open **http://localhost:8000/ui**. From the UI you can check your hardware, pull a model,
+start it, and run a benchmark — no config editing required. To use your NVIDIA GPU, uncomment the
+`deploy.resources` block in `docker-compose.yml` (needs the NVIDIA Container Toolkit). To pre-pull
+a model on first boot, set `PULL_MODELS=gemma3:4b` in the compose file.
+
+On macOS/Linux without Docker (Ollama installed separately), `./scripts/start.sh` does the venv
+setup and starts the same server.
+
 ## What It Provides
+
+- **Web UI** at `/ui` — a two-tab control panel (serve/diagnose + benchmark); see [docs/UI.md](docs/UI.md)
 
 - Local FastAPI server for chat, vision, estimates, profiles, and benchmarks
 - Ollama backend at `http://localhost:11434`
@@ -177,6 +195,24 @@ llama-server ^
   --host 127.0.0.1 ^
   --port 8080
 ```
+
+## Web UI
+
+A static control panel is served at `/ui` (no build step, no external assets). It wires up
+hardware detection, VRAM fit-checks, model pull/serve/switch, Hugging Face update checks, and the
+benchmark runner over the existing HTTP API. Disable it with `ENABLE_WEB_UI=false`. Full guide:
+[docs/UI.md](docs/UI.md).
+
+## Network access and security
+
+By default the server binds to `127.0.0.1` (local machine only). To reach it from other machines
+on your LAN, set `API_HOST=0.0.0.0` (the Docker image already does this inside the container, and
+publishes port 8000).
+
+> **No authentication.** The API has no auth layer, so anyone who can reach the bound address can
+> drive your models. Only expose `0.0.0.0` on a trusted network, and do not put it directly on the
+> public internet. The server still refuses non-loopback *backend* URLs (it will not send prompts
+> to a remote inference host) — see `SECURITY.md`.
 
 ## Local-Only Notes
 
