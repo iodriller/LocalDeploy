@@ -1,0 +1,31 @@
+# One-command run:  docker compose up   ->   open http://localhost:8000/ui
+#
+# This single service bundles Ollama + the LocalDeploy API/UI (they talk over
+# localhost inside the container, so the loopback-only backend guard holds).
+services:
+  localdeploy:
+    build: .
+    image: localdeploy:latest
+    ports:
+      - "8000:8000" # API + UI (http://localhost:8000/ui)
+    volumes:
+      - ollama-models:/root/.ollama # persist pulled models between runs
+    environment:
+      - API_HOST=0.0.0.0
+      - ENABLE_WEB_UI=true
+      # Pre-pull models on first boot (space-separated), e.g.:
+      # - PULL_MODELS=gemma3:4b
+    restart: unless-stopped
+
+    # --- NVIDIA GPU passthrough -------------------------------------------
+    # Requires the NVIDIA Container Toolkit on the host. Uncomment to use it:
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+
+volumes:
+  ollama-models:
