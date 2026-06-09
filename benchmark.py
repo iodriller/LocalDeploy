@@ -48,6 +48,10 @@ REPORTS_DIR = APP_DIR / "reports"
 
 def api_base_url() -> str:
     host = os.getenv("API_HOST", "127.0.0.1")
+    # 0.0.0.0 / :: are bind-all addresses, not valid connect targets on every
+    # platform. The benchmark self-calls /chat, so normalize to loopback.
+    if host in ("0.0.0.0", "::", ""):
+        host = "127.0.0.1"
     port = os.getenv("API_PORT", "8000")
     return f"http://{host}:{port}"
 

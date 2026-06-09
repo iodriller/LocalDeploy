@@ -54,6 +54,12 @@ def test_classification_set():
     assert grader("a") == 0.0
 
 
+def test_api_base_url_normalizes_bind_all(monkeypatch):
+    monkeypatch.setenv("API_HOST", "0.0.0.0")
+    monkeypatch.setenv("API_PORT", "8000")
+    assert benchmark.api_base_url() == "http://127.0.0.1:8000"
+
+
 def test_unknown_grader_type_raises():
     with pytest.raises(ValueError):
         build_grader({"type": "does_not_exist"})

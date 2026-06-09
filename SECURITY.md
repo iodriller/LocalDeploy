@@ -58,6 +58,7 @@ These are deliberate trade-offs for the single-user, local-only design. They bec
 | No output PII/jailbreak filter | Outputs stay on the machine | Piping responses to logs, tickets, or other systems |
 | Backend error bodies surfaced in API errors | Helpful for debugging locally | Could leak local filesystem paths if exposed |
 | `/benchmark` runs every enabled profile | Diagnostic tool, deliberate | Unauthenticated callers could exhaust GPU |
+| Web control-plane (`/models/pull`, `/models/serve`, `/system/recommend`, `/system/set-default`) | Convenience for the local operator | Unauthenticated callers could fill disk (pulls), load/unload models, run benchmarks, or rewrite `config.json`. Disable with `ENABLE_WEB_UI=false`, or keep the bind on loopback |
 
 ## Reporting
 
