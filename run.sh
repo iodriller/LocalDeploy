@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # LocalDeploy one-command launcher.
-# Usage (fresh machine, nothing installed):
-#   curl -fsSL https://raw.githubusercontent.com/iodriller/localdeploy/main/run.sh | sh
+# Usage (fresh machine — nothing pre-installed):
+#   curl -fsSL https://raw.githubusercontent.com/iodriller/localdeploy/main/run.sh | bash
 #
 # What it does:
-#   1. Installs Docker if it is not already present (Linux via get.docker.com,
-#      macOS via Homebrew cask — both only when needed).
-#   2. Clones or updates the repo into ~/localdeploy (skipped when running
-#      from inside a clone).
-#   3. Runs `docker compose up --build -d` and prints the UI URL.
+#   1. Installs git if absent (Linux only; macOS ships it).
+#   2. Installs Docker if absent (Linux via get.docker.com; macOS via Homebrew cask).
+#   3. Installs Docker Compose v2 plugin if absent (Linux only; comes with Docker Desktop on macOS).
+#   4. Clones or updates the repo into ~/localdeploy (skipped when running from inside a clone).
+#   5. Runs `docker compose up --build -d` and prints the UI URL.
 set -euo pipefail
 
 REPO_URL="https://github.com/iodriller/localdeploy.git"
@@ -29,7 +29,43 @@ os_type() {
   esac
 }
 
-# ── 1. Ensure Docker is installed ──────────────────────────────────────────────
+# Detect the Linux package manager (returns: apt | yum | dnf | apk | unknown)
+linux_pkg_manager() {
+  if   command -v apt-get &>/dev/null; then echo apt
+  elif command -v dnf     &>/dev/null; then echo dnf
+  elif command -v yum     &>/dev/null; then echo yum
+  elif command -v apk     &>/dev/null; then echo apk
+  else echo unknown
+  fi
+}
+
+# ── 1. Ensure git is installed ──────────────────────────────────────────────────
+ensure_git() {
+  if command -v git &>/dev/null; then
+    return
+  fi
+
+  local os
+  os=$(os_type)
+
+  if [ "$os" = "linux" ]; then
+    info "git not found — installing ..."
+    case "$(linux_pkg_manager)" in
+      apt) sudo apt-get update -qq && sudo apt-get install -y git ;;
+      dnf) sudo dnf install -y git ;;
+      yum) sudo yum install -y git ;;
+      apk) sudo apk add --no-cache git ;;
+      *)   die "Cannot install git — unknown package manager. Install git manually and re-run." ;;
+    esac
+    ok "git installed."
+  elif [ "$os" = "macos" ]; then
+    # macOS always ships git via Xcode Command Line Tools; running any git command
+    # triggers the install prompt automatically.  We can't do it non-interactively here.
+    die "git is not installed. Run: xcode-select --install   then re-run this script."
+  fi
+}
+
+# ── 2. Ensure Docker is installed ──────────────────────────────────────────────
 ensure_docker() {
   if command -v docker &>/dev/null; then
     ok "Docker already installed: $(docker --version)"
@@ -41,16 +77,13 @@ ensure_docker() {
 
   if [ "$os" = "linux" ]; then
     info "Docker not found — installing via get.docker.com ..."
-    # Convenience script is the official single-command install for Linux.
     curl -fsSL https://get.docker.com | sh
-    # On most distros the current user needs to be in the docker group.
-    if id -nG "$USER" | grep -qw docker; then
-      : # already in group
-    else
-      warn "Adding $USER to the docker group — you may need to log out and back in if this fails."
+    # Add the current user to the docker group so sudo is not needed later.
+    if ! id -nG "$USER" 2>/dev/null | grep -qw docker; then
+      warn "Adding $USER to the docker group."
       sudo usermod -aG docker "$USER" 2>/dev/null || true
     fi
-    ok "Docker installed."
+    ok "Docker Engine installed."
 
   elif [ "$os" = "macos" ]; then
     if command -v brew &>/dev/null; then
@@ -58,40 +91,71 @@ ensure_docker() {
       brew install --cask docker
       info "Starting Docker Desktop (this may take a moment) ..."
       open -a Docker
-      # Wait for the daemon to become responsive (up to 60 s).
+      # Wait up to 60 s for the daemon.
       local tries=0
       while ! docker info &>/dev/null 2>&1; do
         tries=$((tries + 1))
-        [ $tries -ge 30 ] && die "Docker Desktop did not start within 60 s. Open it manually and re-run this script."
+        [ $tries -ge 30 ] && die "Docker Desktop did not start within 60 s. Open it manually then re-run."
         sleep 2
       done
       ok "Docker Desktop running."
     else
-      die "Docker is not installed and Homebrew is not available. Install Docker Desktop from https://docs.docker.com/desktop/mac/install/ then re-run this script."
+      die "Docker is not installed and Homebrew is not available. Install Docker Desktop from https://docs.docker.com/desktop/mac/install/ then re-run."
     fi
 
   else
-    die "Unsupported OS '$(uname -s)'. Install Docker manually (https://docs.docker.com/get-docker/) then re-run this script."
+    die "Unsupported OS '$(uname -s)'. Install Docker manually (https://docs.docker.com/get-docker/) then re-run."
   fi
 }
 
-# ── 2. Ensure `docker compose` (v2 plugin) is available ───────────────────────
+# ── 3. Ensure Docker Compose v2 is available ──────────────────────────────────
 ensure_compose() {
   if docker compose version &>/dev/null 2>&1; then
     return
   fi
-  # Fallback: docker-compose v1 standalone (older Linux setups)
+
+  # On Linux, get.docker.com installs the Engine but not the Compose plugin —
+  # install it explicitly via the package manager.
+  if [ "$(os_type)" = "linux" ]; then
+    info "Docker Compose v2 plugin not found — installing ..."
+    case "$(linux_pkg_manager)" in
+      apt)
+        sudo apt-get update -qq
+        sudo apt-get install -y docker-compose-plugin
+        ;;
+      dnf) sudo dnf install -y docker-compose-plugin ;;
+      yum) sudo yum install -y docker-compose-plugin ;;
+      apk)
+        # Alpine: Compose v2 ships as a separate package
+        sudo apk add --no-cache docker-compose ;;
+      *)
+        # Last resort: install the standalone binary from GitHub releases
+        info "Package manager unknown — installing docker compose binary ..."
+        COMPOSE_VER=$(curl -fsSL https://api.github.com/repos/docker/compose/releases/latest \
+          | grep '"tag_name"' | sed 's/.*"v\([^"]*\)".*/\1/')
+        sudo curl -fsSL \
+          "https://github.com/docker/compose/releases/download/v${COMPOSE_VER}/docker-compose-$(uname -s)-$(uname -m)" \
+          -o /usr/local/lib/docker/cli-plugins/docker-compose
+        sudo chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
+        ;;
+    esac
+    ok "Docker Compose v2 installed."
+    return
+  fi
+
+  # Fallback: docker-compose v1 standalone (legacy systems)
   if command -v docker-compose &>/dev/null; then
-    warn "Using docker-compose v1 — consider upgrading to Docker Compose v2."
+    warn "Using docker-compose v1 — consider upgrading."
     COMPOSE_CMD="docker-compose"
     return
   fi
-  die "Docker Compose is not available. Install it from https://docs.docker.com/compose/install/ then re-run this script."
+
+  die "Docker Compose is not available. Install it from https://docs.docker.com/compose/install/ then re-run."
 }
 
-# ── 3. Get the repo ────────────────────────────────────────────────────────────
+# ── 4. Get the repo ────────────────────────────────────────────────────────────
 ensure_repo() {
-  # If we are already inside a clone (the script was run locally), use it.
+  # If we are already inside a clone, use it as-is.
   if [ -f "$(pwd)/docker-compose.yml" ] && [ -f "$(pwd)/Dockerfile" ]; then
     INSTALL_DIR="$(pwd)"
     info "Running from existing repo at $INSTALL_DIR."
@@ -107,10 +171,10 @@ ensure_repo() {
   fi
 }
 
-# ── 4. Launch ──────────────────────────────────────────────────────────────────
+# ── 5. Launch ──────────────────────────────────────────────────────────────────
 launch() {
   cd "$INSTALL_DIR"
-  info "Building and starting LocalDeploy (this takes ~1 min on first run) ..."
+  info "Building and starting LocalDeploy (takes ~1 min on first run) ..."
   ${COMPOSE_CMD:-docker compose} up --build -d
   ok ""
   ok "LocalDeploy is running!"
@@ -124,6 +188,7 @@ launch() {
 # ── main ───────────────────────────────────────────────────────────────────────
 COMPOSE_CMD="docker compose"
 
+ensure_git
 ensure_docker
 ensure_compose
 ensure_repo

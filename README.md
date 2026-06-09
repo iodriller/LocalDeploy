@@ -9,7 +9,7 @@ It defaults to Ollama and can optionally call a local llama.cpp server for GGUF 
 **macOS / Linux** (installs Docker automatically if needed, then launches):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/iodriller/localdeploy/main/run.sh | sh
+curl -fsSL https://raw.githubusercontent.com/iodriller/localdeploy/main/run.sh | bash
 ```
 
 **Windows** (PowerShell — installs Docker Desktop via winget if needed, then launches):
