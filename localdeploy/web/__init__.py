@@ -29,3 +29,7 @@ router.include_router(registry.router)
 from . import models  # noqa: E402
 
 router.include_router(models.router)
+
+from . import bench  # noqa: E402
+
+router.include_router(bench.router)
