@@ -62,8 +62,30 @@ function toast(message, kind = "info") {
   const node = document.createElement("div");
   node.className = `toast ${kind}`;
   node.textContent = message;
+  // Errors are announced assertively and stay until dismissed (click) so they
+  // aren't missed; info/success auto-dismiss politely.
+  if (kind === "error") {
+    node.setAttribute("role", "alert");
+    node.title = "Click to dismiss";
+    node.addEventListener("click", () => node.remove());
+  } else {
+    setTimeout(() => node.remove(), 5000);
+  }
   $("#toasts").appendChild(node);
-  setTimeout(() => node.remove(), 5000);
+}
+
+// Tick a live "…Ns" counter into an element so long operations clearly show
+// progress instead of looking frozen. Returns a stop() function.
+function startElapsed(el, label = "working") {
+  if (!el) return () => {};
+  const t0 = Date.now();
+  const render = () => {
+    const s = Math.round((Date.now() - t0) / 1000);
+    el.innerHTML = `<span class="spin-inline"></span> ${esc(label)}… <b>${s}s</b>`;
+  };
+  render();
+  const id = setInterval(render, 1000);
+  return () => clearInterval(id);
 }
 
 // ---- optional API token (opt-in; nothing happens unless the server sets one) -
@@ -205,7 +227,7 @@ function busy(button, on) {
 
 function updateHwChip(hw) {
   const chip = $("#hw-chip");
-  if (hw && hw.gpu_available && hw.gpus[0]) {
+  if (hw && hw.gpu_available && hw.gpus?.[0]) {
     const g = hw.gpus[0];
     chip.innerHTML = `<span class="dot"></span>${esc(g.name)} · ${fmtMb(g.vram_free_mb)} free`;
   } else {
@@ -297,7 +319,11 @@ async function checkHardware() {
         <div class="muted small">Logical cores: ${esc(hw.system?.logical_cores ?? "?")}</div>`;
       return;
     }
-    const g = hw.gpus[0];
+    const g = hw.gpus?.[0];
+    if (!g) {
+      body.innerHTML = `<div class="muted">GPU reported but no details available.</div>`;
+      return;
+    }
     state.freeVramMb = g.vram_free_mb ?? null;
     state.lastHardware = { gpu: g.name, vram_total_mb: g.vram_total_mb, vram_free_mb: g.vram_free_mb };
     if (state.freeVramMb != null && $("#vram-target").value.trim() === "") {
@@ -686,7 +712,8 @@ async function runBenchmark() {
   tbody.innerHTML = "";
   table.classList.remove("hidden");
   summary.className = "result";
-  summary.textContent = "Running…";
+  // Live counter so the wait before the first result (model load) isn't silent.
+  const stopTimer = startElapsed(summary, "Running");
   // Disable export until THIS run succeeds, so it can't point at a stale result.
   $("#btn-export").disabled = true;
 
@@ -722,6 +749,7 @@ async function runBenchmark() {
         tr.innerHTML = `<td>${esc(evt.profile)}</td><td colspan="5" class="fail">aborted: ${esc(evt.reason)}</td>`;
         tbody.appendChild(tr);
       } else if (evt.event === "run_end") {
+        stopTimer();
         const parts = (evt.profiles || [])
           .map((p) => `${esc(p.profile)}: ${p.passed}/${p.tests} passed, avg acc ${p.avg_accuracy}`)
           .join(" · ");
@@ -738,11 +766,13 @@ async function runBenchmark() {
           $("#btn-export").title = "Download a shareable report card";
         }
       } else if (evt.event === "error") {
+        stopTimer();
         summary.className = "result err";
         summary.textContent = `Run error: ${evt.error}`;
       }
     });
     if (!out.streamed) {
+      stopTimer();
       const j = out.json || {};
       summary.className = "result err";
       if (j.validation) {
@@ -759,6 +789,7 @@ async function runBenchmark() {
     summary.className = "result err";
     summary.textContent = `Run failed: ${err.message}`;
   } finally {
+    stopTimer();
     busy(btn, false);
   }
 }
@@ -848,9 +879,10 @@ async function recommendTune() {
   const btn = $("#btn-recommend");
   const body = $("#recommend-body");
   busy(btn, true);
-  body.innerHTML = `<div class="muted">Fit-checking and benchmarking… this can take a moment.</div>`;
+  const stopTimer = startElapsed(body, "Fit-checking and benchmarking your profiles");
   try {
     const res = await postJSON("/system/recommend", { free_vram_mb: targetVram() });
+    stopTimer();
     if (!res.success) {
       body.innerHTML = `<div class="muted">${esc(res.error || "Could not run.")}</div>`;
       return;
@@ -883,9 +915,11 @@ async function recommendTune() {
     const sd = body.querySelector(".set-default-btn");
     if (sd) sd.addEventListener("click", () => setDefaultProfile(sd.dataset.profile, sd));
   } catch (err) {
-    body.innerHTML = `<div class="muted">Tuning failed.</div>`;
+    stopTimer();
+    body.innerHTML = `<div class="muted">Tuning failed — ${esc(err.message)}</div>`;
     toast(`Tune failed: ${err.message}`, "error");
   } finally {
+    stopTimer();
     busy(btn, false);
   }
 }
@@ -955,8 +989,28 @@ $("#qs-editor").addEventListener("keydown", (e) => {
   }
 });
 
-// Initial load
+// Make the file-upload "buttons" (a <label> wrapping a hidden <input>) reachable
+// and operable by keyboard — labels aren't tab stops and hidden inputs can't be
+// focused, so Tab + Enter/Space wouldn't otherwise open the file picker.
+$$(".btn.file").forEach((label) => {
+  label.setAttribute("tabindex", "0");
+  label.setAttribute("role", "button");
+  label.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      label.querySelector('input[type="file"]')?.click();
+    }
+  });
+});
+
+// Initial load — populate the live sections so a newcomer sees real state
+// (hardware, what's running, what's installed) instead of "Not loaded yet."
 (async function init() {
   await loadProfiles();
-  await Promise.allSettled([checkHardware(), refreshStatus(), loadGraderTypes()]);
+  await Promise.allSettled([
+    checkHardware(),
+    refreshStatus(),
+    refreshInstalled(),
+    loadGraderTypes(),
+  ]);
 })();
