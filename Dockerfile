@@ -24,7 +24,8 @@ ENV OLLAMA_BASE_URL=http://localhost:11434 \
     API_PORT=8000 \
     ENABLE_WEB_UI=true
 
-EXPOSE 8000 11434
+# 8000 is the API/UI (published by compose). 11434 (Ollama) is internal-only.
+EXPOSE 8000
 
 # Override the base image's ollama entrypoint with our combined launcher.
 ENTRYPOINT ["/app/scripts/docker-entrypoint.sh"]

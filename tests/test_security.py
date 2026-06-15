@@ -35,3 +35,11 @@ def test_ui_and_health_stay_open_with_token(monkeypatch):
     assert client.get("/ui/").status_code == 200
     assert client.get("/ui/app.js").status_code == 200
     assert client.get("/health").status_code == 200
+
+
+def test_ui_exemption_is_exact_prefix_not_substring(monkeypatch):
+    # The auth exemption must match the /ui mount exactly, not any path that
+    # merely starts with "/ui" — otherwise a future "/uixxx" route would be open.
+    monkeypatch.setenv("API_TOKEN", "secret")
+    # A non-existent "/ui"-prefixed path must hit auth (401), not slip through.
+    assert client.get("/uixyz").status_code == 401
