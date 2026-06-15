@@ -7,7 +7,8 @@ services:
     build: .
     image: localdeploy:latest
     ports:
-      - "8000:8000" # API + UI (http://localhost:8000/ui)
+      # Host port is overridable: API_PORT=8001 docker compose up
+      - "${API_PORT:-8000}:8000" # API + UI (http://localhost:8000/ui)
     volumes:
       - ollama-models:/root/.ollama # persist pulled models between runs
     environment:
@@ -16,6 +17,13 @@ services:
       # Pre-pull models on first boot (space-separated), e.g.:
       # - PULL_MODELS=gemma3:4b
     restart: unless-stopped
+    healthcheck:
+      # Marks the container healthy only once the API actually answers.
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0) if urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2).status==200 else sys.exit(1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 40s
 
     # --- NVIDIA GPU passthrough -------------------------------------------
     # Requires the NVIDIA Container Toolkit on the host. Uncomment to use it:

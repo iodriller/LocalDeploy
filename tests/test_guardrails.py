@@ -3,7 +3,6 @@ from __future__ import annotations
 
 from typing import Any, Dict
 
-import pytest
 
 from api_server import prepare_request
 

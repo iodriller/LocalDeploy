@@ -601,6 +601,22 @@ def run_local_request(kind: str, request_data: Dict[str, Any]) -> Dict[str, Any]
             max_output_tokens_used=prepared["max_output_tokens_used"],
             warning=prepared.get("warning"),
         )
+    except Exception as exc:  # noqa: BLE001 - last-resort guard
+        # Any unexpected backend error degrades to a graceful failure response
+        # instead of a raw 500 (e.g. an unwrapped JSON/parse error from a backend).
+        elapsed = time.perf_counter() - start
+        return make_error_response(
+            error=f"Unexpected backend error: {exc}",
+            backend=prepared["backend"],
+            profile=prepared["profile_name"],
+            model=prepared["model"],
+            elapsed_seconds=elapsed,
+            estimated_prompt_chars=prepared["estimated_prompt_chars"],
+            estimated_prompt_tokens=prepared["estimated_prompt_tokens"],
+            context_limit_used=prepared["context_limit_used"],
+            max_output_tokens_used=prepared["max_output_tokens_used"],
+            warning=prepared.get("warning"),
+        )
     elapsed = time.perf_counter() - start
     return make_success_response(prepared, content, elapsed)
 
@@ -943,7 +959,12 @@ async def api_token_guard(request: Request, call_next):
     token = api_token()
     if token and request.method != "OPTIONS":
         path = request.url.path
-        if not (path == "/health" or path == "/favicon.ico" or path.startswith("/ui")):
+        if not (
+            path == "/health"
+            or path == "/favicon.ico"
+            or path == "/ui"
+            or path.startswith("/ui/")
+        ):
             if not hmac.compare_digest(_extract_token(request), token):
                 return JSONResponse(
                     status_code=401,
