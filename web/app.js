@@ -109,13 +109,31 @@ function handle401(resp) {
   return false;
 }
 
+// Parse a Response, throwing a useful message on any non-OK status. FastAPI
+// error bodies are JSON ({"detail": ...}), so we surface that text instead of
+// letting an error body masquerade as a successful payload.
+async function parseOrThrow(url, resp) {
+  if (resp.ok) return resp.json();
+  let detail = `HTTP ${resp.status}`;
+  try {
+    const ct = resp.headers.get("content-type") || "";
+    if (ct.includes("application/json")) {
+      const body = await resp.json();
+      detail = body.detail || body.error || body.message || JSON.stringify(body);
+    } else {
+      const text = await resp.text();
+      if (text) detail = text.slice(0, 300);
+    }
+  } catch {
+    /* keep the status-based message */
+  }
+  throw new Error(detail);
+}
+
 async function getJSON(url) {
   const resp = await fetch(url, { headers: authHeaders() });
   if (handle401(resp)) throw new Error("unauthorized");
-  if (!resp.ok && resp.headers.get("content-type")?.includes("application/json") !== true) {
-    throw new Error(`${url} -> HTTP ${resp.status}`);
-  }
-  return resp.json();
+  return parseOrThrow(url, resp);
 }
 
 async function postJSON(url, body) {
@@ -125,7 +143,7 @@ async function postJSON(url, body) {
     body: JSON.stringify(body ?? {}),
   });
   if (handle401(resp)) throw new Error("unauthorized");
-  return resp.json();
+  return parseOrThrow(url, resp);
 }
 
 // Read a fetch Response as Server-Sent Events; calls onEvent(obj) per `data:`
@@ -134,6 +152,19 @@ async function streamSSE(response, onEvent) {
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buf = "";
+  const processBlock = (block) => {
+    for (const line of block.split("\n")) {
+      if (!line.startsWith("data: ")) continue;
+      const payload = line.slice(6);
+      if (payload === "[DONE]") return true;
+      try {
+        onEvent(JSON.parse(payload));
+      } catch {
+        /* ignore non-JSON keepalives */
+      }
+    }
+    return false;
+  };
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
@@ -142,18 +173,12 @@ async function streamSSE(response, onEvent) {
     while ((idx = buf.indexOf("\n\n")) >= 0) {
       const block = buf.slice(0, idx);
       buf = buf.slice(idx + 2);
-      for (const line of block.split("\n")) {
-        if (!line.startsWith("data: ")) continue;
-        const payload = line.slice(6);
-        if (payload === "[DONE]") return;
-        try {
-          onEvent(JSON.parse(payload));
-        } catch {
-          /* ignore non-JSON keepalives */
-        }
-      }
+      if (processBlock(block)) return;
     }
   }
+  // Flush any trailing event that wasn't terminated by a blank line so a final
+  // run_end/summary isn't dropped (which would leave the run looking hung).
+  if (buf.trim()) processBlock(buf);
 }
 
 // POST that may return JSON (e.g. a blocked action) or an SSE stream.
@@ -232,11 +257,21 @@ async function loadProfiles() {
       .join("");
     $("#profile-select").innerHTML = options;
     $("#bench-profile-select").innerHTML = options;
+    setProfileActionsEnabled(state.profiles.length > 0);
     setConn(true);
   } catch (err) {
     setConn(false);
+    setProfileActionsEnabled(false);
     toast(`Could not load profiles: ${err.message}`, "error");
   }
+}
+
+// Guard actions that need a profile so they can't fire a blank profile name.
+function setProfileActionsEnabled(enabled) {
+  ["#btn-serve", "#btn-stop", "#btn-switch", "#btn-run"].forEach((sel) => {
+    const el = $(sel);
+    if (el) el.disabled = !enabled;
+  });
 }
 
 function setConn(ok) {
@@ -652,6 +687,8 @@ async function runBenchmark() {
   table.classList.remove("hidden");
   summary.className = "result";
   summary.textContent = "Running…";
+  // Disable export until THIS run succeeds, so it can't point at a stale result.
+  $("#btn-export").disabled = true;
 
   const selectedProfile = $("#bench-profile-select").value;
   const body = {

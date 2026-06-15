@@ -20,39 +20,39 @@ Severity: **BUG** (will misbehave) · **RISK** (fails on some setups / edge case
 
 ## Priority 0 — do these first (highest impact, low risk to fix)
 
-- [ ] **I1 · RISK · `run.sh` `launch()`** — The sudo-fallback only triggers when Docker was *just*
+- [x] **I1 · RISK · `run.sh` `launch()`** — The sudo-fallback only triggers when Docker was *just*
   installed (`DOCKER_JUST_INSTALLED`). A user who already has Docker but whose shell isn't in the
   `docker` group yet (installed earlier, never re-logged in) runs plain `docker compose up` and hits
   a raw `permission denied /var/run/docker.sock`, then a dead terminal. *Fix:* in `launch()`, probe
   `docker info >/dev/null 2>&1` and prefix `sudo` whenever it fails — don't key off the install flag.
 
-- [ ] **I2 · RISK · `docker-compose.yml` + `run.sh`** — Host port is hard-bound (`"8000:8000"`); if
+- [x] **I2 · RISK · `docker-compose.yml` + `run.sh`** — Host port is hard-bound (`"8000:8000"`); if
   8000 is taken, compose exits with `port is already allocated`, `set -e` aborts, and the user never
   sees the "open localhost:8000" line. `run.sh` also reads `API_PORT` but compose ignores it. *Fix:*
   `ports: ["${API_PORT:-8000}:8000"]`, and have `run.sh` pre-check the port and print a clear "port
   busy, set API_PORT and re-run" message.
 
-- [ ] **I3 · RISK · `docker-compose.yml`, `run.sh`, `run.ps1`** — `compose up -d` returns when the
+- [x] **I3 · RISK · `docker-compose.yml`, `run.sh`, `run.ps1`** — `compose up -d` returns when the
   container *starts*, not when uvicorn is listening. The scripts immediately print the URL (and
   `run.ps1` auto-opens the browser), so the first hit is connection-refused / a blank page. *(inferred)*
   *Fix:* add a `healthcheck` on `/health` to compose, and poll `http://localhost:PORT/health` in the
   scripts (spinner + timeout) before printing/opening the URL. `/health` already exists but nothing
   uses it as a healthcheck.
 
-- [ ] **I4 · RISK · `run.sh` / `run.ps1` repo update** — `git pull --ff-only origin main` hard-fails
+- [x] **I4 · RISK · `run.sh` / `run.ps1` repo update** — `git pull --ff-only origin main` hard-fails
   on a dirty or diverged existing clone (e.g. the user uncommented the GPU block or set a token), and
   `set -e` then aborts the whole launch — bricking an install that previously worked. *Fix:* make the
   pull non-fatal: `git -C "$DIR" pull --ff-only origin main || warn "Couldn't update; launching
   existing version."`
 
-- [ ] **I5 · BUG · `web/app.js` `getJSON` / `postJSON`** — `getJSON` only throws when the response is
+- [x] **I5 · BUG · `web/app.js` `getJSON` / `postJSON`** — `getJSON` only throws when the response is
   not-ok *and* not JSON, so FastAPI error bodies (`{"detail": ...}`, which are JSON) slip through as
   "success" and callers read fields off an error object. `postJSON` never checks `resp.ok` at all.
   Result: a 500/422 renders as a confusing partial state or a downstream `TypeError` instead of a
   clear error toast. This contradicts the UI.md promise that no action throws when the backend is
   down. *Fix:* on `!resp.ok`, throw with the parsed `detail`/`error`.
 
-- [ ] **I6 · RISK · `localdeploy/backends/ollama.py` `stream_ollama`** — The streaming
+- [x] **I6 · RISK · `localdeploy/backends/ollama.py` `stream_ollama`** — The streaming
   `requests.post(..., stream=True)` is never wrapped in `with` and never `.close()`d. If the SSE
   client disconnects mid-generation, the generator stops being driven and the connection leaks until
   GC; repeated cancellations exhaust the pool. (`_ollama.pull_stream` already does this correctly with
@@ -73,19 +73,19 @@ Severity: **BUG** (will misbehave) · **RISK** (fails on some setups / edge case
   3-minute run is frozen, reloads, and loses state. *Fix:* add an `AbortController` + a visible elapsed
   timer; pair with I7's streaming.
 
-- [ ] **I9 · RISK · `web/app.js` `streamSSE`** — Only blocks terminated by `\n\n` are parsed; a final
+- [x] **I9 · RISK · `web/app.js` `streamSSE`** — Only blocks terminated by `\n\n` are parsed; a final
   `data:` line with no trailing blank line left in `buf` after the stream ends is dropped. If a
   benchmark's `run_end` is the last event without a trailing `[DONE]`, the summary never renders and
   **Export card stays disabled** — a finished run looks hung. *(inferred — depends on server framing)*
   *Fix:* flush any remaining complete `data:` line after the read loop; confirm the server always
   emits `[DONE]`.
 
-- [ ] **I10 · RISK · `api_server.py` `run_local_request`** — Only `BackendCallError` is caught; an
+- [x] **I10 · RISK · `api_server.py` `run_local_request`** — Only `BackendCallError` is caught; an
   unexpected exception (e.g. an unwrapped `json.JSONDecodeError`/`KeyError` from a backend) propagates
   as a raw 500 instead of a graceful `success: false` response. *(inferred)* *Fix:* add a catch-all
   `except Exception` that returns the standard error response.
 
-- [ ] **I11 · RISK · `localdeploy/web/recommend.py` `set-default` write** — `config.json` is written
+- [x] **I11 · RISK · `localdeploy/web/recommend.py` `set-default` write** — `config.json` is written
   non-atomically (`path.write_text(...)`) while every other request reads it via `load_config()` with
   no lock; a concurrent reader can see a truncated file → `JSONDecodeError` → 500. *Fix:* write to a
   temp file and `os.replace()` atomically.
@@ -95,7 +95,7 @@ Severity: **BUG** (will misbehave) · **RISK** (fails on some setups / edge case
   page. *Fix:* either ship a small default (`PULL_MODELS=gemma3:4b`, with a clear "downloading ~3 GB"
   log line) or make the success message explicitly say "now pull your first model in the UI."
 
-- [ ] **I13 · UX · `web/app.js` `loadProfiles`** — If `/profiles` fails, the dropdowns stay empty and
+- [x] **I13 · UX · `web/app.js` `loadProfiles`** — If `/profiles` fails, the dropdowns stay empty and
   Start/Run silently POST `profile: ""`. *Fix:* on empty/failed load, disable Start/Run and show an
   inline "No profiles configured — check the API connection."
 
@@ -110,7 +110,7 @@ Severity: **BUG** (will misbehave) · **RISK** (fails on some setups / edge case
   affected.) *Fix:* subprocess-isolate the code-grader `exec`, or gate code-category tests behind an
   explicit opt-in flag.
 
-- [ ] **I15 · RISK · `api_server.py` auth middleware** — The auth exemption uses
+- [x] **I15 · RISK · `api_server.py` auth middleware** — The auth exemption uses
   `path.startswith("/ui")`, a prefix match. No data route matches today, but a future `/ui-config`
   route would silently become unauthenticated. *Fix:* tighten to `path == "/ui" or
   path.startswith("/ui/")`.
@@ -158,7 +158,7 @@ Severity: **BUG** (will misbehave) · **RISK** (fails on some setups / edge case
 - [ ] **I23 · UX · `web/app.js`** — Unrecognized pull/benchmark SSE events are dumped as raw JSON into
   the log/table. *Fix:* render a friendly fallback ("downloading layers…") or suppress unknown events.
 
-- [ ] **I24 · UX · `web/app.js` export-enabled state** — `#btn-export` is enabled in `run_end` but not
+- [x] **I24 · UX · `web/app.js` export-enabled state** — `#btn-export` is enabled in `run_end` but not
   reset at the start of a new run, so after an aborted/errored run it can point at a stale result.
   *Fix:* disable export at the start of every `runBenchmark`, re-enable only on success.
 
@@ -179,10 +179,10 @@ Severity: **BUG** (will misbehave) · **RISK** (fails on some setups / edge case
 - [ ] **I28 · NICE · `requirements.txt`** — Fully unpinned; a future breaking FastAPI/Pydantic release
   could break an image rebuild with no code change. *Fix:* pin to `>=x,<y` ranges.
 
-- [ ] **I29 · NICE · `Dockerfile`** — `EXPOSE 11434` advertises the Ollama port that compose never
+- [x] **I29 · NICE · `Dockerfile`** — `EXPOSE 11434` advertises the Ollama port that compose never
   publishes. *Fix:* drop it or comment that it's internal-only.
 
-- [ ] **I30 · NICE · ruff `F401`** — Remove unused `import pytest` in `tests/test_benchmark_graders.py`
+- [x] **I30 · NICE · ruff `F401`** — Remove unused `import pytest` in `tests/test_benchmark_graders.py`
   and `tests/test_guardrails.py` (auto-fixable with `ruff check --fix`).
 
 ---
