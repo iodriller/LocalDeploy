@@ -124,25 +124,28 @@ def stream_ollama(prepared: Dict[str, Any]) -> Iterator[str]:
     except requests.ConnectionError as exc:
         raise BackendCallError(f"Ollama is not running or is unreachable at {base_url}. Start Ollama and retry.") from exc
 
-    if not response.ok:
-        raise BackendCallError(ollama_error_message(response, prepared["model"]))
+    # Use the response as a context manager so the underlying connection is
+    # released even if the SSE consumer disconnects mid-stream (GeneratorExit).
+    with response:
+        if not response.ok:
+            raise BackendCallError(ollama_error_message(response, prepared["model"]))
 
-    for line in response.iter_lines():
-        if not line:
-            continue
-        try:
-            data = json.loads(line)
-        except Exception:
-            continue
-        chunk = ""
-        if isinstance(data.get("message"), dict):
-            chunk = str(data["message"].get("content", ""))
-        elif "response" in data:
-            chunk = str(data.get("response", ""))
-        if chunk:
-            yield chunk
-        if data.get("done"):
-            break
+        for line in response.iter_lines():
+            if not line:
+                continue
+            try:
+                data = json.loads(line)
+            except Exception:
+                continue
+            chunk = ""
+            if isinstance(data.get("message"), dict):
+                chunk = str(data["message"].get("content", ""))
+            elif "response" in data:
+                chunk = str(data.get("response", ""))
+            if chunk:
+                yield chunk
+            if data.get("done"):
+                break
 
 
 def ollama_models(base_url: str) -> Tuple[List[str], Optional[str]]:

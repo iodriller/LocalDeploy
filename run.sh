@@ -157,7 +157,10 @@ ensure_repo() {
 
   if [ -d "$INSTALL_DIR/.git" ]; then
     info "Updating repo at $INSTALL_DIR ..."
-    git -C "$INSTALL_DIR" pull --ff-only origin main
+    # Non-fatal: a dirty/diverged local clone (e.g. user edited docker-compose.yml)
+    # must never block launching the version they already have.
+    git -C "$INSTALL_DIR" pull --ff-only origin main 2>/dev/null \
+      || warn "Couldn't fast-forward (local changes?) — launching the existing version."
   else
     info "Cloning repo into $INSTALL_DIR ..."
     git clone --depth 1 "$REPO_URL" "$INSTALL_DIR"
@@ -168,21 +171,48 @@ ensure_repo() {
 launch() {
   cd "$INSTALL_DIR"
 
-  # If Docker was installed this run on Linux, the docker group isn't active yet
-  # in this shell session. Use sudo for the compose command so it works immediately.
+  # Decide whether we need sudo by actually probing the daemon — not by guessing
+  # from whether we just installed Docker. This also covers the common case of a
+  # pre-installed Docker whose user isn't in the `docker` group yet.
   local compose_cmd="${COMPOSE_CMD:-docker compose}"
-  if [ "$DOCKER_JUST_INSTALLED" = "true" ] && [ "$(os_type)" = "linux" ]; then
-    compose_cmd="sudo $compose_cmd"
-    warn "Using sudo for this first run. Future runs won't need it (re-login to activate the docker group)."
+  if ! docker info >/dev/null 2>&1; then
+    if sudo -n true 2>/dev/null || [ "$(id -u)" -eq 0 ]; then
+      compose_cmd="sudo $compose_cmd"
+    else
+      warn "Docker needs elevated access (your user isn't in the 'docker' group yet)."
+      warn "You may be prompted for your password. Re-login later to drop the sudo requirement."
+      compose_cmd="sudo $compose_cmd"
+    fi
   fi
 
-  info "Building and starting LocalDeploy (takes ~1 min on first run) ..."
-  $compose_cmd up --build -d
+  # Warn if the target port is already taken, with a clear remedy.
+  if command -v bash >/dev/null 2>&1 && (exec 3<>"/dev/tcp/127.0.0.1/${PORT}") 2>/dev/null; then
+    exec 3>&- 2>/dev/null || true
+    die "Port ${PORT} is already in use. Free it, or re-run with a different port:
+    API_PORT=8001 curl -fsSL https://raw.githubusercontent.com/iodriller/localdeploy/main/run.sh | bash"
+  fi
+
+  info "Building and starting LocalDeploy (first run downloads ~2-4 GB; can take several minutes) ..."
+  API_PORT="$PORT" $compose_cmd up --build -d
+
+  # Wait for the API to actually answer before declaring success / printing the URL.
+  info "Waiting for the server to come up ..."
+  local tries=0
+  until curl -fsS "http://localhost:${PORT}/health" >/dev/null 2>&1; do
+    tries=$((tries + 1))
+    if [ $tries -ge 60 ]; then
+      warn "Server didn't answer on /health within 2 min. It may still be pulling a model or building."
+      warn "Check progress with:  cd $INSTALL_DIR && docker compose logs -f"
+      break
+    fi
+    sleep 2
+  done
 
   ok ""
   ok "LocalDeploy is running!"
   ok "  Open this in your browser:  http://localhost:${PORT}/ui"
   ok ""
+  ok "  Logs:    cd $INSTALL_DIR && docker compose logs -f"
   ok "  Stop:    cd $INSTALL_DIR && docker compose down"
   ok "  Update:  cd $INSTALL_DIR && docker compose pull && docker compose up --build -d"
 }

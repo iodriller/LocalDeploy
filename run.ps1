@@ -85,7 +85,9 @@ function Ensure-Repo {
     }
     if (Test-Path "$InstallDir\.git") {
         Info "Updating existing repo at $InstallDir ..."
-        git -C $InstallDir pull --ff-only origin main
+        # Non-fatal: a dirty/diverged clone must not block launching the existing version.
+        git -C $InstallDir pull --ff-only origin main 2>$null
+        if ($LASTEXITCODE -ne 0) { Warn "Couldn't fast-forward (local changes?) — launching the existing version." }
     } else {
         Info "Cloning repo into $InstallDir ..."
         git clone --depth 1 $RepoUrl $InstallDir
@@ -95,17 +97,41 @@ function Ensure-Repo {
 # ── 5. Launch ──────────────────────────────────────────────────────────────────
 function Launch {
     Set-Location $InstallDir
-    Info "Building and starting LocalDeploy (takes ~1 min on first run) ..."
+
+    # Warn early if the port is taken, with a clear remedy.
+    if (Test-NetConnection -ComputerName 127.0.0.1 -Port ([int]$Port) -InformationLevel Quiet -WarningAction SilentlyContinue) {
+        Die "Port $Port is already in use. Free it, or re-run with:  `$env:API_PORT=8001; irm .../run.ps1 | iex"
+    }
+
+    Info "Building and starting LocalDeploy (first run downloads ~2-4 GB; can take several minutes) ..."
+    $env:API_PORT = $Port
     docker compose up --build -d
+
+    # Wait until the API actually answers before opening the browser.
+    Info "Waiting for the server to come up ..."
     $url = "http://localhost:${Port}/ui"
+    $ready = $false
+    for ($i = 0; $i -lt 60; $i++) {
+        try {
+            $r = Invoke-WebRequest -Uri "http://localhost:${Port}/health" -UseBasicParsing -TimeoutSec 2
+            if ($r.StatusCode -eq 200) { $ready = $true; break }
+        } catch {}
+        Start-Sleep -Seconds 2
+    }
+
     Ok ""
-    Ok "LocalDeploy is running!"
+    if ($ready) {
+        Ok "LocalDeploy is running!"
+    } else {
+        Warn "Server didn't answer on /health within 2 min — it may still be building or pulling a model."
+        Warn "Check progress with:  docker compose logs -f"
+    }
     Ok "  Web UI   ->  $url"
     Ok "  API docs ->  http://localhost:${Port}/docs"
     Ok ""
     Ok "To follow logs:  docker compose logs -f"
     Ok "To stop:         docker compose down"
-    Start-Process $url
+    if ($ready) { Start-Process $url }
 }
 
 # ── main ───────────────────────────────────────────────────────────────────────

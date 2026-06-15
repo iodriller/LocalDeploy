@@ -8,6 +8,8 @@ benchmark engine (Step 8) - this is orchestration only, no new scoring engine.
 from __future__ import annotations
 
 import json
+import os
+import tempfile
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter
@@ -41,7 +43,17 @@ def set_default(req: SetDefaultRequest) -> Dict[str, Any]:
         }
     config["default_profile"] = req.profile
     try:
-        path.write_text(json.dumps(config, indent=2), encoding="utf-8")
+        # Atomic write: a concurrent load_config() reader must never observe a
+        # half-written file (which would raise JSONDecodeError -> 500).
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp_path = tempfile.mkstemp(dir=str(path.parent), prefix=".config.", suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                fh.write(json.dumps(config, indent=2))
+            os.replace(tmp_path, path)
+        finally:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
     except OSError as exc:
         return {"success": False, "error": f"Could not write {path}: {exc}"}
     return {"success": True, "default_profile": req.profile, "path": str(path)}
