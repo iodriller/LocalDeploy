@@ -16,6 +16,8 @@ Ollama) are reasoned from the code, not executed, and are marked *(inferred)* wh
 Severity: **BUG** (will misbehave) · **RISK** (fails on some setups / edge cases) ·
 **SECURITY** · **UX** · **A11Y** · **NICE** (polish).
 
+Checkbox: `[x]` done · `[~]` partially done (note says what's left) · `[ ]` open.
+
 ---
 
 ## Priority 0 — do these first (highest impact, low risk to fix)
@@ -68,10 +70,11 @@ Severity: **BUG** (will misbehave) · **RISK** (fails on some setups / edge case
   no progress. *Fix:* stream it via SSE like `/benchmark/run`, or cap total wall-clock, or run as a
   background job with a polled id. (Per-test `try/except` already prevents a 500 — good.)
 
-- [ ] **I8 · UX · `web/app.js` `recommendTune` / `runBenchmark`** — Long operations have a spinner but
+- [~] **I8 · UX · `web/app.js` `recommendTune` / `runBenchmark`** — Long operations have a spinner but
   no cancel, no fetch timeout, and (for recommend) no elapsed/heartbeat indicator. A user assumes a
-  3-minute run is frozen, reloads, and loses state. *Fix:* add an `AbortController` + a visible elapsed
-  timer; pair with I7's streaming.
+  3-minute run is frozen, reloads, and loses state. *Done:* added a live `…Ns` elapsed counter
+  (`startElapsed`) to both "Tune for my GPU" and the benchmark summary, so neither looks frozen.
+  *Still open:* an explicit cancel button + fetch `AbortController`; pairs with I7's streaming.
 
 - [x] **I9 · RISK · `web/app.js` `streamSSE`** — Only blocks terminated by `\n\n` are parsed; a final
   `data:` line with no trailing blank line left in `buf` after the stream ends is dropped. If a
@@ -90,10 +93,12 @@ Severity: **BUG** (will misbehave) · **RISK** (fails on some setups / edge case
   no lock; a concurrent reader can see a truncated file → `JSONDecodeError` → 500. *Fix:* write to a
   temp file and `os.replace()` atomically.
 
-- [ ] **I12 · UX · first-boot has zero models** — `PULL_MODELS` is commented out, so the very first
+- [~] **I12 · UX · first-boot has zero models** — `PULL_MODELS` is commented out, so the very first
   UI view is "No model loaded / No models pulled." Combined with I3 the first impression can be a blank
-  page. *Fix:* either ship a small default (`PULL_MODELS=gemma3:4b`, with a clear "downloading ~3 GB"
-  log line) or make the success message explicitly say "now pull your first model in the UI."
+  page. *Done:* `init()` now auto-loads hardware, status, and the installed-models list so the page
+  shows real state on open instead of "Not loaded yet." placeholders; the hint banner already guides
+  the pull. *Still open (owner call):* whether to ship a default `PULL_MODELS=gemma3:4b` (auto-download
+  ~3 GB on first boot) — left off by default to keep the image lean and the first boot fast.
 
 - [x] **I13 · UX · `web/app.js` `loadProfiles`** — If `/profiles` fails, the dropdowns stay empty and
   Start/Run silently POST `profile: ""`. *Fix:* on empty/failed load, disable Start/Run and show an
@@ -129,7 +134,7 @@ Severity: **BUG** (will misbehave) · **RISK** (fails on some setups / edge case
 
 ## Priority 3 — accessibility (easy wins)
 
-- [ ] **I18 · A11Y · `web/index.html` file uploads** — The upload controls are a `<label>` wrapping a
+- [x] **I18 · A11Y · `web/index.html` file uploads** — The upload controls are a `<label>` wrapping a
   `hidden` `<input type="file">`; labels aren't tab-stops and `hidden` inputs aren't focusable, so
   upload / Card A / Card B are unreachable by keyboard. *Fix:* use a visually-hidden (not `hidden`)
   input, or make the label a real button that triggers it.
@@ -138,11 +143,11 @@ Severity: **BUG** (will misbehave) · **RISK** (fails on some setups / edge case
   `role="tabpanel"`/`aria-labelledby`, and tabs aren't arrow-key operable. *Fix:* add tabpanel roles,
   `aria-controls`, and arrow-key navigation.
 
-- [ ] **I20 · A11Y · `web/app.js` toasts** — Error toasts use `aria-live="polite"` and auto-dismiss
+- [x] **I20 · A11Y · `web/app.js` toasts** — Error toasts use `aria-live="polite"` and auto-dismiss
   after 5 s, so screen-reader users may miss them. *Fix:* `role="alert"`/`aria-live="assertive"` for
   error toasts and don't auto-dismiss errors (or pause on hover/focus).
 
-- [ ] **I21 · A11Y · `web/styles.css`** — `--muted #9aa0a6` on `--panel #171a21` is ~4.0:1, below
+- [x] **I21 · A11Y · `web/styles.css`** — `--muted #9aa0a6` on `--panel #171a21` is ~4.0:1, below
   WCAG AA 4.5:1 for the small `0.78rem` field labels. *(estimated, not measured)* *Fix:* lighten
   `--muted` (e.g. `#b0b6bd`) or enlarge label text.
 
@@ -150,7 +155,7 @@ Severity: **BUG** (will misbehave) · **RISK** (fails on some setups / edge case
 
 ## Priority 4 — clarity, jargon, and polish
 
-- [ ] **I22 · UX · jargon for non-experts** — "Target free VRAM (MB)", "Keep-alive 5m", "Ollama name",
+- [x] **I22 · UX · jargon for non-experts** — "Target free VRAM (MB)", "Keep-alive 5m", "Ollama name",
   "Override fit check", GGUF/quant/KV-cache are unexplained. *Fix:* add `title=`/inline helper text
   ("Keep-alive: how long to keep the model warm in memory"); warn that "Override fit check" may OOM
   the GPU.
