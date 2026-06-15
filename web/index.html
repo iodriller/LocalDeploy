@@ -38,8 +38,8 @@
             </div>
             <div id="hardware-body" class="muted">Not checked yet.</div>
             <div class="row gap" style="margin-top: 0.75rem">
-              <label class="field">
-                <span>Target free VRAM (MB)</span>
+              <label class="field" title="VRAM = your GPU's memory. Models must fit in it to run on the GPU. Auto-filled from the hardware probe; override to test against a different card.">
+                <span>Target free VRAM (MB) ⓘ</span>
                 <input type="number" id="vram-target" min="0" step="256" placeholder="auto from probe" />
               </label>
             </div>
@@ -63,8 +63,8 @@
               <span>Profile</span>
               <select id="profile-select"></select>
             </label>
-            <label class="field">
-              <span>Keep-alive</span>
+            <label class="field" title="How long to keep the model warm in memory after a request (e.g. 5m, 1h, or 0 to unload immediately).">
+              <span>Keep-alive ⓘ</span>
               <input type="text" id="keep-alive" value="5m" />
             </label>
             <div class="row gap actions">
@@ -91,9 +91,9 @@
               <span>Pull a model (Ollama name, e.g. <code>gemma3:4b</code>)</span>
               <input type="text" id="pull-model" placeholder="gemma3:4b" />
             </label>
-            <label class="check">
+            <label class="check" title="Skip the VRAM safety check and pull anyway. Warning: a model larger than your free VRAM may fail to load or run very slowly on CPU.">
               <input type="checkbox" id="pull-override" />
-              <span>Override fit check</span>
+              <span>Override fit check ⚠</span>
             </label>
             <button class="btn primary" id="btn-pull">Pull</button>
           </div>
