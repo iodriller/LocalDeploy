@@ -12,6 +12,7 @@ const state = {
   defaultProfile: null,
   freeVramMb: null,
   servedModels: [],
+  runningPlacements: {},
   lastHardware: null,
   lastRun: null,
   cardA: null,
@@ -232,7 +233,8 @@ function updateHwChip(hw) {
   const ram = hw?.system?.ram_total_mb ? ` · ${fmtMb(hw.system.ram_total_mb)} RAM` : "";
   if (hw && hw.gpu_available && hw.gpus?.[0]) {
     const g = hw.gpus[0];
-    chip.innerHTML = `<span class="dot"></span>${esc(g.name)} · ${fmtMb(g.vram_free_mb)} free${ram}`;
+    const mem = g.unified_memory ? "unified memory" : `${fmtMb(g.vram_free_mb)} free`;
+    chip.innerHTML = `<span class="dot"></span>${esc(g.name)} · ${mem}${ram}`;
   } else {
     chip.innerHTML = `<span class="dot none"></span>CPU only${ram}`;
   }
@@ -354,9 +356,17 @@ async function checkHardware() {
     if (state.freeVramMb != null && $("#vram-target").value.trim() === "") {
       $("#vram-target").value = state.freeVramMb;
     }
-    body.innerHTML = `<div class="kv">
+    // Apple Silicon (Metal) has no separate VRAM — show the unified-memory note
+    // and any hardware message instead of "? total · ? free".
+    const vramLine = g.unified_memory
+      ? `Unified memory (shared with system RAM)`
+      : `${fmtMb(g.vram_total_mb)} total · ${fmtMb(g.vram_free_mb)} free · ${fmtMb(g.vram_used_mb)} used`;
+    const note = hw.message
+      ? `<div class="muted small" style="margin-bottom:.5rem">${esc(hw.message)}</div>`
+      : "";
+    body.innerHTML = `${note}<div class="kv">
       <span class="k">GPU</span><span>${esc(g.name)}</span>
-      <span class="k">VRAM</span><span>${fmtMb(g.vram_total_mb)} total · ${fmtMb(g.vram_free_mb)} free · ${fmtMb(g.vram_used_mb)} used</span>
+      <span class="k">VRAM</span><span>${vramLine}</span>
       <span class="k">Driver</span><span>${esc(g.driver_version ?? "?")}</span>
       ${cpuRamRows(hw.system)}
     </div>`;
@@ -381,6 +391,12 @@ async function refreshStatus() {
   try {
     const s = await getJSON("/system/status");
     state.servedModels = s.served_models || [];
+    // Record each running model's *measured* placement so a benchmark can tag
+    // its report card with the device the model actually runs on (not a guess).
+    state.runningPlacements = {};
+    (s.ollama?.running || []).forEach((m) => {
+      if (m.name) state.runningPlacements[m.name] = { placement: m.placement, gpu_percent: m.gpu_percent };
+    });
     const body = $("#status-body");
     const reachable = s.ollama?.reachable
       ? `<span class="badge on">Ollama online</span>`
@@ -408,6 +424,20 @@ async function refreshStatus() {
   } finally {
     busy(btn, false);
   }
+}
+
+// Map a profile's running model to the device it's actually placed on, by
+// matching the profile's model_id against the live placement map. Returns
+// "gpu" | "cpu" | "split" | null (null = not loaded / placement unknown).
+function detectDevice(profileName) {
+  const modelId = String(state.profileModels[profileName] || profileName);
+  const base = modelId.split(":")[0];
+  for (const [name, info] of Object.entries(state.runningPlacements || {})) {
+    if (name === modelId || name.split(":")[0] === base) {
+      return info.placement ? info.placement.toLowerCase() : null;
+    }
+  }
+  return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -600,62 +630,62 @@ function fmtNum(n) {
 }
 
 async function checkUpdates() {
-  const btn = $(“#btn-updates”);
+  const btn = $("#btn-updates");
   busy(btn, true);
-  const body = $(“#updates-body”);
-  body.innerHTML = `<div class=”muted”>Checking Hugging Face…</div>`;
+  const body = $("#updates-body");
+  body.innerHTML = `<div class="muted">Checking Hugging Face…</div>`;
 
   // Build request from the search form (Phase 5).
-  const searchRaw = ($(“#hf-search”)?.value || “”).trim();
-  const limitVal = parseInt($(“#hf-limit”)?.value || “5”, 10);
-  const ggufOnly = $(“#hf-gguf-only”)?.checked !== false;
+  const searchRaw = ($("#hf-search")?.value || "").trim();
+  const limitVal = parseInt($("#hf-limit")?.value || "5", 10);
+  const ggufOnly = $("#hf-gguf-only")?.checked !== false;
   const payload = {
     limit: Number.isFinite(limitVal) && limitVal > 0 ? limitVal : 5,
     gguf_only: ggufOnly,
   };
-  if (searchRaw) payload.queries = searchRaw.split(“,”).map((s) => s.trim()).filter(Boolean);
+  if (searchRaw) payload.queries = searchRaw.split(",").map((s) => s.trim()).filter(Boolean);
 
   try {
-    const data = await postJSON(“/registry/check-updates”, payload);
+    const data = await postJSON("/registry/check-updates", payload);
     if (!data.online && (!data.results || !data.results.length)) {
-      body.innerHTML = `<div class=”muted”>${esc(data.message || “Offline.”)}</div>`;
+      body.innerHTML = `<div class="muted">${esc(data.message || "Offline.")}</div>`;
       return;
     }
     const blocks = (data.results || [])
       .map((group) => {
         const rows = (group.candidates || [])
           .map((c) => {
-            const flag = c.installed_match ? `<span class=”badge on”>installed</span>` : “”;
-            const date = c.last_modified ? `<span class=”meta”>${esc(c.last_modified.slice(0, 10))}</span>` : “”;
+            const flag = c.installed_match ? `<span class="badge on">installed</span>` : "";
+            const date = c.last_modified ? `<span class="meta">${esc(c.last_modified.slice(0, 10))}</span>` : "";
             const dl = fmtNum(c.downloads);
             const lk = c.likes != null ? String(c.likes) : null;
-            const stats = [dl ? `↓${dl}` : null, lk ? `♥${lk}` : null].filter(Boolean).join(“ “);
-            const statsHtml = stats ? `<span class=”meta”>${esc(stats)}</span>` : “”;
+            const stats = [dl ? `↓${dl}` : null, lk ? `♥${lk}` : null].filter(Boolean).join(" ");
+            const statsHtml = stats ? `<span class="meta">${esc(stats)}</span>` : "";
             const pull = c.pullable && c.pull_name
-              ? `<button class=”btn hf-pull-btn” data-model=”${esc(c.pull_name)}”>Pull</button>`
-              : “”;
-            return `<div class=”mrow”>
-              <a class=”name” href=”https://huggingface.co/${esc(c.id)}” target=”_blank” rel=”noopener”>${esc(c.id)}</a>
+              ? `<button class="btn hf-pull-btn" data-model="${esc(c.pull_name)}">Pull</button>`
+              : "";
+            return `<div class="mrow">
+              <a class="name" href="https://huggingface.co/${esc(c.id)}" target="_blank" rel="noopener">${esc(c.id)}</a>
               ${date}${statsHtml}
-              <span class=”spacer”></span>${flag}${pull}
+              <span class="spacer"></span>${flag}${pull}
             </div>`;
           })
-          .join(“”);
-        return `<h3 class=”sub”>”${esc(group.query)}”</h3><div class=”mlist”>${rows || '<div class=”muted”>none</div>'}</div>`;
+          .join("");
+        return `<h3 class="sub">“${esc(group.query)}”</h3><div class="mlist">${rows || '<div class="muted">none</div>'}</div>`;
       })
-      .join(“”);
-    const note = data.online ? “” : `<div class=”muted small”>${esc(data.message || “”)}</div>`;
+      .join("");
+    const note = data.online ? "" : `<div class="muted small">${esc(data.message || "")}</div>`;
     body.innerHTML = blocks + note;
     // Wire the per-candidate Pull buttons (GGUF repos via Ollama's hf.co/ shortcut).
-    $$(“.hf-pull-btn”, body).forEach((b) =>
-      b.addEventListener(“click”, () => {
-        $(“#pull-model”).value = b.dataset.model;
+    $$(".hf-pull-btn", body).forEach((b) =>
+      b.addEventListener("click", () => {
+        $("#pull-model").value = b.dataset.model;
         pullModel(b.dataset.model);
       })
     );
   } catch (err) {
-    body.innerHTML = `<div class=”muted”>Check failed.</div>`;
-    toast(`Update check failed: ${err.message}`, “error”);
+    body.innerHTML = `<div class="muted">Check failed.</div>`;
+    toast(`Update check failed: ${err.message}`, "error");
   } finally {
     busy(btn, false);
   }
@@ -691,8 +721,13 @@ async function pullModel(modelArg) {
       "/models/pull",
       { model, free_vram_mb: targetVram(), allow_override: $("#pull-override").checked },
       (evt) => {
-        if (evt.error) append(`error: ${evt.error}`);
-        else if (evt.status) {
+        if (evt.error) {
+          append(`error: ${evt.error}`);
+          return;
+        }
+        // A soft fit note (e.g. "won't fit GPU — will run on CPU") rides the start event.
+        if (evt.note) append(`note: ${evt.note}`);
+        if (evt.status) {
           const pct =
             evt.total && evt.completed
               ? ` ${Math.round((evt.completed / evt.total) * 100)}%`
@@ -873,6 +908,90 @@ function renderCategoryRollup(tests) {
 // ---------------------------------------------------------------------------
 // Tab 2 — Run (streamed)
 // ---------------------------------------------------------------------------
+
+// Portable per-test fields for a report card (shared by single + dual runs).
+function collectTest(evt) {
+  return {
+    name: evt.name,
+    category: evt.category,
+    success: evt.success,
+    accuracy: evt.accuracy,
+    elapsed_seconds: evt.elapsed_seconds,
+    approx_tokens_per_second: evt.approx_tokens_per_second ?? null,
+  };
+}
+
+// Append one test_result row (+ collapsible preview) to a tbody. Shared so the
+// single run and the CPU-vs-GPU dual run render results identically.
+function appendResultRow(tbody, evt) {
+  const tps = evt.approx_tokens_per_second ?? null;
+  const resultBadge = evt.success ? `<span class="pass">PASS</span>` : `<span class="fail">FAIL</span>`;
+  const errSnippet = !evt.success && evt.error
+    ? ` <span class="muted small" title="${esc(evt.error)}">${esc(evt.error.slice(0, 50))}${evt.error.length > 50 ? "…" : ""}</span>`
+    : "";
+  const warnBadge = evt.warning ? ` <span class="warn-badge" title="${esc(evt.warning)}">⚠</span>` : "";
+  const tpsCell = tps != null ? `${tps.toFixed(1)}` : `<span class="muted">—</span>`;
+  const hasPreview = !!evt.response_preview;
+
+  const tr = document.createElement("tr");
+  tr.innerHTML = `<td>${esc(evt.name)}</td>
+    <td>${esc(evt.category)}</td>
+    <td>${resultBadge}${errSnippet}${warnBadge}</td>
+    <td class="num">${esc(evt.elapsed_seconds)}s</td>
+    <td class="num">${tpsCell}</td>
+    <td class="num">${esc(evt.accuracy)}</td>
+    <td><button class="btn-preview${hasPreview ? "" : " btn-preview-none"}" aria-label="Toggle response preview" title="${hasPreview ? "Show/hide response" : "No response captured"}">▸</button></td>`;
+  tbody.appendChild(tr);
+
+  const previewTr = document.createElement("tr");
+  previewTr.className = "preview-row hidden";
+  previewTr.innerHTML = `<td colspan="7"><div class="response-preview">${esc(evt.response_preview || "(no preview)")}</div></td>`;
+  tbody.appendChild(previewTr);
+  const toggleBtn = tr.querySelector(".btn-preview");
+  if (hasPreview) {
+    toggleBtn.addEventListener("click", () => {
+      const hidden = previewTr.classList.toggle("hidden");
+      toggleBtn.textContent = hidden ? "▸" : "▾";
+    });
+  } else {
+    toggleBtn.disabled = true;
+  }
+}
+
+// Aggregate stats from collected tests (mirrors the server's _summary()).
+function computeRunStats(collected) {
+  const successes = collected.filter((t) => t.success);
+  const total = collected.length;
+  const mean = (arr) => arr.reduce((s, v) => s + v, 0) / arr.length;
+  const lats = successes.map((t) => t.elapsed_seconds).filter(Boolean);
+  const tpsList = successes.map((t) => t.approx_tokens_per_second).filter((v) => v != null);
+  return {
+    passed: successes.length,
+    total,
+    avgAcc: total ? mean(collected.map((t) => t.accuracy || 0)).toFixed(3) : "—",
+    avgLat: lats.length ? mean(lats).toFixed(2) : "—",
+    avgTps: tpsList.length ? mean(tpsList).toFixed(1) : "—",
+  };
+}
+
+function statStripHTML(model, st, totalSeconds) {
+  return `<div class="run-stat-strip">
+    <span><b>${esc(model)}</b></span>
+    <span class="stat-sep">·</span><span><b>${st.passed}/${st.total}</b> passed</span>
+    <span class="stat-sep">·</span><span>acc <b>${st.avgAcc}</b></span>
+    <span class="stat-sep">·</span><span>avg latency <b>${st.avgLat}s</b></span>
+    <span class="stat-sep">·</span><span>avg tok/s <b>${st.avgTps}</b></span>
+    <span class="stat-sep">·</span><span>total <b>${esc(totalSeconds)}s</b></span>
+  </div>`;
+}
+
+// Update the run progress bar's width + ARIA value together.
+function setProgress(pct) {
+  const bar = $("#run-progress-bar");
+  bar.style.width = `${pct}%`;
+  bar.setAttribute("aria-valuenow", String(pct));
+}
+
 async function runBenchmark() {
   const btn = $("#btn-run");
   const cancelBtn = $("#btn-run-cancel");
@@ -896,6 +1015,8 @@ async function runBenchmark() {
   }
 
   busy(btn, true);
+  const bothBtn = $("#btn-run-both");
+  if (bothBtn) bothBtn.disabled = true;
   tbody.innerHTML = "";
   $("#run-category-rollup").innerHTML = "";
   table.classList.remove("hidden");
@@ -910,8 +1031,7 @@ async function runBenchmark() {
   let runDone = 0;
   const updateProgress = (label) => {
     if (runTotal <= 0) return;
-    const pct = Math.round((runDone / runTotal) * 100);
-    progressBar.style.width = `${pct}%`;
+    setProgress(Math.round((runDone / runTotal) * 100));
     currentTestLabel.textContent = label || `${runDone} / ${runTotal} completed`;
   };
 
@@ -940,94 +1060,20 @@ async function runBenchmark() {
         currentTestLabel.textContent = `Profile: ${esc(evt.profile)}${evt.model_id ? ` · ${esc(evt.model_id)}` : ""} — loading…`;
       } else if (evt.event === "test_result") {
         runDone++;
-        const tps = evt.approx_tokens_per_second ?? null;
-        collected.push({
-          name: evt.name,
-          category: evt.category,
-          success: evt.success,
-          accuracy: evt.accuracy,
-          elapsed_seconds: evt.elapsed_seconds,
-          approx_tokens_per_second: tps,
-        });
+        collected.push(collectTest(evt));
         updateProgress(`${runDone} / ${runTotal} completed`);
-
-        // Result cell: PASS/FAIL + inline error snippet + warning badge
-        const resultBadge = evt.success
-          ? `<span class="pass">PASS</span>`
-          : `<span class="fail">FAIL</span>`;
-        const errSnippet = !evt.success && evt.error
-          ? ` <span class="muted small" title="${esc(evt.error)}">${esc(evt.error.slice(0, 50))}${evt.error.length > 50 ? "…" : ""}</span>`
-          : "";
-        const warnBadge = evt.warning
-          ? ` <span class="warn-badge" title="${esc(evt.warning)}">⚠</span>`
-          : "";
-
-        const tpsCell = tps != null
-          ? `${tps.toFixed(1)}`
-          : `<span class="muted">—</span>`;
-        const hasPreview = !!(evt.response_preview);
-
-        const tr = document.createElement("tr");
-        tr.innerHTML = `<td>${esc(evt.profile)}</td><td>${esc(evt.name)}</td>
-          <td>${esc(evt.category)}</td>
-          <td>${resultBadge}${errSnippet}${warnBadge}</td>
-          <td class="num">${esc(evt.elapsed_seconds)}s</td>
-          <td class="num">${tpsCell}</td>
-          <td class="num">${esc(evt.accuracy)}</td>
-          <td><button class="btn-preview${hasPreview ? "" : " btn-preview-none"}" aria-label="Toggle response preview" title="${hasPreview ? "Show/hide response" : "No response captured"}">▸</button></td>`;
-        tbody.appendChild(tr);
-
-        // Collapsible preview row — only wired when there's content.
-        const previewTr = document.createElement("tr");
-        previewTr.className = "preview-row hidden";
-        previewTr.innerHTML = `<td colspan="8"><div class="response-preview">${esc(evt.response_preview || "(no preview)")}</div></td>`;
-        tbody.appendChild(previewTr);
-        const toggleBtn = tr.querySelector(".btn-preview");
-        if (hasPreview) {
-          toggleBtn.addEventListener("click", () => {
-            const hidden = previewTr.classList.toggle("hidden");
-            toggleBtn.textContent = hidden ? "▸" : "▾";
-          });
-        } else {
-          toggleBtn.disabled = true;
-        }
-
+        appendResultRow(tbody, evt);
       } else if (evt.event === "profile_aborted") {
         const tr = document.createElement("tr");
-        tr.innerHTML = `<td>${esc(evt.profile)}</td><td colspan="7" class="fail">aborted: ${esc(evt.reason)}</td>`;
+        tr.innerHTML = `<td colspan="7" class="fail">${esc(evt.profile)} aborted: ${esc(evt.reason)}</td>`;
         tbody.appendChild(tr);
       } else if (evt.event === "run_end") {
         stopTimer();
         progressWrap.classList.add("hidden");
 
-        // Compute summary stats client-side from the collected results.
-        const successes = collected.filter((t) => t.success);
-        const passed = successes.length;
-        const total = collected.length;
-        const avgAcc = total > 0
-          ? (collected.reduce((s, t) => s + (t.accuracy || 0), 0) / total).toFixed(3)
-          : "—";
-        const lats = successes.map((t) => t.elapsed_seconds).filter(Boolean);
-        const avgLat = lats.length > 0
-          ? (lats.reduce((s, v) => s + v, 0) / lats.length).toFixed(2)
-          : "—";
-        const tpsList = successes.map((t) => t.approx_tokens_per_second).filter((v) => v != null);
-        const avgTps = tpsList.length > 0
-          ? (tpsList.reduce((s, v) => s + v, 0) / tpsList.length).toFixed(1)
-          : "—";
-
+        const runModel = state.profileModels[selectedProfile] || selectedProfile;
         summary.className = "result ok";
-        summary.innerHTML = `<div class="run-stat-strip">
-          <span><b>${passed}/${total}</b> passed</span>
-          <span class="stat-sep">·</span>
-          <span>acc <b>${avgAcc}</b></span>
-          <span class="stat-sep">·</span>
-          <span>avg latency <b>${avgLat}s</b></span>
-          <span class="stat-sep">·</span>
-          <span>avg tok/s <b>${avgTps}</b></span>
-          <span class="stat-sep">·</span>
-          <span>total <b>${esc(evt.elapsed_seconds)}s</b></span>
-        </div>`;
+        summary.innerHTML = statStripHTML(runModel, computeRunStats(collected), evt.elapsed_seconds);
         renderCategoryRollup(collected);
 
         if (collected.length) {
@@ -1047,6 +1093,33 @@ async function runBenchmark() {
         summary.textContent = `Run error: ${evt.error}`;
       }
     }, controller.signal);
+
+    // Finalize the device tag from the model's *actual* placement now that it's
+    // loaded — the card label should reflect where it really ran, not a guess.
+    // A manual GPU/CPU choice stays an explicit override; we warn on mismatch.
+    if (state.lastRun && collected.length) {
+      try {
+        await refreshStatus();
+        const detected = detectDevice(selectedProfile);
+        if (benchDevice === "auto") {
+          state.lastRun.device = detected;
+          // Quiet inline note (no toast spam on repeated runs).
+          if (detected) {
+            const note = document.createElement("span");
+            note.className = "muted small";
+            note.innerHTML = ` &nbsp;·&nbsp; device ${esc(detected.toUpperCase())}`;
+            summary.querySelector(".run-stat-strip")?.appendChild(note);
+          }
+        } else if (detected && detected !== benchDevice) {
+          toast(
+            `You tagged ${benchDevice.toUpperCase()} but the model is running on ${detected.toUpperCase()}. The card keeps your tag.`,
+            "error"
+          );
+        }
+      } catch {
+        /* placement detection is best-effort; keep the manual/empty tag */
+      }
+    }
 
     if (!out.streamed) {
       stopTimer();
@@ -1077,6 +1150,153 @@ async function runBenchmark() {
     progressWrap.classList.add("hidden");
     cancelBtn.hidden = true;
     cancelBtn.removeEventListener("click", onCancel);
+    if (bothBtn) bothBtn.disabled = false;
+    busy(btn, false);
+  }
+}
+
+// One-click CPU-vs-GPU: deploy the profile to CPU, benchmark it; deploy to GPU,
+// benchmark it; then diff the two cards in the Compare panel. Reuses the same
+// serve/benchmark/compare endpoints the manual flow uses — pure orchestration.
+async function runBothCompare() {
+  const profile = $("#bench-profile-select").value;
+  const model = state.profileModels[profile] || profile;
+  const timeout = Number($("#bench-timeout").value) || 240;
+
+  let questions = null;
+  if ($("#qs-editor").value.trim()) {
+    try {
+      questions = parseEditor();
+    } catch (err) {
+      toast(err.message, "error");
+      return;
+    }
+  }
+
+  // Without a GPU both phases land on CPU — warn before doing the long work.
+  if (state.lastHardware && !state.lastHardware.gpu &&
+      !window.confirm("No GPU was detected — both runs would execute on CPU and the comparison won't be meaningful. Continue anyway?")) {
+    return;
+  }
+
+  const btn = $("#btn-run-both");
+  const runBtn = $("#btn-run");
+  const cancelBtn = $("#btn-run-cancel");
+  const summary = $("#run-summary");
+  const tbody = $("tbody", $("#run-table"));
+  const progressWrap = $("#run-progress-wrap");
+  const currentTestLabel = $("#run-current-test");
+
+  busy(btn, true);
+  runBtn.disabled = true;
+  $("#btn-export").disabled = true;
+  $("#run-table").classList.remove("hidden");
+  $("#run-category-rollup").innerHTML = "";
+
+  const controller = new AbortController();
+  cancelBtn.hidden = false;
+  const onCancel = () => controller.abort();
+  cancelBtn.addEventListener("click", onCancel);
+
+  const cards = {};
+  try {
+    for (const [phase, device] of [["1", "cpu"], ["2", "gpu"]]) {
+      // 1) Deploy to the device (serve returns once the model is warm).
+      summary.className = "result";
+      summary.innerHTML = `<span class="spin-inline"></span> Phase ${phase}/2 — deploying on ${device.toUpperCase()}…`;
+      const served = await postJSON("/models/serve", { profile, keep_alive: "5m", device });
+      if (!served.success) throw new Error(`Could not deploy on ${device.toUpperCase()}: ${served.error || served.message || "serve failed"}`);
+
+      // 2) Benchmark it, streaming rows into the shared table.
+      tbody.innerHTML = "";
+      progressWrap.classList.remove("hidden");
+      setProgress(0);
+      const stopTimer = startElapsed(summary, `Phase ${phase}/2 — running on ${device.toUpperCase()}`);
+      const collected = [];
+      let total = 0;
+      let done = 0;
+      let endSeconds = "—";
+      let runError = null;
+      const body = { profiles: [profile], timeout };
+      if (questions) body.questions = questions;
+      try {
+        await postMaybeStream("/benchmark/run", body, (evt) => {
+          if (evt.event === "run_start") {
+            total = evt.test_count || 0;
+          } else if (evt.event === "test_result") {
+            done++;
+            collected.push(collectTest(evt));
+            appendResultRow(tbody, evt);
+            if (total > 0) setProgress(Math.round((done / total) * 100));
+            currentTestLabel.textContent = `${device.toUpperCase()} · ${done} / ${total || "?"} completed`;
+          } else if (evt.event === "profile_aborted") {
+            const tr = document.createElement("tr");
+            tr.innerHTML = `<td colspan="7" class="fail">${esc(evt.profile)} aborted: ${esc(evt.reason)}</td>`;
+            tbody.appendChild(tr);
+          } else if (evt.event === "run_end") {
+            endSeconds = evt.elapsed_seconds;
+          } else if (evt.event === "error") {
+            runError = evt.error;
+          }
+        }, controller.signal);
+      } finally {
+        stopTimer();
+      }
+      if (runError) throw new Error(runError);
+      if (!collected.length) throw new Error(`No results from the ${device.toUpperCase()} run (is the model pulled?).`);
+
+      // 3) Confirm where it actually ran; warn if Ollama didn't honor the request.
+      let detected = null;
+      try {
+        await refreshStatus();
+        detected = detectDevice(profile);
+      } catch {
+        /* best-effort */
+      }
+      if (detected && detected !== device) {
+        toast(`Requested ${device.toUpperCase()} but the model ran on ${detected.toUpperCase()}.`, "error");
+      }
+      cards[device] = {
+        profile,
+        model_id: model,
+        device: detected || device,
+        hardware: state.lastHardware || {},
+        tests: collected,
+        _seconds: endSeconds,
+      };
+    }
+
+    // 4) Diff the two cards and surface the comparison.
+    progressWrap.classList.add("hidden");
+    const diff = await postJSON("/benchmark/compare", { card_a: cards.cpu, card_b: cards.gpu });
+    renderCompare(diff);
+    state.cardA = cards.cpu;
+    state.cardB = cards.gpu;
+    updateCompareStatus();
+    // Keep the GPU run exportable as the "last run".
+    state.lastRun = cards.gpu;
+    $("#btn-export").disabled = false;
+    $("#btn-export").title = "Download the GPU report card";
+
+    summary.className = "result ok";
+    summary.innerHTML =
+      `Compared <b>${esc(model)}</b> on CPU vs GPU — see the comparison below. ` +
+      statStripHTML(`${model} (GPU)`, computeRunStats(cards.gpu.tests), cards.gpu._seconds);
+    $("#compare-body").scrollIntoView({ behavior: "smooth", block: "nearest" });
+  } catch (err) {
+    progressWrap.classList.add("hidden");
+    if (err.name === "AbortError") {
+      summary.className = "result";
+      summary.textContent = "CPU-vs-GPU run cancelled.";
+      toast("Cancelled.", "info");
+    } else {
+      summary.className = "result err";
+      summary.textContent = `CPU-vs-GPU run failed: ${err.message}`;
+    }
+  } finally {
+    cancelBtn.hidden = true;
+    cancelBtn.removeEventListener("click", onCancel);
+    runBtn.disabled = false;
     busy(btn, false);
   }
 }
@@ -1134,6 +1354,34 @@ function updateCompareStatus() {
   $("#compare-status").innerHTML = `A: ${cardLabel(state.cardA)} &nbsp;·&nbsp; B: ${cardLabel(state.cardB)}`;
 }
 
+// Render a /benchmark/compare result into the Compare panel. Shared by the
+// manual two-card compare and the one-click CPU-vs-GPU flow.
+function renderCompare(diff) {
+  const sd = diff.summary_delta || {};
+  const arrow = (d) => (d == null ? "" : d > 0 ? ` ▲ +${d}` : d < 0 ? ` ▼ ${d}` : " =");
+  const pair = (av, bv) => `${esc(av ?? "—")} → ${esc(bv ?? "—")}`;
+  const rows = (diff.tests || [])
+    .map(
+      (r) => `<tr><td>${esc(r.name)}</td>
+        <td class="num">${pair(r.accuracy_a, r.accuracy_b)}${esc(arrow(r.accuracy_delta))}</td>
+        <td class="num">${pair(r.latency_a, r.latency_b)}${esc(arrow(r.latency_delta))}</td>
+        <td class="num">${pair(r.tps_a, r.tps_b)}${esc(arrow(r.tps_delta))}</td></tr>`
+    )
+    .join("");
+  // Only show the aggregate tok/s stat when at least one card carried it.
+  const tpsStat =
+    sd.tps_a != null || sd.tps_b != null
+      ? ` &nbsp;·&nbsp; avg tok/s ${esc(sd.tps_a ?? "—")} → ${esc(sd.tps_b ?? "—")}${esc(arrow(sd.avg_tokens_per_second))}`
+      : "";
+  $("#compare-body").innerHTML = `
+    <div class="result">${esc(diff.label_a)} → ${esc(diff.label_b)} &nbsp;·&nbsp;
+      avg accuracy${esc(arrow(sd.avg_accuracy))} &nbsp;·&nbsp; avg latency${esc(arrow(sd.avg_latency_s))}${tpsStat} &nbsp;·&nbsp;
+      passed ${esc(sd.passed_a ?? "?")} → ${esc(sd.passed_b ?? "?")}</div>
+    <div class="table-wrap"><table class="results">
+      <thead><tr><th>Test</th><th class="num">Accuracy (A → B)</th><th class="num">Latency (A → B)</th><th class="num">tok/s (A → B)</th></tr></thead>
+      <tbody>${rows}</tbody></table></div>`;
+}
+
 async function compareCards() {
   if (!state.cardA || !state.cardB) {
     toast("Load both Card A and Card B first.", "error");
@@ -1143,29 +1391,7 @@ async function compareCards() {
   busy(btn, true);
   try {
     const diff = await postJSON("/benchmark/compare", { card_a: state.cardA, card_b: state.cardB });
-    const sd = diff.summary_delta || {};
-    const arrow = (d) => (d == null ? "" : d > 0 ? ` ▲ +${d}` : d < 0 ? ` ▼ ${d}` : " =");
-    const pair = (av, bv) => `${esc(av ?? "—")} → ${esc(bv ?? "—")}`;
-    const rows = (diff.tests || [])
-      .map(
-        (r) => `<tr><td>${esc(r.name)}</td>
-          <td class="num">${pair(r.accuracy_a, r.accuracy_b)}${esc(arrow(r.accuracy_delta))}</td>
-          <td class="num">${pair(r.latency_a, r.latency_b)}${esc(arrow(r.latency_delta))}</td>
-          <td class="num">${pair(r.tps_a, r.tps_b)}${esc(arrow(r.tps_delta))}</td></tr>`
-      )
-      .join("");
-    // Only show the aggregate tok/s stat when at least one card carried it.
-    const tpsStat =
-      sd.tps_a != null || sd.tps_b != null
-        ? ` &nbsp;·&nbsp; avg tok/s ${esc(sd.tps_a ?? "—")} → ${esc(sd.tps_b ?? "—")}${esc(arrow(sd.avg_tokens_per_second))}`
-        : "";
-    $("#compare-body").innerHTML = `
-      <div class="result">${esc(diff.label_a)} → ${esc(diff.label_b)} &nbsp;·&nbsp;
-        avg accuracy${esc(arrow(sd.avg_accuracy))} &nbsp;·&nbsp; avg latency${esc(arrow(sd.avg_latency_s))}${tpsStat} &nbsp;·&nbsp;
-        passed ${esc(sd.passed_a ?? "?")} → ${esc(sd.passed_b ?? "?")}</div>
-      <div class="table-wrap"><table class="results">
-        <thead><tr><th>Test</th><th class="num">Accuracy (A → B)</th><th class="num">Latency (A → B)</th><th class="num">tok/s (A → B)</th></tr></thead>
-        <tbody>${rows}</tbody></table></div>`;
+    renderCompare(diff);
   } catch (err) {
     toast(`Compare failed: ${err.message}`, "error");
   } finally {
@@ -1270,6 +1496,7 @@ $("#btn-pull").addEventListener("click", () => pullModel());
 $("#btn-example").addEventListener("click", loadExample);
 $("#btn-validate").addEventListener("click", validateSet);
 $("#btn-run").addEventListener("click", runBenchmark);
+$("#btn-run-both").addEventListener("click", runBothCompare);
 $("#upload-json").addEventListener("change", (e) => uploadFile(e.target));
 $("#btn-recommend").addEventListener("click", recommendTune);
 $("#btn-export").addEventListener("click", exportCard);

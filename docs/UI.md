@@ -21,7 +21,7 @@ A newcomer can go end-to-end without reading anything else:
 
 | Control | What it does | Endpoint |
 |---|---|---|
-| Check My Hardware | GPU name + VRAM, **CPU model, cores, and system RAM** | `GET /system/hardware` |
+| Check My Hardware | GPU name + VRAM (NVIDIA) or **Apple Silicon (Metal, unified memory)**, **CPU model, cores, and system RAM** | `GET /system/hardware` |
 | Refresh status | Loaded model(s), Ollama health, VRAM, **GPU/CPU placement** | `GET /system/status` |
 | Deploy to (Auto/GPU/CPU) | Force where the model runs (`num_gpu`: 0 = CPU, max = GPU) | `POST /models/serve` |
 | Start / Stop / Switch | Warm / unload / pivot the selected profile | `POST /models/{serve,stop,switch}` |
@@ -85,6 +85,9 @@ Graders are selected by `type` from a fixed registry (uploads stay safe JSON —
 - **Compare report cards** takes two exported cards and diffs them per test and in aggregate —
   old model vs new, quant A vs B, or **the same model on GPU vs CPU**. The diff includes accuracy,
   latency, and **tok/s** columns so the speed trade-off is explicit (`POST /benchmark/compare`).
+- **Run on CPU & GPU ▶▶** (one click) benchmarks the selected profile on **both** placements —
+  deploy CPU → run → deploy GPU → run — and auto-fills the Compare panel, so the speed/quality
+  trade-off appears without exporting and re-loading cards by hand.
 
 ## Tune for my GPU (Tab 1)
 

@@ -4,6 +4,32 @@ All notable changes to this project should be documented here.
 
 ## Unreleased
 
+- **Fixed: the web UI was completely broken** — `web/app.js` contained smart/curly quotes
+  (`“ ”`) used as string delimiters in the "Check New Models" function, a `SyntaxError` that
+  prevented the *entire* script from parsing (blank/dead UI). Replaced with straight quotes.
+  Added a CI step (`node --check web/app.js`) and a pytest guard so a JS parse error can never
+  ship silently again (the Python-only suite never loaded the UI before).
+- **One-click CPU-vs-GPU comparison**: a new *Run on CPU & GPU ▶▶* button deploys the selected
+  profile to CPU, benchmarks it, redeploys to GPU, benchmarks it, then auto-diffs the two in the
+  Compare panel — closing the "should I run this on CPU or GPU?" loop without manual steps.
+  Reuses the existing serve/benchmark/compare endpoints (pure orchestration).
+- Quieter device auto-detect (inline note instead of a per-run toast); the run progress bar is
+  now an ARIA `progressbar` so screen readers announce progress.
+
+- **Honest device tag**: the benchmark Device tag now defaults to **Auto (detect)** and is
+  resolved from the model's *actual* placement (GPU/CPU/Split via `/system/status`) after the
+  run, so report cards can't be silently mislabelled. Manual GPU/CPU stays an override and warns
+  if it disagrees with what's detected.
+- **Apple Silicon (Metal) detection**: `/system/hardware` now reports Apple Silicon GPUs instead
+  of claiming "CPU-only" on a Mac. Unified memory is surfaced as such (no false VRAM figure; fit
+  checks use system RAM). NVIDIA still takes precedence where present.
+- **Pull fit-gate respects the tiered warnings**: a model that won't fit VRAM but **runs on CPU**
+  is no longer blocked behind the override — the gate now hard-blocks only the "fits nowhere"
+  (`severity: hard`) case and notes the CPU fallback for the soft case.
+- **Tune for my GPU** labels skipped CPU-capable profiles as "CPU-only (skipped for GPU tuning)"
+  instead of the misleading "won't fit VRAM".
+- **Run table**: dropped the redundant Profile column (the UI runs one profile); the model name
+  moved into the completion stat strip.
 - **Warm-up robustness**: Start/Switch now show a **live "Loading…Ns" counter** (with a
   "large models on CPU can take a minute" hint when targeting CPU) instead of an apparently
   frozen button. The server's load timeout **scales with the device** (longer for CPU offload)
