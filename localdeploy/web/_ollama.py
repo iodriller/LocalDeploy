@@ -77,12 +77,21 @@ def list_running() -> Tuple[List[Dict[str, Any]], Optional[str]]:
     return out, None
 
 
-def load_model(model: str, keep_alive: str = "5m") -> Dict[str, Any]:
-    """Warm a model into memory. An empty prompt makes Ollama load without generating."""
+def load_model(
+    model: str, keep_alive: str = "5m", num_gpu: Optional[int] = None
+) -> Dict[str, Any]:
+    """Warm a model into memory. An empty prompt makes Ollama load without generating.
+
+    ``num_gpu`` sets how many layers to offload to the GPU (0 = force CPU). When
+    None, Ollama decides (auto) — identical to the prior behaviour.
+    """
     base = base_url()
+    payload: Dict[str, Any] = {"model": model, "keep_alive": keep_alive}
+    if num_gpu is not None:
+        payload["options"] = {"num_gpu": num_gpu}
     response = requests.post(
         f"{base}/api/generate",
-        json={"model": model, "keep_alive": keep_alive},
+        json=payload,
         timeout=120,
     )
     response.raise_for_status()

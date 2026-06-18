@@ -156,6 +156,8 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--a
 .badge.unknown { color: var(--warn); border-color: rgba(251, 191, 36, 0.4); }
 .badge.on { color: var(--good); border-color: rgba(52, 211, 153, 0.4); }
 .badge.off { color: var(--muted); }
+.badge.cpu { color: var(--accent); border-color: rgba(138, 180, 248, 0.4); }
+.badge.split { color: var(--warn); border-color: rgba(251, 191, 36, 0.4); }
 
 /* ---- model rows ---- */
 .mlist { display: flex; flex-direction: column; gap: 0.4rem; }
