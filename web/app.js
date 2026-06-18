@@ -820,9 +820,13 @@ async function validateSet() {
 // ---------------------------------------------------------------------------
 async function runBenchmark() {
   const btn = $("#btn-run");
+  const cancelBtn = $("#btn-run-cancel");
   const summary = $("#run-summary");
   const table = $("#run-table");
   const tbody = $("tbody", table);
+  const progressWrap = $("#run-progress-wrap");
+  const progressBar = $("#run-progress-bar");
+  const currentTestLabel = $("#run-current-test");
 
   // Use the editor's question set if present; otherwise run built-in tests.
   let questions = null;
@@ -845,6 +849,22 @@ async function runBenchmark() {
   // Disable export until THIS run succeeds, so it can't point at a stale result.
   $("#btn-export").disabled = true;
 
+  // Progress state — populated once run_start arrives.
+  let runTotal = 0;
+  let runDone = 0;
+  const updateProgress = (label) => {
+    if (runTotal <= 0) return;
+    const pct = Math.round((runDone / runTotal) * 100);
+    progressBar.style.width = `${pct}%`;
+    currentTestLabel.textContent = label || `${runDone} / ${runTotal} completed`;
+  };
+
+  // AbortController so the Cancel button can stop an in-flight benchmark.
+  const controller = new AbortController();
+  cancelBtn.hidden = false;
+  const onCancel = () => controller.abort();
+  cancelBtn.addEventListener("click", onCancel);
+
   const selectedProfile = $("#bench-profile-select").value;
   const benchDevice = ($("#bench-device")?.value || "auto").toLowerCase();
   const body = {
@@ -856,34 +876,103 @@ async function runBenchmark() {
   const collected = [];
   try {
     const out = await postMaybeStream("/benchmark/run", body, (evt) => {
-      if (evt.event === "test_result") {
+      if (evt.event === "run_start") {
+        runTotal = evt.test_count || 0;
+        progressWrap.classList.remove("hidden");
+        updateProgress(`0 / ${runTotal} completed — waiting for model to load…`);
+      } else if (evt.event === "profile_start") {
+        currentTestLabel.textContent = `Profile: ${esc(evt.profile)}${evt.model_id ? ` · ${esc(evt.model_id)}` : ""} — loading…`;
+      } else if (evt.event === "test_result") {
+        runDone++;
+        const tps = evt.approx_tokens_per_second ?? null;
         collected.push({
           name: evt.name,
           category: evt.category,
           success: evt.success,
           accuracy: evt.accuracy,
           elapsed_seconds: evt.elapsed_seconds,
+          approx_tokens_per_second: tps,
         });
-        const tr = document.createElement("tr");
-        const result = evt.success
+        updateProgress(`${runDone} / ${runTotal} completed`);
+
+        // Result cell: PASS/FAIL + inline error snippet + warning badge
+        const resultBadge = evt.success
           ? `<span class="pass">PASS</span>`
           : `<span class="fail">FAIL</span>`;
+        const errSnippet = !evt.success && evt.error
+          ? ` <span class="muted small" title="${esc(evt.error)}">${esc(evt.error.slice(0, 50))}${evt.error.length > 50 ? "…" : ""}</span>`
+          : "";
+        const warnBadge = evt.warning
+          ? ` <span class="warn-badge" title="${esc(evt.warning)}">⚠</span>`
+          : "";
+
+        const tpsCell = tps != null
+          ? `${tps.toFixed(1)}`
+          : `<span class="muted">—</span>`;
+        const hasPreview = !!(evt.response_preview);
+
+        const tr = document.createElement("tr");
         tr.innerHTML = `<td>${esc(evt.profile)}</td><td>${esc(evt.name)}</td>
-          <td>${esc(evt.category)}</td><td>${result}</td>
+          <td>${esc(evt.category)}</td>
+          <td>${resultBadge}${errSnippet}${warnBadge}</td>
           <td class="num">${esc(evt.elapsed_seconds)}s</td>
-          <td class="num">${esc(evt.accuracy)}</td>`;
+          <td class="num">${tpsCell}</td>
+          <td class="num">${esc(evt.accuracy)}</td>
+          <td><button class="btn-preview${hasPreview ? "" : " btn-preview-none"}" aria-label="Toggle response preview" title="${hasPreview ? "Show/hide response" : "No response captured"}">▸</button></td>`;
         tbody.appendChild(tr);
+
+        // Collapsible preview row — only wired when there's content.
+        const previewTr = document.createElement("tr");
+        previewTr.className = "preview-row hidden";
+        previewTr.innerHTML = `<td colspan="8"><div class="response-preview">${esc(evt.response_preview || "(no preview)")}</div></td>`;
+        tbody.appendChild(previewTr);
+        const toggleBtn = tr.querySelector(".btn-preview");
+        if (hasPreview) {
+          toggleBtn.addEventListener("click", () => {
+            const hidden = previewTr.classList.toggle("hidden");
+            toggleBtn.textContent = hidden ? "▸" : "▾";
+          });
+        } else {
+          toggleBtn.disabled = true;
+        }
+
       } else if (evt.event === "profile_aborted") {
         const tr = document.createElement("tr");
-        tr.innerHTML = `<td>${esc(evt.profile)}</td><td colspan="5" class="fail">aborted: ${esc(evt.reason)}</td>`;
+        tr.innerHTML = `<td>${esc(evt.profile)}</td><td colspan="7" class="fail">aborted: ${esc(evt.reason)}</td>`;
         tbody.appendChild(tr);
       } else if (evt.event === "run_end") {
         stopTimer();
-        const parts = (evt.profiles || [])
-          .map((p) => `${esc(p.profile)}: ${p.passed}/${p.tests} passed, avg acc ${p.avg_accuracy}`)
-          .join(" · ");
+        progressWrap.classList.add("hidden");
+
+        // Compute summary stats client-side from the collected results.
+        const successes = collected.filter((t) => t.success);
+        const passed = successes.length;
+        const total = collected.length;
+        const avgAcc = total > 0
+          ? (collected.reduce((s, t) => s + (t.accuracy || 0), 0) / total).toFixed(3)
+          : "—";
+        const lats = successes.map((t) => t.elapsed_seconds).filter(Boolean);
+        const avgLat = lats.length > 0
+          ? (lats.reduce((s, v) => s + v, 0) / lats.length).toFixed(2)
+          : "—";
+        const tpsList = successes.map((t) => t.approx_tokens_per_second).filter((v) => v != null);
+        const avgTps = tpsList.length > 0
+          ? (tpsList.reduce((s, v) => s + v, 0) / tpsList.length).toFixed(1)
+          : "—";
+
         summary.className = "result ok";
-        summary.innerHTML = `Done in ${esc(evt.elapsed_seconds)}s — ${parts}`;
+        summary.innerHTML = `<div class="run-stat-strip">
+          <span><b>${passed}/${total}</b> passed</span>
+          <span class="stat-sep">·</span>
+          <span>acc <b>${avgAcc}</b></span>
+          <span class="stat-sep">·</span>
+          <span>avg latency <b>${avgLat}s</b></span>
+          <span class="stat-sep">·</span>
+          <span>avg tok/s <b>${avgTps}</b></span>
+          <span class="stat-sep">·</span>
+          <span>total <b>${esc(evt.elapsed_seconds)}s</b></span>
+        </div>`;
+
         if (collected.length) {
           state.lastRun = {
             profile: selectedProfile,
@@ -900,7 +989,8 @@ async function runBenchmark() {
         summary.className = "result err";
         summary.textContent = `Run error: ${evt.error}`;
       }
-    });
+    }, controller.signal);
+
     if (!out.streamed) {
       stopTimer();
       const j = out.json || {};
@@ -916,10 +1006,20 @@ async function runBenchmark() {
       }
     }
   } catch (err) {
-    summary.className = "result err";
-    summary.textContent = `Run failed: ${err.message}`;
+    if (err.name === "AbortError") {
+      stopTimer();
+      summary.className = "result";
+      summary.textContent = "Run cancelled.";
+      toast("Benchmark cancelled.", "info");
+    } else {
+      summary.className = "result err";
+      summary.textContent = `Run failed: ${err.message}`;
+    }
   } finally {
     stopTimer();
+    progressWrap.classList.add("hidden");
+    cancelBtn.hidden = true;
+    cancelBtn.removeEventListener("click", onCancel);
     busy(btn, false);
   }
 }

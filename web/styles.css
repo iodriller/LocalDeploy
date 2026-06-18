@@ -200,6 +200,35 @@ table.results td.num, table.results th.num { text-align: right; font-variant-num
 
 .hidden { display: none; }
 
+/* ---- run progress bar ---- */
+.run-progress-track {
+  height: 5px; background: var(--border); border-radius: 999px; overflow: hidden; margin-top: 0.5rem;
+}
+.run-progress-fill {
+  height: 100%; background: var(--accent-strong); border-radius: 999px; transition: width 0.25s ease;
+}
+
+/* ---- benchmark run stat strip ---- */
+.run-stat-strip { display: flex; flex-wrap: wrap; align-items: center; gap: 0 0.4rem; }
+.stat-sep { color: var(--border); }
+
+/* ---- per-test response preview ---- */
+.preview-row td { padding: 0.2rem 0.55rem !important; background: rgba(0,0,0,0.2); }
+.response-preview {
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 0.79rem; color: var(--muted); padding: 0.4rem 0.6rem;
+  background: #0b0d12; border-radius: 6px;
+  white-space: pre-wrap; word-break: break-word;
+  max-height: 110px; overflow: auto;
+}
+.btn-preview {
+  background: none; border: none; color: var(--muted);
+  cursor: pointer; font-size: 0.78rem; padding: 0.1rem 0.35rem; border-radius: 4px;
+}
+.btn-preview:hover { color: var(--text); background: var(--panel-2); }
+.btn-preview:disabled, .btn-preview.btn-preview-none { opacity: 0.25; cursor: default; }
+.warn-badge { color: var(--warn); font-size: 0.8rem; cursor: help; margin-left: 0.2rem; }
+
 .hint {
   background: linear-gradient(90deg, rgba(79, 134, 247, 0.12), rgba(79, 134, 247, 0.03));
   border: 1px solid rgba(79, 134, 247, 0.3);
