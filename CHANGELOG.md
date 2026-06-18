@@ -4,6 +4,18 @@ All notable changes to this project should be documented here.
 
 ## Unreleased
 
+- **Fixed: the web UI was completely broken** — `web/app.js` contained smart/curly quotes
+  (`“ ”`) used as string delimiters in the "Check New Models" function, a `SyntaxError` that
+  prevented the *entire* script from parsing (blank/dead UI). Replaced with straight quotes.
+  Added a CI step (`node --check web/app.js`) and a pytest guard so a JS parse error can never
+  ship silently again (the Python-only suite never loaded the UI before).
+- **One-click CPU-vs-GPU comparison**: a new *Run on CPU & GPU ▶▶* button deploys the selected
+  profile to CPU, benchmarks it, redeploys to GPU, benchmarks it, then auto-diffs the two in the
+  Compare panel — closing the "should I run this on CPU or GPU?" loop without manual steps.
+  Reuses the existing serve/benchmark/compare endpoints (pure orchestration).
+- Quieter device auto-detect (inline note instead of a per-run toast); the run progress bar is
+  now an ARIA `progressbar` so screen readers announce progress.
+
 - **Honest device tag**: the benchmark Device tag now defaults to **Auto (detect)** and is
   resolved from the model's *actual* placement (GPU/CPU/Split via `/system/status`) after the
   run, so report cards can't be silently mislabelled. Manual GPU/CPU stays an override and warns

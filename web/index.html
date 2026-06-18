@@ -193,10 +193,11 @@
               <input type="number" id="bench-timeout" value="240" min="1" />
             </label>
             <button class="btn primary" id="btn-run">Run benchmark ▶</button>
+            <button class="btn" id="btn-run-both" title="Deploy on CPU, benchmark; deploy on GPU, benchmark; then compare the two">Run on CPU &amp; GPU ▶▶</button>
           </div>
-          <p class="muted small">Leave the editor empty to run the built-in capability suite, or load a set above. Tip: <kbd>⌘/Ctrl</kbd>+<kbd>Enter</kbd> in the editor runs it.</p>
+          <p class="muted small">Leave the editor empty to run the built-in capability suite, or load a set above. <b>Run on CPU &amp; GPU</b> benchmarks both placements and diffs them automatically. Tip: <kbd>⌘/Ctrl</kbd>+<kbd>Enter</kbd> in the editor runs it.</p>
           <div id="run-progress-wrap" class="hidden">
-            <div class="run-progress-track"><div id="run-progress-bar" class="run-progress-fill" style="width:0%"></div></div>
+            <div class="run-progress-track"><div id="run-progress-bar" class="run-progress-fill" style="width:0%" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-label="Benchmark progress"></div></div>
             <div id="run-current-test" class="muted small" style="margin-top:.3rem"></div>
           </div>
           <div id="run-summary" class="result"></div>

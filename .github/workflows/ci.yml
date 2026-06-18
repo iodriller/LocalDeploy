@@ -38,6 +38,12 @@ jobs:
         with:
           python-version: "3.12"
 
+      # The Python test suite never parses the static UI, so a JS syntax error
+      # (e.g. smart quotes from an editor) would otherwise ship silently and
+      # break the entire web UI. `node --check` parses without executing.
+      - name: Check web UI JavaScript parses
+        run: node --check web/app.js
+
       - name: Install dependencies
         run: python -m pip install -r requirements-dev.txt
 

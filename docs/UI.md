@@ -85,6 +85,9 @@ Graders are selected by `type` from a fixed registry (uploads stay safe JSON —
 - **Compare report cards** takes two exported cards and diffs them per test and in aggregate —
   old model vs new, quant A vs B, or **the same model on GPU vs CPU**. The diff includes accuracy,
   latency, and **tok/s** columns so the speed trade-off is explicit (`POST /benchmark/compare`).
+- **Run on CPU & GPU ▶▶** (one click) benchmarks the selected profile on **both** placements —
+  deploy CPU → run → deploy GPU → run — and auto-fills the Compare panel, so the speed/quality
+  trade-off appears without exporting and re-loading cards by hand.
 
 ## Tune for my GPU (Tab 1)
 
