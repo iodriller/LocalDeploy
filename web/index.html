@@ -89,6 +89,7 @@
           <div class="card-head">
             <h2>Models</h2>
             <div class="row gap">
+              <button class="btn" id="btn-free" title="Unload all models from memory/VRAM">Free memory</button>
               <button class="btn" id="btn-installed">Refresh installed</button>
               <button class="btn" id="btn-updates">Check New Models</button>
             </div>
@@ -104,6 +105,7 @@
               <span>Override fit check ⚠</span>
             </label>
             <button class="btn primary" id="btn-pull">Pull</button>
+            <button class="btn danger" id="btn-pull-cancel" hidden>Cancel</button>
           </div>
           <pre id="pull-log" class="log hidden"></pre>
 

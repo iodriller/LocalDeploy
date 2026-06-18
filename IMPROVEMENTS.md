@@ -162,8 +162,8 @@ Checkbox: `[x]` done · `[~]` partially done (note says what's left) · `[ ]` op
   ("Keep-alive: how long to keep the model warm in memory"); warn that "Override fit check" may OOM
   the GPU.
 
-- [ ] **I23 · UX · `web/app.js`** — Unrecognized pull/benchmark SSE events are dumped as raw JSON into
-  the log/table. *Fix:* render a friendly fallback ("downloading layers…") or suppress unknown events.
+- [x] **I23 · UX · `web/app.js`** — Unrecognized pull/benchmark SSE events are dumped as raw JSON into
+  the log/table. *Done:* the pull log now ignores unknown event shapes instead of dumping raw JSON.
 
 - [x] **I24 · UX · `web/app.js` export-enabled state** — `#btn-export` is enabled in `run_end` but not
   reset at the start of a new run, so after an aborted/errored run it can point at a stale result.

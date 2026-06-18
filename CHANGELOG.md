@@ -4,6 +4,12 @@ All notable changes to this project should be documented here.
 
 ## Unreleased
 
+- **Tiered fit warnings** (`/system/fit-check`): adds `tier`/`severity`/`headline`/`cpu_deployable`
+  — green (comfortable), yellow (tight, or won't-fit-GPU-but-runs-on-CPU), red (too big anywhere) —
+  using system RAM to judge CPU deployability. The coarse `verdict` is unchanged (backward-compatible).
+- **Model management**: `POST /models/delete` (remove a model from disk) and `POST /models/free`
+  (unload all models from memory/VRAM), with **Delete** buttons per installed model, a **Free memory**
+  button, and a **Cancel** button to abort an in-flight pull.
 - **Hardware panel now shows CPU + RAM** (`/system/hardware`): CPU model, physical/logical cores,
   and system RAM total/available via `psutil` (graceful fallback when absent). See `docs/ROADMAP.md`.
 - **Choose CPU vs GPU at deploy time**: the Serve panel has a *Deploy to* selector (Auto / GPU /
