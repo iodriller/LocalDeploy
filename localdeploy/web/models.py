@@ -33,6 +33,37 @@ def _sse(obj: Dict[str, Any]) -> str:
     return f"data: {json.dumps(obj, ensure_ascii=False)}\n\n"
 
 
+# A large layer count forces Ollama to offload everything it can to the GPU.
+_FORCE_GPU_LAYERS = 999
+
+
+def _resolve_num_gpu(device: Optional[str], num_gpu: Optional[int]) -> Optional[int]:
+    """Map a friendly device choice to an Ollama ``num_gpu`` value.
+
+    - explicit ``num_gpu`` wins (advanced override)
+    - "cpu"  -> 0   (force CPU)
+    - "gpu"  -> 999 (force max GPU offload)
+    - "auto"/None -> None (Ollama decides; identical to prior behaviour)
+    """
+    if num_gpu is not None:
+        return num_gpu
+    d = (device or "").strip().lower()
+    if d == "cpu":
+        return 0
+    if d == "gpu":
+        return _FORCE_GPU_LAYERS
+    return None
+
+
+def _placement(size: Any, size_vram: Any) -> Dict[str, Any]:
+    """Derive a GPU/CPU placement label from total vs VRAM-resident bytes."""
+    if isinstance(size, int) and isinstance(size_vram, int) and size > 0:
+        pct = round(100 * size_vram / size)
+        label = "GPU" if pct >= 99 else ("CPU" if pct <= 1 else "Split")
+        return {"gpu_percent": pct, "placement": label}
+    return {"gpu_percent": None, "placement": None}
+
+
 def _resolve_target(
     profile: Optional[str], model: Optional[str], backend: Optional[str]
 ) -> Tuple[str, Optional[str], Dict[str, Any]]:
@@ -55,12 +86,18 @@ def _resolve_target(
 @router.get("/system/status")
 def system_status() -> Dict[str, Any]:
     running, run_error = _ollama.list_running()
+    for m in running:
+        m.update(_placement(m.get("size"), m.get("size_vram")))
     hardware = detect_hardware()
     return {
         "success": True,
         "ollama": {"reachable": run_error is None, "running": running, "error": run_error},
         "served_models": [m.get("name") for m in running],
-        "hardware": {"gpu_available": hardware["gpu_available"], "gpus": hardware["gpus"]},
+        "hardware": {
+            "gpu_available": hardware["gpu_available"],
+            "gpus": hardware["gpus"],
+            "system": hardware.get("system"),
+        },
         "require_gpu_only": require_gpu_only(),
     }
 
@@ -122,6 +159,8 @@ class ServeRequest(BaseModel):
     model: Optional[str] = None
     profile: Optional[str] = None
     keep_alive: str = "5m"
+    device: Optional[str] = None  # "auto" | "gpu" | "cpu"
+    num_gpu: Optional[int] = None  # advanced override (layers offloaded to GPU)
 
 
 class StopRequest(BaseModel):
@@ -134,13 +173,15 @@ class SwitchRequest(BaseModel):
     to_profile: Optional[str] = None
     from_model: Optional[str] = None
     keep_alive: str = "5m"
+    device: Optional[str] = None
+    num_gpu: Optional[int] = None
 
 
-def _serve_ollama(model_id: str, keep_alive: str) -> Dict[str, Any]:
+def _serve_ollama(model_id: str, keep_alive: str, num_gpu: Optional[int] = None) -> Dict[str, Any]:
     if require_gpu_only():
         return {"success": False, "error": "GPU-only mode is enabled; refusing Ollama serve."}
     try:
-        _ollama.load_model(model_id, keep_alive)
+        _ollama.load_model(model_id, keep_alive, num_gpu=num_gpu)
     except BackendCallError as exc:
         return {"success": False, "error": str(exc)}
     except requests.ConnectionError:
@@ -148,12 +189,16 @@ def _serve_ollama(model_id: str, keep_alive: str) -> Dict[str, Any]:
     except requests.RequestException as exc:
         return {"success": False, "error": f"Failed to load '{model_id}': {exc}"}
     running, _ = _ollama.list_running()
+    for m in running:
+        m.update(_placement(m.get("size"), m.get("size_vram")))
+    target = {0: "CPU", _FORCE_GPU_LAYERS: "GPU"}.get(num_gpu, "auto") if num_gpu is not None else "auto"
     return {
         "success": True,
         "backend": "ollama",
         "served": model_id,
         "running": running,
-        "message": f"'{model_id}' warmed and kept alive for {keep_alive}.",
+        "device": target,
+        "message": f"'{model_id}' warmed on {target} and kept alive for {keep_alive}.",
     }
 
 
@@ -175,7 +220,7 @@ def models_serve(req: ServeRequest) -> Dict[str, Any]:
     except ValueError as exc:
         return {"success": False, "error": str(exc)}
     if backend == "ollama":
-        return _serve_ollama(model_id, req.keep_alive)
+        return _serve_ollama(model_id, req.keep_alive, _resolve_num_gpu(req.device, req.num_gpu))
     return _llamacpp_status_message()
 
 
@@ -219,7 +264,7 @@ def models_switch(req: SwitchRequest) -> Dict[str, Any]:
         except (BackendCallError, requests.RequestException):
             unloaded = None  # best-effort; serving the new model is what matters
 
-    result = _serve_ollama(to_model, req.keep_alive)
+    result = _serve_ollama(to_model, req.keep_alive, _resolve_num_gpu(req.device, req.num_gpu))
     result["switched_from"] = unloaded
     if result.get("success"):
         result["message"] = f"Switched to '{to_model}'" + (f" (unloaded '{unloaded}')" if unloaded else "") + "."

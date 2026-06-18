@@ -108,12 +108,14 @@ Checkbox: `[x]` done · `[~]` partially done (note says what's left) · `[ ]` op
 
 ## Priority 2 — security hardening (within the local-only threat model)
 
-- [ ] **I14 · SECURITY · `benchmark.py` code graders** — The built-in code-category graders
+- [x] **I14 · SECURITY · `benchmark.py` code graders** — The built-in code-category graders
   `exec(compile(tree, ...))` the model's **response** in-process with no sandbox, reachable via
   `/benchmark/run` when no uploaded question set is provided. A model returning code with side effects
   runs it in the server process. (Uploaded question sets use the safe JSON grader registry — not
-  affected.) *Fix:* subprocess-isolate the code-grader `exec`, or gate code-category tests behind an
-  explicit opt-in flag.
+  affected.) *Done:* moved the exec into `localdeploy/grader_sandbox.py`, which runs candidate code in
+  a short-lived subprocess (`python -I`, CPU/memory rlimits, candidate stdout/stderr suppressed) with a
+  wall-clock timeout. Any failure degrades to 0.0; this also fixes a latent hang where an infinite loop
+  in model code would block the grader forever. Covered by `tests/test_grader_sandbox.py`.
 
 - [x] **I15 · RISK · `api_server.py` auth middleware** — The auth exemption uses
   `path.startswith("/ui")`, a prefix match. No data route matches today, but a future `/ui-config`

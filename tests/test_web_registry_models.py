@@ -169,13 +169,30 @@ def test_status_success_path(monkeypatch) -> None:
 def test_serve_success_path(monkeypatch) -> None:
     calls = {}
     monkeypatch.setattr(
-        models_mod._ollama, "load_model", lambda m, k: calls.update(model=m, keep_alive=k) or {}
+        models_mod._ollama,
+        "load_model",
+        lambda m, k, num_gpu=None: calls.update(model=m, keep_alive=k, num_gpu=num_gpu) or {},
     )
     monkeypatch.setattr(models_mod._ollama, "list_running", lambda: ([{"name": "gemma3:4b"}], None))
     body = client.post("/models/serve", json={"model": "gemma3:4b", "keep_alive": "10m"}).json()
     assert body["success"] is True
     assert body["served"] == "gemma3:4b"
-    assert calls == {"model": "gemma3:4b", "keep_alive": "10m"}
+    # Default (no device) must leave num_gpu unset -> Ollama auto.
+    assert calls == {"model": "gemma3:4b", "keep_alive": "10m", "num_gpu": None}
+
+
+def test_serve_cpu_device_forces_num_gpu_zero(monkeypatch) -> None:
+    calls = {}
+    monkeypatch.setattr(
+        models_mod._ollama,
+        "load_model",
+        lambda m, k, num_gpu=None: calls.update(num_gpu=num_gpu) or {},
+    )
+    monkeypatch.setattr(models_mod._ollama, "list_running", lambda: ([], None))
+    body = client.post("/models/serve", json={"model": "gemma3:4b", "device": "cpu"}).json()
+    assert body["success"] is True
+    assert body["device"] == "CPU"
+    assert calls["num_gpu"] == 0
 
 
 def test_stop_success_path(monkeypatch) -> None:
@@ -188,7 +205,7 @@ def test_stop_success_path(monkeypatch) -> None:
 def test_switch_success_path(monkeypatch) -> None:
     unloaded = []
     monkeypatch.setattr(models_mod._ollama, "unload_model", lambda m: unloaded.append(m) or {})
-    monkeypatch.setattr(models_mod._ollama, "load_model", lambda m, k: {})
+    monkeypatch.setattr(models_mod._ollama, "load_model", lambda m, k, num_gpu=None: {})
     monkeypatch.setattr(models_mod._ollama, "list_running", lambda: ([{"name": "gemma3:4b"}], None))
     body = client.post(
         "/models/switch", json={"to_model": "gemma3:4b", "from_model": "qwen3:8b"}

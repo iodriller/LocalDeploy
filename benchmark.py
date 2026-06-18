@@ -39,6 +39,7 @@ import requests
 from dotenv import load_dotenv
 
 from api_server import load_config
+from localdeploy.grader_sandbox import run_code_fraction
 
 APP_DIR = Path(__file__).resolve().parent
 load_dotenv(APP_DIR / ".env")
@@ -215,29 +216,12 @@ def _grade_levenshtein(text: str) -> float:
         tree = ast.parse(code)
     except SyntaxError:
         return 0.0
-    score = 0.0
     fns = [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)]
     if not any(f.name == "levenshtein" for f in fns):
         return 0.1
-    score += 0.4
-    # Functional test
-    try:
-        ns: Dict[str, Any] = {}
-        exec(compile(tree, "<lev>", "exec"), ns)
-        fn = ns.get("levenshtein")
-        if callable(fn):
-            cases = [("", "", 0), ("a", "a", 0), ("kitten", "sitting", 3), ("flaw", "lawn", 2), ("abc", "", 3)]
-            passes = 0
-            for a, b, expected in cases:
-                try:
-                    got = fn(a, b)
-                    if got == expected:
-                        passes += 1
-                except Exception:
-                    pass
-            score += 0.6 * (passes / len(cases))
-    except Exception:
-        pass
+    score = 0.4
+    # Run the candidate code in an isolated subprocess (see grader_sandbox).
+    score += 0.6 * run_code_fraction(code, "levenshtein")
     return min(1.0, score)
 
 
@@ -250,28 +234,7 @@ def _grade_merge_intervals(text: str) -> float:
     if not any(isinstance(n, ast.FunctionDef) and n.name == "merge_intervals" for n in ast.walk(tree)):
         return 0.1
     score = 0.4
-    try:
-        ns: Dict[str, Any] = {}
-        exec(compile(tree, "<merge>", "exec"), ns)
-        fn = ns["merge_intervals"]
-        cases = [
-            ([(1, 3), (2, 6), (8, 10), (15, 18)], {(1, 6), (8, 10), (15, 18)}),
-            ([(1, 4), (4, 5)], {(1, 5)}),
-            ([], set()),
-            ([(1, 10), (2, 3), (4, 5)], {(1, 10)}),
-        ]
-        passes = 0
-        for inp, expected in cases:
-            try:
-                got = fn(list(inp))
-                got_set = {tuple(x) for x in got}
-                if got_set == expected:
-                    passes += 1
-            except Exception:
-                pass
-        score += 0.6 * (passes / len(cases))
-    except Exception:
-        pass
+    score += 0.6 * run_code_fraction(code, "merge_intervals")
     return min(1.0, score)
 
 
@@ -288,29 +251,7 @@ def _grade_lru_cache(text: str) -> float:
     methods = {m.name for m in ast.walk(classes[0]) if isinstance(m, ast.FunctionDef)}
     if {"__init__", "get", "put"}.issubset(methods):
         score += 0.2
-    try:
-        ns: Dict[str, Any] = {}
-        exec(compile(tree, "<lru>", "exec"), ns)
-        cache = ns["LRUCache"](2)
-        cache.put(1, 1)
-        cache.put(2, 2)
-        passes = 0
-        # Standard LeetCode sequence
-        if cache.get(1) == 1:
-            passes += 1
-        cache.put(3, 3)
-        if cache.get(2) == -1:
-            passes += 1
-        cache.put(4, 4)
-        if cache.get(1) == -1:
-            passes += 1
-        if cache.get(3) == 3:
-            passes += 1
-        if cache.get(4) == 4:
-            passes += 1
-        score += 0.5 * (passes / 5)
-    except Exception:
-        pass
+    score += 0.5 * run_code_fraction(code, "lru_cache")
     return min(1.0, score)
 
 

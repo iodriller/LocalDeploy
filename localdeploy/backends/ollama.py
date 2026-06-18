@@ -22,6 +22,10 @@ def options_payload(prepared: Dict[str, Any]) -> Dict[str, Any]:
     for key in ("temperature", "top_p", "repeat_penalty"):
         if prepared.get(key) is not None:
             options[key] = prepared[key]
+    # Optional CPU/GPU placement: num_gpu is the number of layers offloaded to GPU
+    # (0 = force CPU). Absent -> Ollama's default (auto), preserving prior behaviour.
+    if prepared.get("num_gpu") is not None:
+        options["num_gpu"] = prepared["num_gpu"]
     return options
 
 
