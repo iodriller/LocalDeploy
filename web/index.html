@@ -113,6 +113,20 @@
           <div id="installed-body" class="muted">Not loaded yet.</div>
 
           <h3 class="sub">New on Hugging Face</h3>
+          <div class="row gap wrap" style="margin-bottom: 0.5rem">
+            <label class="field grow">
+              <span>Search (blank = auto-detect from installed)</span>
+              <input type="text" id="hf-search" placeholder="gemma, llama, qwen…" />
+            </label>
+            <label class="field" style="min-width: 5rem">
+              <span>Results</span>
+              <input type="number" id="hf-limit" value="5" min="1" max="20" />
+            </label>
+            <label class="check" title="Limit to GGUF repos, which Ollama can pull directly via hf.co/&lt;id&gt;.">
+              <input type="checkbox" id="hf-gguf-only" checked />
+              <span>GGUF only ⓘ</span>
+            </label>
+          </div>
           <div id="updates-body" class="muted">Not checked yet.</div>
         </div>
 
@@ -162,6 +176,14 @@
             <label class="field grow">
               <span>Profile</span>
               <select id="bench-profile-select"></select>
+            </label>
+            <label class="field" title="Tag this run with the device the model is running on — used to label report cards so you can compare GPU vs CPU runs.">
+              <span>Device tag ⓘ</span>
+              <select id="bench-device">
+                <option value="auto" selected>Auto</option>
+                <option value="gpu">GPU</option>
+                <option value="cpu">CPU</option>
+              </select>
             </label>
             <label class="field">
               <span>Timeout (s)</span>

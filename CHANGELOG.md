@@ -4,6 +4,15 @@ All notable changes to this project should be documented here.
 
 ## Unreleased
 
+- **Better discovery** (Phase 5): "New on Hugging Face" now has a search box, results-per-query
+  limit, and GGUF-only toggle — the API already accepted `queries`/`limit`/`gguf_only`, the UI
+  now surfaces them. Installed rows show quantization level, parameter size, and modified date.
+  HF candidates show download counts and likes alongside the modified date.
+- **CPU-vs-GPU benchmark comparison** (Phase 6): the benchmark tab gains a *Device tag*
+  (Auto / GPU / CPU) selector. The tag is stored in the exported report card (`device` field) and
+  surfaces in the card header (`[GPU]`/`[CPU]` next to the model name in HTML and Markdown). The
+  compare view labels runs as `model/GPU` vs `model/CPU` so A/B diffs are unambiguous.
+
 - **Tiered fit warnings** (`/system/fit-check`): adds `tier`/`severity`/`headline`/`cpu_deployable`
   — green (comfortable), yellow (tight, or won't-fit-GPU-but-runs-on-CPU), red (too big anywhere) —
   using system RAM to judge CPU deployability. The coarse `verdict` is unchanged (backward-compatible).

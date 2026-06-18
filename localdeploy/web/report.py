@@ -38,10 +38,16 @@ def build_card(payload: Dict[str, Any]) -> Dict[str, Any]:
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "profile": payload.get("profile"),
         "model_id": payload.get("model_id"),
+        "device": payload.get("device") or None,
         "hardware": payload.get("hardware") or {},
         "tests": tests,
         "summary": payload.get("summary") or _summary(tests),
     }
+
+
+def _device_suffix(card: Dict[str, Any]) -> str:
+    d = card.get("device")
+    return f" [{d.upper()}]" if d else ""
 
 
 def render_md(card: Dict[str, Any]) -> str:
@@ -50,10 +56,11 @@ def render_md(card: Dict[str, Any]) -> str:
     hw_label = hw.get("gpu") or "CPU only"
     if hw.get("vram_total_mb"):
         hw_label += f" ({hw['vram_total_mb']} MB)"
+    dev = _device_suffix(card)
     lines = [
         "# LocalDeploy Report Card",
         "",
-        f"- Model: `{card.get('model_id') or card.get('profile') or '?'}`",
+        f"- Model: `{card.get('model_id') or card.get('profile') or '?'}`{dev}",
         f"- Profile: `{card.get('profile') or '?'}`",
         f"- Hardware: {hw_label}",
         f"- Generated: {card['generated_at']}",
@@ -88,6 +95,7 @@ def render_html(card: Dict[str, Any]) -> str:
     # The embedded JSON makes the card portable and re-importable for compare.
     data_json = _html.escape(json.dumps(card, ensure_ascii=False), quote=False)
     model = _html.escape(str(card.get("model_id") or card.get("profile") or "?"))
+    dev = _html.escape(_device_suffix(card))
     return (
         "<!doctype html><html lang='en'><head><meta charset='utf-8'>"
         "<title>LocalDeploy Report Card</title><style>"
@@ -98,7 +106,7 @@ def render_html(card: Dict[str, Any]) -> str:
         "th{color:#9aa0a6}.pass{color:#34d399;font-weight:600}.fail{color:#f87171;font-weight:600}"
         ".meta{color:#9aa0a6}code{color:#8ab4f8}</style></head><body>"
         "<h1>LocalDeploy Report Card</h1>"
-        f"<p class='meta'>Model <code>{model}</code> · Hardware "
+        f"<p class='meta'>Model <code>{model}</code>{dev} · Hardware "
         f"{_html.escape(str(hw.get('gpu') or 'CPU only'))} · {_html.escape(card['generated_at'])}</p>"
         f"<p><b>{s['passed']}/{s['tests']} passed</b> · avg accuracy {s['avg_accuracy']} · "
         f"avg latency {s['avg_latency_s']}s</p>"
@@ -153,10 +161,16 @@ def benchmark_compare(req: CompareRequest) -> Dict[str, Any]:
         )
     sa = req.card_a.get("summary") or _summary(req.card_a.get("tests") or [])
     sb = req.card_b.get("summary") or _summary(req.card_b.get("tests") or [])
+
+    def _card_label(card: Dict[str, Any], fallback: str) -> str:
+        name = card.get("model_id") or card.get("profile") or fallback
+        dev = card.get("device")
+        return f"{name}/{dev.upper()}" if dev else name
+
     return {
         "success": True,
-        "label_a": req.card_a.get("model_id") or req.card_a.get("profile") or "A",
-        "label_b": req.card_b.get("model_id") or req.card_b.get("profile") or "B",
+        "label_a": _card_label(req.card_a, "A"),
+        "label_b": _card_label(req.card_b, "B"),
         "summary_delta": {
             "avg_accuracy": _delta(sa.get("avg_accuracy"), sb.get("avg_accuracy")),
             "avg_latency_s": _delta(sa.get("avg_latency_s"), sb.get("avg_latency_s")),
