@@ -815,6 +815,37 @@ async function validateSet() {
   }
 }
 
+// Render a per-category rollup (passed · avg accuracy · avg latency) so
+// strengths/weaknesses are visible at a glance — e.g. strong at code, weak at math.
+function renderCategoryRollup(tests) {
+  const slot = $("#run-category-rollup");
+  if (!tests.length) {
+    slot.innerHTML = "";
+    return;
+  }
+  const cats = {};
+  for (const t of tests) {
+    const c = t.category || "?";
+    (cats[c] ||= []).push(t);
+  }
+  const avg = (arr) => (arr.length ? arr.reduce((s, v) => s + v, 0) / arr.length : 0);
+  const rows = Object.keys(cats)
+    .sort()
+    .map((c) => {
+      const subset = cats[c];
+      const passed = subset.filter((t) => t.success).length;
+      const acc = avg(subset.map((t) => t.accuracy || 0)).toFixed(2);
+      const lat = avg(subset.filter((t) => t.success).map((t) => t.elapsed_seconds || 0)).toFixed(2);
+      return `<tr><td>${esc(c)}</td><td class="num">${passed}/${subset.length}</td>
+        <td class="num">${acc}</td><td class="num">${lat}s</td></tr>`;
+    })
+    .join("");
+  slot.innerHTML = `<h3 class="sub">By category</h3>
+    <div class="table-wrap"><table class="results">
+      <thead><tr><th>Category</th><th class="num">Passed</th><th class="num">Avg accuracy</th><th class="num">Avg latency</th></tr></thead>
+      <tbody>${rows}</tbody></table></div>`;
+}
+
 // ---------------------------------------------------------------------------
 // Tab 2 — Run (streamed)
 // ---------------------------------------------------------------------------
@@ -842,6 +873,7 @@ async function runBenchmark() {
 
   busy(btn, true);
   tbody.innerHTML = "";
+  $("#run-category-rollup").innerHTML = "";
   table.classList.remove("hidden");
   summary.className = "result";
   // Live counter so the wait before the first result (model load) isn't silent.
@@ -972,6 +1004,7 @@ async function runBenchmark() {
           <span class="stat-sep">·</span>
           <span>total <b>${esc(evt.elapsed_seconds)}s</b></span>
         </div>`;
+        renderCategoryRollup(collected);
 
         if (collected.length) {
           state.lastRun = {
@@ -1088,19 +1121,26 @@ async function compareCards() {
     const diff = await postJSON("/benchmark/compare", { card_a: state.cardA, card_b: state.cardB });
     const sd = diff.summary_delta || {};
     const arrow = (d) => (d == null ? "" : d > 0 ? ` ▲ +${d}` : d < 0 ? ` ▼ ${d}` : " =");
+    const pair = (av, bv) => `${esc(av ?? "—")} → ${esc(bv ?? "—")}`;
     const rows = (diff.tests || [])
       .map(
         (r) => `<tr><td>${esc(r.name)}</td>
-          <td class="num">${esc(r.accuracy_a ?? "—")} → ${esc(r.accuracy_b ?? "—")}${esc(arrow(r.accuracy_delta))}</td>
-          <td class="num">${esc(r.latency_a ?? "—")} → ${esc(r.latency_b ?? "—")}${esc(arrow(r.latency_delta))}</td></tr>`
+          <td class="num">${pair(r.accuracy_a, r.accuracy_b)}${esc(arrow(r.accuracy_delta))}</td>
+          <td class="num">${pair(r.latency_a, r.latency_b)}${esc(arrow(r.latency_delta))}</td>
+          <td class="num">${pair(r.tps_a, r.tps_b)}${esc(arrow(r.tps_delta))}</td></tr>`
       )
       .join("");
+    // Only show the aggregate tok/s stat when at least one card carried it.
+    const tpsStat =
+      sd.tps_a != null || sd.tps_b != null
+        ? ` &nbsp;·&nbsp; avg tok/s ${esc(sd.tps_a ?? "—")} → ${esc(sd.tps_b ?? "—")}${esc(arrow(sd.avg_tokens_per_second))}`
+        : "";
     $("#compare-body").innerHTML = `
       <div class="result">${esc(diff.label_a)} → ${esc(diff.label_b)} &nbsp;·&nbsp;
-        avg accuracy${esc(arrow(sd.avg_accuracy))} &nbsp;·&nbsp; avg latency${esc(arrow(sd.avg_latency_s))} &nbsp;·&nbsp;
+        avg accuracy${esc(arrow(sd.avg_accuracy))} &nbsp;·&nbsp; avg latency${esc(arrow(sd.avg_latency_s))}${tpsStat} &nbsp;·&nbsp;
         passed ${esc(sd.passed_a ?? "?")} → ${esc(sd.passed_b ?? "?")}</div>
       <div class="table-wrap"><table class="results">
-        <thead><tr><th>Test</th><th class="num">Accuracy (A → B)</th><th class="num">Latency (A → B)</th></tr></thead>
+        <thead><tr><th>Test</th><th class="num">Accuracy (A → B)</th><th class="num">Latency (A → B)</th><th class="num">tok/s (A → B)</th></tr></thead>
         <tbody>${rows}</tbody></table></div>`;
   } catch (err) {
     toast(`Compare failed: ${err.message}`, "error");
