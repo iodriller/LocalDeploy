@@ -30,7 +30,6 @@ All notable changes to this project should be documented here.
   instead of the misleading "won't fit VRAM".
 - **Run table**: dropped the redundant Profile column (the UI runs one profile); the model name
   moved into the completion stat strip.
-
 - **Warm-up robustness**: Start/Switch now show a **live "Loading…Ns" counter** (with a
   "large models on CPU can take a minute" hint when targeting CPU) instead of an apparently
   frozen button. The server's load timeout **scales with the device** (longer for CPU offload)
