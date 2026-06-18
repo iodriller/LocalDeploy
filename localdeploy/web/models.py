@@ -247,6 +247,51 @@ def models_stop(req: StopRequest) -> Dict[str, Any]:
     return {"success": True, "backend": "ollama", "stopped": model_id, "message": f"'{model_id}' unloaded."}
 
 
+class DeleteRequest(BaseModel):
+    model: Optional[str] = None
+    profile: Optional[str] = None
+
+
+@router.post("/models/delete")
+def models_delete(req: DeleteRequest) -> Dict[str, Any]:
+    """Delete a model from disk (frees disk space). Ollama only."""
+    try:
+        backend, model_id, _ = _resolve_target(req.profile, req.model, "ollama")
+    except ValueError as exc:
+        return {"success": False, "error": str(exc)}
+    if backend != "ollama":
+        return {
+            "success": False,
+            "backend": "llamacpp",
+            "message": "Delete is Ollama-only. Remove llama.cpp GGUF files manually.",
+        }
+    try:
+        _ollama.delete_model(model_id)
+    except BackendCallError as exc:
+        return {"success": False, "error": str(exc)}
+    except requests.ConnectionError:
+        return {"success": False, "error": "Ollama is not running or is unreachable."}
+    except requests.RequestException as exc:
+        return {"success": False, "error": f"Failed to delete '{model_id}': {exc}"}
+    return {"success": True, "deleted": model_id, "message": f"'{model_id}' deleted from disk."}
+
+
+@router.post("/models/free")
+def models_free() -> Dict[str, Any]:
+    """Unload all loaded models from memory/VRAM (the 'free memory' reset)."""
+    try:
+        count, err = _ollama.unload_all()
+    except BackendCallError as exc:
+        return {"success": False, "error": str(exc)}
+    if err is not None:
+        return {"success": False, "error": err}
+    return {
+        "success": True,
+        "unloaded": count,
+        "message": f"Freed memory: unloaded {count} model(s)." if count else "No models were loaded.",
+    }
+
+
 @router.post("/models/switch")
 def models_switch(req: SwitchRequest) -> Dict[str, Any]:
     try:
