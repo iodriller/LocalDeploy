@@ -63,6 +63,14 @@
               <span>Profile</span>
               <select id="profile-select"></select>
             </label>
+            <label class="field" title="Where to run the model. Auto lets Ollama use the GPU if it fits; CPU forces system-RAM only (slower, but works without a GPU); GPU forces full GPU offload.">
+              <span>Deploy to ⓘ</span>
+              <select id="serve-device">
+                <option value="auto" selected>Auto</option>
+                <option value="gpu">GPU</option>
+                <option value="cpu">CPU</option>
+              </select>
+            </label>
             <label class="field" title="How long to keep the model warm in memory after a request (e.g. 5m, 1h, or 0 to unload immediately).">
               <span>Keep-alive ⓘ</span>
               <input type="text" id="keep-alive" value="5m" />

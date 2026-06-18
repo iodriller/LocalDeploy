@@ -21,8 +21,9 @@ A newcomer can go end-to-end without reading anything else:
 
 | Control | What it does | Endpoint |
 |---|---|---|
-| Check My Hardware | GPU name, VRAM total/free/used, driver, cores | `GET /system/hardware` |
-| Refresh status | Currently loaded model(s), Ollama health, VRAM in use | `GET /system/status` |
+| Check My Hardware | GPU name + VRAM, **CPU model, cores, and system RAM** | `GET /system/hardware` |
+| Refresh status | Loaded model(s), Ollama health, VRAM, **GPU/CPU placement** | `GET /system/status` |
+| Deploy to (Auto/GPU/CPU) | Force where the model runs (`num_gpu`: 0 = CPU, max = GPU) | `POST /models/serve` |
 | Start / Stop / Switch | Warm / unload / pivot the selected profile | `POST /models/{serve,stop,switch}` |
 | Pull | Download an Ollama model, streamed, fit-gated | `POST /models/pull` |
 | Fit check (per model) | Estimate whether a model fits your VRAM | `POST /system/fit-check` |

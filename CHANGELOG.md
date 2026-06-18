@@ -4,6 +4,11 @@ All notable changes to this project should be documented here.
 
 ## Unreleased
 
+- **Hardware panel now shows CPU + RAM** (`/system/hardware`): CPU model, physical/logical cores,
+  and system RAM total/available via `psutil` (graceful fallback when absent). See `docs/ROADMAP.md`.
+- **Choose CPU vs GPU at deploy time**: the Serve panel has a *Deploy to* selector (Auto / GPU /
+  CPU). Forces Ollama `num_gpu` (0 = CPU, max = GPU); Auto is unchanged from before. `/system/status`
+  now labels each running model's placement (GPU / CPU / Split N%). Additive and backwards-compatible.
 - Added `run.sh` (macOS/Linux) and `run.ps1` (Windows) one-command launchers: detect and install
   Docker if absent (via `get.docker.com` on Linux, Homebrew cask on macOS, winget on Windows),
   clone or update the repo, and start `docker compose up` — no prerequisites needed.

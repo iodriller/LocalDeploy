@@ -1,12 +1,14 @@
 """Step 2 - hardware probe.
 
-GET /system/hardware reports the NVIDIA GPU(s), VRAM totals, and basic CPU info.
-It shells out to ``nvidia-smi`` (no extra Python dependency) and degrades
-gracefully to a CPU-only payload when no GPU/driver is present.
+GET /system/hardware reports the NVIDIA GPU(s) + VRAM, plus CPU model, core
+counts, and system RAM. It shells out to ``nvidia-smi`` for the GPU and uses
+``psutil`` for CPU/RAM when available, degrading gracefully (never raises) when
+neither is present.
 """
 from __future__ import annotations
 
 import os
+import platform
 import shutil
 import subprocess
 from typing import Any, Dict, List, Optional
@@ -23,6 +25,48 @@ def _to_int(value: str) -> Optional[int]:
         return int(float(value))
     except (TypeError, ValueError):
         return None
+
+
+def _cpu_model() -> Optional[str]:
+    """Best-effort CPU model name across platforms; None if undeterminable."""
+    # Linux: /proc/cpuinfo carries a human-readable "model name".
+    try:
+        with open("/proc/cpuinfo", "r", encoding="utf-8") as fh:
+            for line in fh:
+                if line.lower().startswith("model name"):
+                    return line.split(":", 1)[1].strip() or None
+    except OSError:
+        pass
+    # macOS / Windows: platform.processor() is usually populated there.
+    proc = (platform.processor() or "").strip()
+    if proc:
+        return proc
+    machine = (platform.machine() or "").strip()
+    return machine or None
+
+
+def _cpu_and_memory() -> Dict[str, Any]:
+    """CPU core counts + RAM. Uses psutil when present, else stdlib fallbacks."""
+    info: Dict[str, Any] = {
+        "cpu_model": _cpu_model(),
+        "logical_cores": os.cpu_count(),
+        "physical_cores": None,
+        "ram_total_mb": None,
+        "ram_available_mb": None,
+    }
+    try:
+        import psutil  # optional dependency
+
+        info["physical_cores"] = psutil.cpu_count(logical=False)
+        if info["logical_cores"] is None:
+            info["logical_cores"] = psutil.cpu_count(logical=True)
+        vm = psutil.virtual_memory()
+        info["ram_total_mb"] = int(vm.total / (1024 * 1024))
+        info["ram_available_mb"] = int(vm.available / (1024 * 1024))
+    except Exception:
+        # psutil absent or probe failed — keep stdlib-derived values, RAM stays None.
+        pass
+    return info
 
 
 def _query_nvidia_smi() -> Optional[List[Dict[str, Any]]]:
@@ -61,9 +105,9 @@ def _query_nvidia_smi() -> Optional[List[Dict[str, Any]]]:
 
 
 def detect_hardware() -> Dict[str, Any]:
-    """Detect GPU + basic CPU info. Always succeeds; never raises."""
+    """Detect GPU + CPU + RAM. Always succeeds; never raises."""
     gpus = _query_nvidia_smi()
-    system = {"logical_cores": os.cpu_count()}
+    system = _cpu_and_memory()
     if not gpus:
         return {
             "success": True,
