@@ -186,6 +186,18 @@ def _serve_ollama(model_id: str, keep_alive: str, num_gpu: Optional[int] = None)
         return {"success": False, "error": str(exc)}
     except requests.ConnectionError:
         return {"success": False, "error": "Ollama is not running or is unreachable. Start Ollama and retry."}
+    except requests.Timeout:
+        # The load may still finish in the background — guide the user to re-check
+        # rather than implying a hard failure (common with large CPU loads).
+        return {
+            "success": False,
+            "timeout": True,
+            "error": (
+                f"Loading '{model_id}' took too long to respond. Large models "
+                "(especially on CPU) can take several minutes — it may still be "
+                "loading. Wait a moment, then click Refresh status."
+            ),
+        }
     except requests.RequestException as exc:
         return {"success": False, "error": f"Failed to load '{model_id}': {exc}"}
     running, _ = _ollama.list_running()
