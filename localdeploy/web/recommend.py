@@ -105,8 +105,12 @@ def recommend(req: RecommendRequest) -> Dict[str, Any]:
     for name in names:
         fit = fit_check(FitRequest(profile=name, free_vram_mb=req.free_vram_mb))
         if fit.get("verdict") == "WONT_FIT":
+            # This is GPU tuning, so anything that won't fit the GPU is skipped —
+            # but distinguish "CPU-capable" from "too big for anything" so the
+            # reason isn't misleading.
+            reason = "CPU-only (skipped for GPU tuning)" if fit.get("cpu_deployable") else "won't fit VRAM"
             skipped.append(
-                {"profile": name, "reason": "won't fit VRAM", "required_gb": (fit.get("estimate_gb") or {}).get("required")}
+                {"profile": name, "reason": reason, "required_gb": (fit.get("estimate_gb") or {}).get("required")}
             )
             continue
         candidates.append({"profile": name, "margin_gb": fit.get("margin_gb")})

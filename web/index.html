@@ -180,10 +180,10 @@
               <span>Profile</span>
               <select id="bench-profile-select"></select>
             </label>
-            <label class="field" title="Tag this run with the device the model is running on — used to label report cards so you can compare GPU vs CPU runs.">
+            <label class="field" title="How the run is labelled on the report card. Auto detects the model's actual placement (GPU/CPU/Split) from live status after the run; GPU/CPU are explicit overrides and warn if they disagree with what's detected.">
               <span>Device tag ⓘ</span>
               <select id="bench-device">
-                <option value="auto" selected>Auto</option>
+                <option value="auto" selected>Auto (detect)</option>
                 <option value="gpu">GPU</option>
                 <option value="cpu">CPU</option>
               </select>
@@ -204,7 +204,7 @@
           <div class="table-wrap">
             <table id="run-table" class="results hidden">
               <thead>
-                <tr><th>Profile</th><th>Test</th><th>Category</th><th>Result</th><th class="num">Latency</th><th class="num">tok/s</th><th class="num">Accuracy</th><th></th></tr>
+                <tr><th>Test</th><th>Category</th><th>Result</th><th class="num">Latency</th><th class="num">tok/s</th><th class="num">Accuracy</th><th></th></tr>
               </thead>
               <tbody></tbody>
             </table>

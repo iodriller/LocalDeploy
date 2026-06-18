@@ -21,7 +21,7 @@ A newcomer can go end-to-end without reading anything else:
 
 | Control | What it does | Endpoint |
 |---|---|---|
-| Check My Hardware | GPU name + VRAM, **CPU model, cores, and system RAM** | `GET /system/hardware` |
+| Check My Hardware | GPU name + VRAM (NVIDIA) or **Apple Silicon (Metal, unified memory)**, **CPU model, cores, and system RAM** | `GET /system/hardware` |
 | Refresh status | Loaded model(s), Ollama health, VRAM, **GPU/CPU placement** | `GET /system/status` |
 | Deploy to (Auto/GPU/CPU) | Force where the model runs (`num_gpu`: 0 = CPU, max = GPU) | `POST /models/serve` |
 | Start / Stop / Switch | Warm / unload / pivot the selected profile | `POST /models/{serve,stop,switch}` |

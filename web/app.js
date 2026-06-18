@@ -12,6 +12,7 @@ const state = {
   defaultProfile: null,
   freeVramMb: null,
   servedModels: [],
+  runningPlacements: {},
   lastHardware: null,
   lastRun: null,
   cardA: null,
@@ -232,7 +233,8 @@ function updateHwChip(hw) {
   const ram = hw?.system?.ram_total_mb ? ` · ${fmtMb(hw.system.ram_total_mb)} RAM` : "";
   if (hw && hw.gpu_available && hw.gpus?.[0]) {
     const g = hw.gpus[0];
-    chip.innerHTML = `<span class="dot"></span>${esc(g.name)} · ${fmtMb(g.vram_free_mb)} free${ram}`;
+    const mem = g.unified_memory ? "unified memory" : `${fmtMb(g.vram_free_mb)} free`;
+    chip.innerHTML = `<span class="dot"></span>${esc(g.name)} · ${mem}${ram}`;
   } else {
     chip.innerHTML = `<span class="dot none"></span>CPU only${ram}`;
   }
@@ -354,9 +356,17 @@ async function checkHardware() {
     if (state.freeVramMb != null && $("#vram-target").value.trim() === "") {
       $("#vram-target").value = state.freeVramMb;
     }
-    body.innerHTML = `<div class="kv">
+    // Apple Silicon (Metal) has no separate VRAM — show the unified-memory note
+    // and any hardware message instead of "? total · ? free".
+    const vramLine = g.unified_memory
+      ? `Unified memory (shared with system RAM)`
+      : `${fmtMb(g.vram_total_mb)} total · ${fmtMb(g.vram_free_mb)} free · ${fmtMb(g.vram_used_mb)} used`;
+    const note = hw.message
+      ? `<div class="muted small" style="margin-bottom:.5rem">${esc(hw.message)}</div>`
+      : "";
+    body.innerHTML = `${note}<div class="kv">
       <span class="k">GPU</span><span>${esc(g.name)}</span>
-      <span class="k">VRAM</span><span>${fmtMb(g.vram_total_mb)} total · ${fmtMb(g.vram_free_mb)} free · ${fmtMb(g.vram_used_mb)} used</span>
+      <span class="k">VRAM</span><span>${vramLine}</span>
       <span class="k">Driver</span><span>${esc(g.driver_version ?? "?")}</span>
       ${cpuRamRows(hw.system)}
     </div>`;
@@ -381,6 +391,12 @@ async function refreshStatus() {
   try {
     const s = await getJSON("/system/status");
     state.servedModels = s.served_models || [];
+    // Record each running model's *measured* placement so a benchmark can tag
+    // its report card with the device the model actually runs on (not a guess).
+    state.runningPlacements = {};
+    (s.ollama?.running || []).forEach((m) => {
+      if (m.name) state.runningPlacements[m.name] = { placement: m.placement, gpu_percent: m.gpu_percent };
+    });
     const body = $("#status-body");
     const reachable = s.ollama?.reachable
       ? `<span class="badge on">Ollama online</span>`
@@ -408,6 +424,20 @@ async function refreshStatus() {
   } finally {
     busy(btn, false);
   }
+}
+
+// Map a profile's running model to the device it's actually placed on, by
+// matching the profile's model_id against the live placement map. Returns
+// "gpu" | "cpu" | "split" | null (null = not loaded / placement unknown).
+function detectDevice(profileName) {
+  const modelId = String(state.profileModels[profileName] || profileName);
+  const base = modelId.split(":")[0];
+  for (const [name, info] of Object.entries(state.runningPlacements || {})) {
+    if (name === modelId || name.split(":")[0] === base) {
+      return info.placement ? info.placement.toLowerCase() : null;
+    }
+  }
+  return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -691,8 +721,13 @@ async function pullModel(modelArg) {
       "/models/pull",
       { model, free_vram_mb: targetVram(), allow_override: $("#pull-override").checked },
       (evt) => {
-        if (evt.error) append(`error: ${evt.error}`);
-        else if (evt.status) {
+        if (evt.error) {
+          append(`error: ${evt.error}`);
+          return;
+        }
+        // A soft fit note (e.g. "won't fit GPU — will run on CPU") rides the start event.
+        if (evt.note) append(`note: ${evt.note}`);
+        if (evt.status) {
           const pct =
             evt.total && evt.completed
               ? ` ${Math.round((evt.completed / evt.total) * 100)}%`
@@ -968,7 +1003,7 @@ async function runBenchmark() {
         const hasPreview = !!(evt.response_preview);
 
         const tr = document.createElement("tr");
-        tr.innerHTML = `<td>${esc(evt.profile)}</td><td>${esc(evt.name)}</td>
+        tr.innerHTML = `<td>${esc(evt.name)}</td>
           <td>${esc(evt.category)}</td>
           <td>${resultBadge}${errSnippet}${warnBadge}</td>
           <td class="num">${esc(evt.elapsed_seconds)}s</td>
@@ -980,7 +1015,7 @@ async function runBenchmark() {
         // Collapsible preview row — only wired when there's content.
         const previewTr = document.createElement("tr");
         previewTr.className = "preview-row hidden";
-        previewTr.innerHTML = `<td colspan="8"><div class="response-preview">${esc(evt.response_preview || "(no preview)")}</div></td>`;
+        previewTr.innerHTML = `<td colspan="7"><div class="response-preview">${esc(evt.response_preview || "(no preview)")}</div></td>`;
         tbody.appendChild(previewTr);
         const toggleBtn = tr.querySelector(".btn-preview");
         if (hasPreview) {
@@ -994,7 +1029,7 @@ async function runBenchmark() {
 
       } else if (evt.event === "profile_aborted") {
         const tr = document.createElement("tr");
-        tr.innerHTML = `<td>${esc(evt.profile)}</td><td colspan="7" class="fail">aborted: ${esc(evt.reason)}</td>`;
+        tr.innerHTML = `<td colspan="7" class="fail">${esc(evt.profile)} aborted: ${esc(evt.reason)}</td>`;
         tbody.appendChild(tr);
       } else if (evt.event === "run_end") {
         stopTimer();
@@ -1016,8 +1051,11 @@ async function runBenchmark() {
           ? (tpsList.reduce((s, v) => s + v, 0) / tpsList.length).toFixed(1)
           : "—";
 
+        const runModel = state.profileModels[selectedProfile] || selectedProfile;
         summary.className = "result ok";
         summary.innerHTML = `<div class="run-stat-strip">
+          <span><b>${esc(runModel)}</b></span>
+          <span class="stat-sep">·</span>
           <span><b>${passed}/${total}</b> passed</span>
           <span class="stat-sep">·</span>
           <span>acc <b>${avgAcc}</b></span>
@@ -1047,6 +1085,27 @@ async function runBenchmark() {
         summary.textContent = `Run error: ${evt.error}`;
       }
     }, controller.signal);
+
+    // Finalize the device tag from the model's *actual* placement now that it's
+    // loaded — the card label should reflect where it really ran, not a guess.
+    // A manual GPU/CPU choice stays an explicit override; we warn on mismatch.
+    if (state.lastRun && collected.length) {
+      try {
+        await refreshStatus();
+        const detected = detectDevice(selectedProfile);
+        if (benchDevice === "auto") {
+          state.lastRun.device = detected;
+          if (detected) toast(`Device detected from live placement: ${detected.toUpperCase()}.`, "success");
+        } else if (detected && detected !== benchDevice) {
+          toast(
+            `You tagged ${benchDevice.toUpperCase()} but the model is running on ${detected.toUpperCase()}. The card keeps your tag.`,
+            "error"
+          );
+        }
+      } catch {
+        /* placement detection is best-effort; keep the manual/empty tag */
+      }
+    }
 
     if (!out.streamed) {
       stopTimer();
