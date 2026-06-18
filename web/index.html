@@ -180,10 +180,10 @@
               <span>Profile</span>
               <select id="bench-profile-select"></select>
             </label>
-            <label class="field" title="Tag this run with the device the model is running on — used to label report cards so you can compare GPU vs CPU runs.">
+            <label class="field" title="How the run is labelled on the report card. Auto detects the model's actual placement (GPU/CPU/Split) from live status after the run; GPU/CPU are explicit overrides and warn if they disagree with what's detected.">
               <span>Device tag ⓘ</span>
               <select id="bench-device">
-                <option value="auto" selected>Auto</option>
+                <option value="auto" selected>Auto (detect)</option>
                 <option value="gpu">GPU</option>
                 <option value="cpu">CPU</option>
               </select>
@@ -193,10 +193,11 @@
               <input type="number" id="bench-timeout" value="240" min="1" />
             </label>
             <button class="btn primary" id="btn-run">Run benchmark ▶</button>
+            <button class="btn" id="btn-run-both" title="Deploy on CPU, benchmark; deploy on GPU, benchmark; then compare the two">Run on CPU &amp; GPU ▶▶</button>
           </div>
-          <p class="muted small">Leave the editor empty to run the built-in capability suite, or load a set above. Tip: <kbd>⌘/Ctrl</kbd>+<kbd>Enter</kbd> in the editor runs it.</p>
+          <p class="muted small">Leave the editor empty to run the built-in capability suite, or load a set above. <b>Run on CPU &amp; GPU</b> benchmarks both placements and diffs them automatically. Tip: <kbd>⌘/Ctrl</kbd>+<kbd>Enter</kbd> in the editor runs it.</p>
           <div id="run-progress-wrap" class="hidden">
-            <div class="run-progress-track"><div id="run-progress-bar" class="run-progress-fill" style="width:0%"></div></div>
+            <div class="run-progress-track"><div id="run-progress-bar" class="run-progress-fill" style="width:0%" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-label="Benchmark progress"></div></div>
             <div id="run-current-test" class="muted small" style="margin-top:.3rem"></div>
           </div>
           <div id="run-summary" class="result"></div>
@@ -204,7 +205,7 @@
           <div class="table-wrap">
             <table id="run-table" class="results hidden">
               <thead>
-                <tr><th>Profile</th><th>Test</th><th>Category</th><th>Result</th><th class="num">Latency</th><th class="num">tok/s</th><th class="num">Accuracy</th><th></th></tr>
+                <tr><th>Test</th><th>Category</th><th>Result</th><th class="num">Latency</th><th class="num">tok/s</th><th class="num">Accuracy</th><th></th></tr>
               </thead>
               <tbody></tbody>
             </table>

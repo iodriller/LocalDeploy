@@ -104,27 +104,75 @@ def _query_nvidia_smi() -> Optional[List[Dict[str, Any]]]:
     return gpus or None
 
 
+def _detect_apple_gpu() -> Optional[Dict[str, Any]]:
+    """Detect an Apple Silicon (Metal) GPU. Returns a gpu dict or None.
+
+    Apple Silicon uses *unified memory* shared with the system, so there is no
+    separate VRAM figure. We report the GPU's presence (so the UI stops claiming
+    "CPU-only" on a Mac that actually runs Ollama on the GPU) and leave the VRAM
+    fields null; fit-checks then fall back to the system-RAM path, which is the
+    correct model for unified memory.
+    """
+    if platform.system() != "Darwin" or platform.machine() != "arm64":
+        return None
+    chip: Optional[str] = None
+    exe = shutil.which("sysctl")
+    if exe:
+        try:
+            out = subprocess.run(
+                [exe, "-n", "machdep.cpu.brand_string"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            if out.returncode == 0:
+                chip = out.stdout.strip() or None
+        except (OSError, subprocess.SubprocessError):
+            pass
+    return {
+        "name": f"{chip} GPU (Metal)" if chip else "Apple Silicon GPU (Metal)",
+        "vram_total_mb": None,
+        "vram_free_mb": None,
+        "vram_used_mb": None,
+        "driver_version": None,
+        "unified_memory": True,
+    }
+
+
 def detect_hardware() -> Dict[str, Any]:
     """Detect GPU + CPU + RAM. Always succeeds; never raises."""
     gpus = _query_nvidia_smi()
     system = _cpu_and_memory()
-    if not gpus:
+    if gpus:
         return {
             "success": True,
-            "gpu_available": False,
-            "gpus": [],
+            "gpu_available": True,
+            "gpus": gpus,
+            "system": system,
+            "message": None,
+        }
+    apple = _detect_apple_gpu()
+    if apple:
+        return {
+            "success": True,
+            "gpu_available": True,
+            "gpus": [apple],
             "system": system,
             "message": (
-                "No NVIDIA GPU detected (nvidia-smi unavailable). "
-                "CPU-only inference works but is much slower."
+                "Apple Silicon GPU (Metal) detected. It uses unified memory shared "
+                "with system RAM, so there is no separate VRAM figure — fit checks "
+                "use available system RAM (shown below)."
             ),
         }
     return {
         "success": True,
-        "gpu_available": True,
-        "gpus": gpus,
+        "gpu_available": False,
+        "gpus": [],
         "system": system,
-        "message": None,
+        "message": (
+            "No NVIDIA or Apple Silicon GPU detected (nvidia-smi unavailable). "
+            "CPU-only inference works but is much slower."
+        ),
     }
 
 
