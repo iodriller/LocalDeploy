@@ -70,17 +70,20 @@ This is **additive plumbing, not a rewrite**.
 - **Cancel pull** via client `AbortController` + server `request.is_disconnected()` check.
 - Files: `localdeploy/web/_ollama.py`, `localdeploy/web/models.py`, `web/app.js`, `web/index.html`.
 
-## Phase 5 — Better discovery  **[ ]**
+## Phase 5 — Better discovery  **[x]**
 
 - Search box + limit + GGUF toggle on "Check New Models" (API already accepts `queries`).
 - Surface quant / size / modified / downloads / likes in installed + HF lists (data already returned).
 - Files: `web/app.js`, `web/index.html`.
 
-## Phase 6 — CPU-vs-GPU comparison  **[ ]**
+## Phase 6 — CPU-vs-GPU comparison  **[x]**
 
 - Tag benchmark runs + report cards with the **device target** from Phase 2 so the existing Compare
-  view diffs "Qwen/CPU" vs "Qwen/GPU"; optional one-click "run both, compare".
-- Files: `benchmark.py`, `localdeploy/web/bench.py`, `localdeploy/web/report.py`, `web/app.js`.
+  view diffs "Qwen/CPU" vs "Qwen/GPU".
+- Device selector (`#bench-device`) on Tab 2 tags the run; stored in `state.lastRun.device` and
+  forwarded to `build_card()`. `render_html()`/`render_md()` show `[GPU]`/`[CPU]` next to the
+  model name; compare labels become `model/GPU` vs `model/CPU`.
+- Files: `localdeploy/web/report.py`, `web/app.js`, `web/index.html`.
 
 ---
 
