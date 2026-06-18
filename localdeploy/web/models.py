@@ -127,16 +127,27 @@ def models_pull(req: PullRequest):
         return {"success": False, "error": "GPU-only mode is enabled; refusing Ollama pull."}
 
     fit = fit_check(FitRequest(profile=req.profile, model_id=model_id, free_vram_mb=req.free_vram_mb))
-    if fit.get("verdict") == "WONT_FIT" and not req.allow_override:
+    # Hard-block only when the model fits *nowhere* (not GPU VRAM, not system RAM).
+    # A model that won't fit VRAM but runs on CPU (tier "cpu_only", severity "soft")
+    # is allowed through with a note — blocking it would contradict the tiered fit
+    # warnings. Fall back to the coarse verdict when severity is absent.
+    severity = fit.get("severity")
+    hard_block = severity == "hard" if severity is not None else fit.get("verdict") == "WONT_FIT"
+    if hard_block and not req.allow_override:
         return {
             "success": False,
             "blocked_by": "fit-check",
             "fit": fit,
-            "message": "Model is unlikely to fit available VRAM. Re-run with allow_override=true to pull anyway.",
+            "message": fit.get("headline")
+            or "Model is unlikely to fit available VRAM or system RAM. Re-run with allow_override=true to pull anyway.",
         }
 
     def event_stream():
-        yield _sse({"status": f"starting pull for {model_id}", "fit_verdict": fit.get("verdict")})
+        start: Dict[str, Any] = {"status": f"starting pull for {model_id}", "fit_verdict": fit.get("verdict")}
+        # Surface the soft "won't fit GPU but runs on CPU" case so the pull isn't silent about it.
+        if severity == "soft" and fit.get("cpu_deployable"):
+            start["note"] = fit.get("headline") or "Won't fit GPU VRAM — will run on CPU (slower)."
+        yield _sse(start)
         try:
             for event in _ollama.pull_stream(model_id):
                 yield _sse(event)
