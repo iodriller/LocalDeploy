@@ -38,6 +38,7 @@ _DEFAULT_WEIGHT_GB_PER_B = 0.55  # unknown/default Ollama quant ~= Q4_K_M
 _KV_MB_PER_TOKEN_PER_B = 0.07  # fp16 baseline, conservative
 _KV_QUANT_FACTOR = {"f16": 1.0, "fp16": 1.0, "q8": 0.5, "q4": 0.25}
 _OVERHEAD_GB = 0.8  # CUDA context + activations
+_COMFORTABLE_MARGIN_GB = 1.0  # VRAM headroom above which a fit is "comfortable"
 
 
 class FitRequest(BaseModel):
@@ -79,6 +80,66 @@ def _kv_quant_factor(quant: Optional[str]) -> float:
 
 def _round(value: float) -> float:
     return round(value, 2)
+
+
+def _classify(
+    required_gb: float, free_vram_gb: Optional[float], ram_available_gb: Optional[float]
+) -> Dict[str, Any]:
+    """Tier the fit into comfortable / tight (soft) / cpu-only (soft) / won't-fit (hard).
+
+    ``verdict`` stays coarse and backward-compatible: FITS when it fits VRAM,
+    WONT_FIT when VRAM is known but too small, UNKNOWN when VRAM is unknown.
+    ``severity`` (ok / soft / hard / unknown) drives the green/yellow/red UI.
+    """
+    if free_vram_gb is not None:
+        margin = free_vram_gb - required_gb
+        if margin >= _COMFORTABLE_MARGIN_GB:
+            return {
+                "verdict": "FITS", "tier": "comfortable", "severity": "ok",
+                "headline": "Fits comfortably on the GPU.", "cpu_deployable": True,
+            }
+        if margin >= 0:
+            return {
+                "verdict": "FITS", "tier": "tight", "severity": "soft",
+                "headline": f"Fits on the GPU, but headroom is tight (~{_round(margin)} GB).",
+                "cpu_deployable": True,
+            }
+        # Doesn't fit VRAM — can it run on CPU+RAM instead?
+        if ram_available_gb is not None:
+            if required_gb <= ram_available_gb:
+                return {
+                    "verdict": "WONT_FIT", "tier": "cpu_only", "severity": "soft",
+                    "headline": "Won't fit the GPU, but can run on CPU (slower).",
+                    "cpu_deployable": True,
+                }
+            return {
+                "verdict": "WONT_FIT", "tier": "wont_fit", "severity": "hard",
+                "headline": "Too large for both GPU VRAM and system RAM.",
+                "cpu_deployable": False,
+            }
+        return {
+            "verdict": "WONT_FIT", "tier": "wont_fit_gpu", "severity": "hard",
+            "headline": "Won't fit the GPU (system RAM unknown).", "cpu_deployable": None,
+        }
+
+    # No VRAM figure — judge CPU deployability from RAM alone.
+    if ram_available_gb is not None:
+        if required_gb <= ram_available_gb:
+            return {
+                "verdict": "UNKNOWN", "tier": "cpu_only", "severity": "soft",
+                "headline": "No GPU detected — fits in system RAM, can run on CPU (slower).",
+                "cpu_deployable": True,
+            }
+        return {
+            "verdict": "UNKNOWN", "tier": "cpu_too_big", "severity": "hard",
+            "headline": "No GPU detected — too large for available system RAM.",
+            "cpu_deployable": False,
+        }
+    return {
+        "verdict": "UNKNOWN", "tier": "unknown", "severity": "unknown",
+        "headline": "No GPU VRAM detected; pass 'free_vram_mb' to validate against a target.",
+        "cpu_deployable": None,
+    }
 
 
 def _resolve_from_profile(req: FitRequest) -> Dict[str, Any]:
@@ -136,11 +197,13 @@ def fit_check(req: FitRequest) -> Dict[str, Any]:
     kv_cache_gb = _KV_MB_PER_TOKEN_PER_B * params_b * kv_factor * context / 1024.0
     required_gb = weights_gb + kv_cache_gb + _OVERHEAD_GB
 
+    # Pull both VRAM and system RAM from the hardware probe (Phase 1). RAM lets us
+    # tell "won't fit GPU but runs on CPU" apart from "too big for this machine".
+    hw = detect_hardware()
     free_vram_mb = req.free_vram_mb
-    if free_vram_mb is None:
-        hw = detect_hardware()
-        if hw["gpu_available"] and hw["gpus"]:
-            free_vram_mb = hw["gpus"][0].get("vram_free_mb")
+    if free_vram_mb is None and hw["gpu_available"] and hw["gpus"]:
+        free_vram_mb = hw["gpus"][0].get("vram_free_mb")
+    ram_available_mb = (hw.get("system") or {}).get("ram_available_mb")
 
     estimate = {
         "weights": _round(weights_gb),
@@ -155,37 +218,32 @@ def fit_check(req: FitRequest) -> Dict[str, Any]:
     }
     note = "Conservative estimate. The real proof is a short warmup via /models/serve."
 
-    if free_vram_mb is None:
-        return {
-            "success": True,
-            "verdict": "UNKNOWN",
-            "model": model_info,
-            "estimate_gb": estimate,
-            "free_vram_gb": None,
-            "margin_gb": None,
-            "note": note,
-            "message": "No GPU VRAM detected; pass 'free_vram_mb' to validate against a target.",
-        }
-
-    free_vram_gb = free_vram_mb / 1024.0
-    margin_gb = free_vram_gb - required_gb
-    fits = required_gb <= free_vram_gb
+    free_vram_gb = (free_vram_mb / 1024.0) if free_vram_mb is not None else None
+    ram_available_gb = (ram_available_mb / 1024.0) if ram_available_mb is not None else None
+    cls = _classify(required_gb, free_vram_gb, ram_available_gb)
 
     suggestions = []
-    if not fits:
+    if cls["severity"] in ("soft", "hard") and cls["tier"] != "tight":
         suggestions = [
             "Use a smaller quantization (e.g. Q4 or Q3).",
             "Lower the context window (try the profile's safe_context_limit).",
-            "Use a GGUF / partial-offload profile to split layers between GPU and CPU.",
+            "Deploy to CPU (slower) — pick CPU in the serve panel.",
         ]
 
     return {
         "success": True,
-        "verdict": "FITS" if fits else "WONT_FIT",
+        # verdict stays coarse + backward-compatible (FITS / WONT_FIT / UNKNOWN);
+        # tier/severity/headline carry the new soft-vs-hard nuance for the UI.
+        "verdict": cls["verdict"],
+        "tier": cls["tier"],
+        "severity": cls["severity"],
+        "headline": cls["headline"],
+        "cpu_deployable": cls["cpu_deployable"],
         "model": model_info,
         "estimate_gb": estimate,
-        "free_vram_gb": _round(free_vram_gb),
-        "margin_gb": _round(margin_gb),
+        "free_vram_gb": _round(free_vram_gb) if free_vram_gb is not None else None,
+        "ram_available_gb": _round(ram_available_gb) if ram_available_gb is not None else None,
+        "margin_gb": _round(free_vram_gb - required_gb) if free_vram_gb is not None else None,
         "note": note,
         "suggestions": suggestions,
     }

@@ -121,6 +121,8 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--a
 .btn.primary { background: var(--accent-strong); border-color: var(--accent-strong); color: #06101f; font-weight: 600; }
 .btn.primary:hover { filter: brightness(1.08); }
 .btn.file { display: inline-flex; align-items: center; }
+.btn.danger { color: var(--bad); border-color: rgba(248, 113, 113, 0.35); }
+.btn.danger:hover { border-color: var(--bad); background: rgba(248, 113, 113, 0.08); }
 
 /* loading spinner: hide label, show a spinner, keep the button width stable */
 .btn.loading { color: transparent !important; position: relative; pointer-events: none; }
@@ -158,6 +160,7 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--a
 .badge.off { color: var(--muted); }
 .badge.cpu { color: var(--accent); border-color: rgba(138, 180, 248, 0.4); }
 .badge.split { color: var(--warn); border-color: rgba(251, 191, 36, 0.4); }
+.badge.tight { color: var(--warn); border-color: rgba(251, 191, 36, 0.4); }
 
 /* ---- model rows ---- */
 .mlist { display: flex; flex-direction: column; gap: 0.4rem; }

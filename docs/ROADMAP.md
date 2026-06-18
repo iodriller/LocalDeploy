@@ -54,7 +54,7 @@ This is **additive plumbing, not a rewrite**.
 - Files: `localdeploy/backends/ollama.py`, `localdeploy/web/_ollama.py`,
   `localdeploy/web/models.py`, `web/app.js`, `web/index.html`. Default (no device) = today exactly.
 
-## Phase 3 — Tiered soft/hard deployability warnings  **[ ]**
+## Phase 3 — Tiered soft/hard deployability warnings  **[x]**
 *Needs Phase 1 RAM.*
 
 - Fit-check tiers: **Comfortable (green)** · **Tight (yellow, soft)** · **Won't fit GPU but runs on
@@ -62,7 +62,7 @@ This is **additive plumbing, not a rewrite**.
 - Keep `FITS`/`WONT_FIT`/`UNKNOWN` as compatibility aliases so nothing that reads them breaks.
 - Files: `localdeploy/web/fit.py`, `web/app.js`.
 
-## Phase 4 — Cleanup, free-memory, cancel  **[ ]**
+## Phase 4 — Cleanup, free-memory, cancel  **[x]**
 *The wipe/reset/cancel safety net.*
 
 - `POST /models/delete` → Ollama `/api/delete` (loopback-guarded) + per-row **Delete** with confirm.
