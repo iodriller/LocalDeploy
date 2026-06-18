@@ -420,18 +420,34 @@ function showServeResult(res) {
   node.textContent = (res && (res.message || res.error)) || (ok ? "Done." : "Failed.");
 }
 
+// Label the warm-up wait so loading a large model (slow on CPU) shows a live
+// elapsed counter instead of an apparently-frozen button.
+function warmupLabel(device) {
+  return device === "cpu"
+    ? "Loading on CPU (large models can take a minute)"
+    : "Loading model into memory";
+}
+
 async function serveModel() {
   const btn = $("#btn-serve");
+  const device = $("#serve-device").value;
   busy(btn, true);
+  const node = $("#serve-result");
+  node.className = "result";
+  const stop = startElapsed(node, warmupLabel(device));
   try {
     const res = await postJSON("/models/serve", {
       profile: $("#profile-select").value,
       keep_alive: $("#keep-alive").value.trim() || "5m",
-      device: $("#serve-device").value,
+      device,
     });
+    stop();
     showServeResult(res);
     await refreshStatus();
   } catch (err) {
+    stop();
+    node.className = "result err";
+    node.textContent = `Serve failed: ${err.message}`;
     toast(`Serve failed: ${err.message}`, "error");
   } finally {
     busy(btn, false);
@@ -454,17 +470,25 @@ async function stopModel() {
 
 async function switchModel() {
   const btn = $("#btn-switch");
+  const device = $("#serve-device").value;
   busy(btn, true);
+  const node = $("#serve-result");
+  node.className = "result";
+  const stop = startElapsed(node, warmupLabel(device));
   try {
     const res = await postJSON("/models/switch", {
       to_profile: $("#profile-select").value,
       from_model: state.servedModels[0] || null,
       keep_alive: $("#keep-alive").value.trim() || "5m",
-      device: $("#serve-device").value,
+      device,
     });
+    stop();
     showServeResult(res);
     await refreshStatus();
   } catch (err) {
+    stop();
+    node.className = "result err";
+    node.textContent = `Switch failed: ${err.message}`;
     toast(`Switch failed: ${err.message}`, "error");
   } finally {
     busy(btn, false);
@@ -508,8 +532,15 @@ async function refreshInstalled() {
       data.installed
         .map((m) => {
           const size = m.size ? fmtMb(Math.round(m.size / 1e6)) : "";
+          const d = m.details || {};
+          const quant = d.quantization_level
+            ? `<span class="badge" style="font-size:.72rem">${esc(d.quantization_level)}</span>`
+            : "";
+          const params = d.parameter_size ? `<span class="meta">${esc(d.parameter_size)}</span>` : "";
+          const date = m.modified_at ? `<span class="meta">${esc(m.modified_at.slice(0, 10))}</span>` : "";
           return `<div class="mrow" data-model="${esc(m.name)}">
             <span class="name">${esc(m.name)}</span>
+            ${params}${quant}${date}
             <span class="meta">${esc(size)}</span>
             <span class="spacer"></span>
             <span class="fit"></span>
@@ -561,48 +592,70 @@ async function fitCheckRow(row) {
 // ---------------------------------------------------------------------------
 // Tab 1 — Check New Models (Hugging Face)
 // ---------------------------------------------------------------------------
+function fmtNum(n) {
+  if (n == null) return null;
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
+  return String(n);
+}
+
 async function checkUpdates() {
-  const btn = $("#btn-updates");
+  const btn = $(“#btn-updates”);
   busy(btn, true);
-  const body = $("#updates-body");
-  body.innerHTML = `<div class="muted">Checking Hugging Face…</div>`;
+  const body = $(“#updates-body”);
+  body.innerHTML = `<div class=”muted”>Checking Hugging Face…</div>`;
+
+  // Build request from the search form (Phase 5).
+  const searchRaw = ($(“#hf-search”)?.value || “”).trim();
+  const limitVal = parseInt($(“#hf-limit”)?.value || “5”, 10);
+  const ggufOnly = $(“#hf-gguf-only”)?.checked !== false;
+  const payload = {
+    limit: Number.isFinite(limitVal) && limitVal > 0 ? limitVal : 5,
+    gguf_only: ggufOnly,
+  };
+  if (searchRaw) payload.queries = searchRaw.split(“,”).map((s) => s.trim()).filter(Boolean);
+
   try {
-    const data = await postJSON("/registry/check-updates", {});
+    const data = await postJSON(“/registry/check-updates”, payload);
     if (!data.online && (!data.results || !data.results.length)) {
-      body.innerHTML = `<div class="muted">${esc(data.message || "Offline.")}</div>`;
+      body.innerHTML = `<div class=”muted”>${esc(data.message || “Offline.”)}</div>`;
       return;
     }
     const blocks = (data.results || [])
       .map((group) => {
         const rows = (group.candidates || [])
           .map((c) => {
-            const flag = c.installed_match ? `<span class="badge on">installed</span>` : "";
-            const date = c.last_modified ? c.last_modified.slice(0, 10) : "";
+            const flag = c.installed_match ? `<span class=”badge on”>installed</span>` : “”;
+            const date = c.last_modified ? `<span class=”meta”>${esc(c.last_modified.slice(0, 10))}</span>` : “”;
+            const dl = fmtNum(c.downloads);
+            const lk = c.likes != null ? String(c.likes) : null;
+            const stats = [dl ? `↓${dl}` : null, lk ? `♥${lk}` : null].filter(Boolean).join(“ “);
+            const statsHtml = stats ? `<span class=”meta”>${esc(stats)}</span>` : “”;
             const pull = c.pullable && c.pull_name
-              ? `<button class="btn hf-pull-btn" data-model="${esc(c.pull_name)}">Pull</button>`
-              : "";
-            return `<div class="mrow">
-              <a class="name" href="https://huggingface.co/${esc(c.id)}" target="_blank" rel="noopener">${esc(c.id)}</a>
-              <span class="meta">${esc(date)}</span>
-              <span class="spacer"></span>${flag}${pull}
+              ? `<button class=”btn hf-pull-btn” data-model=”${esc(c.pull_name)}”>Pull</button>`
+              : “”;
+            return `<div class=”mrow”>
+              <a class=”name” href=”https://huggingface.co/${esc(c.id)}” target=”_blank” rel=”noopener”>${esc(c.id)}</a>
+              ${date}${statsHtml}
+              <span class=”spacer”></span>${flag}${pull}
             </div>`;
           })
-          .join("");
-        return `<h3 class="sub">“${esc(group.query)}”</h3><div class="mlist">${rows || '<div class="muted">none</div>'}</div>`;
+          .join(“”);
+        return `<h3 class=”sub”>”${esc(group.query)}”</h3><div class=”mlist”>${rows || '<div class=”muted”>none</div>'}</div>`;
       })
-      .join("");
-    const note = data.online ? "" : `<div class="muted small">${esc(data.message || "")}</div>`;
+      .join(“”);
+    const note = data.online ? “” : `<div class=”muted small”>${esc(data.message || “”)}</div>`;
     body.innerHTML = blocks + note;
     // Wire the per-candidate Pull buttons (GGUF repos via Ollama's hf.co/ shortcut).
-    $$(".hf-pull-btn", body).forEach((b) =>
-      b.addEventListener("click", () => {
-        $("#pull-model").value = b.dataset.model;
+    $$(“.hf-pull-btn”, body).forEach((b) =>
+      b.addEventListener(“click”, () => {
+        $(“#pull-model”).value = b.dataset.model;
         pullModel(b.dataset.model);
       })
     );
   } catch (err) {
-    body.innerHTML = `<div class="muted">Check failed.</div>`;
-    toast(`Update check failed: ${err.message}`, "error");
+    body.innerHTML = `<div class=”muted”>Check failed.</div>`;
+    toast(`Update check failed: ${err.message}`, “error”);
   } finally {
     busy(btn, false);
   }
@@ -786,14 +839,49 @@ async function validateSet() {
   }
 }
 
+// Render a per-category rollup (passed · avg accuracy · avg latency) so
+// strengths/weaknesses are visible at a glance — e.g. strong at code, weak at math.
+function renderCategoryRollup(tests) {
+  const slot = $("#run-category-rollup");
+  if (!tests.length) {
+    slot.innerHTML = "";
+    return;
+  }
+  const cats = {};
+  for (const t of tests) {
+    const c = t.category || "?";
+    (cats[c] ||= []).push(t);
+  }
+  const avg = (arr) => (arr.length ? arr.reduce((s, v) => s + v, 0) / arr.length : 0);
+  const rows = Object.keys(cats)
+    .sort()
+    .map((c) => {
+      const subset = cats[c];
+      const passed = subset.filter((t) => t.success).length;
+      const acc = avg(subset.map((t) => t.accuracy || 0)).toFixed(2);
+      const lat = avg(subset.filter((t) => t.success).map((t) => t.elapsed_seconds || 0)).toFixed(2);
+      return `<tr><td>${esc(c)}</td><td class="num">${passed}/${subset.length}</td>
+        <td class="num">${acc}</td><td class="num">${lat}s</td></tr>`;
+    })
+    .join("");
+  slot.innerHTML = `<h3 class="sub">By category</h3>
+    <div class="table-wrap"><table class="results">
+      <thead><tr><th>Category</th><th class="num">Passed</th><th class="num">Avg accuracy</th><th class="num">Avg latency</th></tr></thead>
+      <tbody>${rows}</tbody></table></div>`;
+}
+
 // ---------------------------------------------------------------------------
 // Tab 2 — Run (streamed)
 // ---------------------------------------------------------------------------
 async function runBenchmark() {
   const btn = $("#btn-run");
+  const cancelBtn = $("#btn-run-cancel");
   const summary = $("#run-summary");
   const table = $("#run-table");
   const tbody = $("tbody", table);
+  const progressWrap = $("#run-progress-wrap");
+  const progressBar = $("#run-progress-bar");
+  const currentTestLabel = $("#run-current-test");
 
   // Use the editor's question set if present; otherwise run built-in tests.
   let questions = null;
@@ -809,6 +897,7 @@ async function runBenchmark() {
 
   busy(btn, true);
   tbody.innerHTML = "";
+  $("#run-category-rollup").innerHTML = "";
   table.classList.remove("hidden");
   summary.className = "result";
   // Live counter so the wait before the first result (model load) isn't silent.
@@ -816,7 +905,24 @@ async function runBenchmark() {
   // Disable export until THIS run succeeds, so it can't point at a stale result.
   $("#btn-export").disabled = true;
 
+  // Progress state — populated once run_start arrives.
+  let runTotal = 0;
+  let runDone = 0;
+  const updateProgress = (label) => {
+    if (runTotal <= 0) return;
+    const pct = Math.round((runDone / runTotal) * 100);
+    progressBar.style.width = `${pct}%`;
+    currentTestLabel.textContent = label || `${runDone} / ${runTotal} completed`;
+  };
+
+  // AbortController so the Cancel button can stop an in-flight benchmark.
+  const controller = new AbortController();
+  cancelBtn.hidden = false;
+  const onCancel = () => controller.abort();
+  cancelBtn.addEventListener("click", onCancel);
+
   const selectedProfile = $("#bench-profile-select").value;
+  const benchDevice = ($("#bench-device")?.value || "auto").toLowerCase();
   const body = {
     profiles: [selectedProfile],
     timeout: Number($("#bench-timeout").value) || 240,
@@ -826,39 +932,110 @@ async function runBenchmark() {
   const collected = [];
   try {
     const out = await postMaybeStream("/benchmark/run", body, (evt) => {
-      if (evt.event === "test_result") {
+      if (evt.event === "run_start") {
+        runTotal = evt.test_count || 0;
+        progressWrap.classList.remove("hidden");
+        updateProgress(`0 / ${runTotal} completed — waiting for model to load…`);
+      } else if (evt.event === "profile_start") {
+        currentTestLabel.textContent = `Profile: ${esc(evt.profile)}${evt.model_id ? ` · ${esc(evt.model_id)}` : ""} — loading…`;
+      } else if (evt.event === "test_result") {
+        runDone++;
+        const tps = evt.approx_tokens_per_second ?? null;
         collected.push({
           name: evt.name,
           category: evt.category,
           success: evt.success,
           accuracy: evt.accuracy,
           elapsed_seconds: evt.elapsed_seconds,
+          approx_tokens_per_second: tps,
         });
-        const tr = document.createElement("tr");
-        const result = evt.success
+        updateProgress(`${runDone} / ${runTotal} completed`);
+
+        // Result cell: PASS/FAIL + inline error snippet + warning badge
+        const resultBadge = evt.success
           ? `<span class="pass">PASS</span>`
           : `<span class="fail">FAIL</span>`;
+        const errSnippet = !evt.success && evt.error
+          ? ` <span class="muted small" title="${esc(evt.error)}">${esc(evt.error.slice(0, 50))}${evt.error.length > 50 ? "…" : ""}</span>`
+          : "";
+        const warnBadge = evt.warning
+          ? ` <span class="warn-badge" title="${esc(evt.warning)}">⚠</span>`
+          : "";
+
+        const tpsCell = tps != null
+          ? `${tps.toFixed(1)}`
+          : `<span class="muted">—</span>`;
+        const hasPreview = !!(evt.response_preview);
+
+        const tr = document.createElement("tr");
         tr.innerHTML = `<td>${esc(evt.profile)}</td><td>${esc(evt.name)}</td>
-          <td>${esc(evt.category)}</td><td>${result}</td>
+          <td>${esc(evt.category)}</td>
+          <td>${resultBadge}${errSnippet}${warnBadge}</td>
           <td class="num">${esc(evt.elapsed_seconds)}s</td>
-          <td class="num">${esc(evt.accuracy)}</td>`;
+          <td class="num">${tpsCell}</td>
+          <td class="num">${esc(evt.accuracy)}</td>
+          <td><button class="btn-preview${hasPreview ? "" : " btn-preview-none"}" aria-label="Toggle response preview" title="${hasPreview ? "Show/hide response" : "No response captured"}">▸</button></td>`;
         tbody.appendChild(tr);
+
+        // Collapsible preview row — only wired when there's content.
+        const previewTr = document.createElement("tr");
+        previewTr.className = "preview-row hidden";
+        previewTr.innerHTML = `<td colspan="8"><div class="response-preview">${esc(evt.response_preview || "(no preview)")}</div></td>`;
+        tbody.appendChild(previewTr);
+        const toggleBtn = tr.querySelector(".btn-preview");
+        if (hasPreview) {
+          toggleBtn.addEventListener("click", () => {
+            const hidden = previewTr.classList.toggle("hidden");
+            toggleBtn.textContent = hidden ? "▸" : "▾";
+          });
+        } else {
+          toggleBtn.disabled = true;
+        }
+
       } else if (evt.event === "profile_aborted") {
         const tr = document.createElement("tr");
-        tr.innerHTML = `<td>${esc(evt.profile)}</td><td colspan="5" class="fail">aborted: ${esc(evt.reason)}</td>`;
+        tr.innerHTML = `<td>${esc(evt.profile)}</td><td colspan="7" class="fail">aborted: ${esc(evt.reason)}</td>`;
         tbody.appendChild(tr);
       } else if (evt.event === "run_end") {
         stopTimer();
-        const parts = (evt.profiles || [])
-          .map((p) => `${esc(p.profile)}: ${p.passed}/${p.tests} passed, avg acc ${p.avg_accuracy}`)
-          .join(" · ");
+        progressWrap.classList.add("hidden");
+
+        // Compute summary stats client-side from the collected results.
+        const successes = collected.filter((t) => t.success);
+        const passed = successes.length;
+        const total = collected.length;
+        const avgAcc = total > 0
+          ? (collected.reduce((s, t) => s + (t.accuracy || 0), 0) / total).toFixed(3)
+          : "—";
+        const lats = successes.map((t) => t.elapsed_seconds).filter(Boolean);
+        const avgLat = lats.length > 0
+          ? (lats.reduce((s, v) => s + v, 0) / lats.length).toFixed(2)
+          : "—";
+        const tpsList = successes.map((t) => t.approx_tokens_per_second).filter((v) => v != null);
+        const avgTps = tpsList.length > 0
+          ? (tpsList.reduce((s, v) => s + v, 0) / tpsList.length).toFixed(1)
+          : "—";
+
         summary.className = "result ok";
-        summary.innerHTML = `Done in ${esc(evt.elapsed_seconds)}s — ${parts}`;
+        summary.innerHTML = `<div class="run-stat-strip">
+          <span><b>${passed}/${total}</b> passed</span>
+          <span class="stat-sep">·</span>
+          <span>acc <b>${avgAcc}</b></span>
+          <span class="stat-sep">·</span>
+          <span>avg latency <b>${avgLat}s</b></span>
+          <span class="stat-sep">·</span>
+          <span>avg tok/s <b>${avgTps}</b></span>
+          <span class="stat-sep">·</span>
+          <span>total <b>${esc(evt.elapsed_seconds)}s</b></span>
+        </div>`;
+        renderCategoryRollup(collected);
+
         if (collected.length) {
           state.lastRun = {
             profile: selectedProfile,
             model_id: state.profileModels[selectedProfile] || selectedProfile,
             hardware: state.lastHardware || {},
+            device: benchDevice !== "auto" ? benchDevice : null,
             tests: collected,
           };
           $("#btn-export").disabled = false;
@@ -869,7 +1046,8 @@ async function runBenchmark() {
         summary.className = "result err";
         summary.textContent = `Run error: ${evt.error}`;
       }
-    });
+    }, controller.signal);
+
     if (!out.streamed) {
       stopTimer();
       const j = out.json || {};
@@ -885,10 +1063,20 @@ async function runBenchmark() {
       }
     }
   } catch (err) {
-    summary.className = "result err";
-    summary.textContent = `Run failed: ${err.message}`;
+    if (err.name === "AbortError") {
+      stopTimer();
+      summary.className = "result";
+      summary.textContent = "Run cancelled.";
+      toast("Benchmark cancelled.", "info");
+    } else {
+      summary.className = "result err";
+      summary.textContent = `Run failed: ${err.message}`;
+    }
   } finally {
     stopTimer();
+    progressWrap.classList.add("hidden");
+    cancelBtn.hidden = true;
+    cancelBtn.removeEventListener("click", onCancel);
     busy(btn, false);
   }
 }
@@ -907,7 +1095,8 @@ async function exportCard() {
     const out = await postJSON("/benchmark/export", state.lastRun);
     if (!out.success) throw new Error(out.error || "export failed");
     const name = (state.lastRun.profile || "model").replace(/[^\w.-]+/g, "_");
-    downloadFile(`localdeploy-card-${name}.html`, out.html, "text/html");
+    const devSuffix = state.lastRun.device ? `-${state.lastRun.device}` : "";
+    downloadFile(`localdeploy-card-${name}${devSuffix}.html`, out.html, "text/html");
     toast("Report card downloaded.", "success");
   } catch (err) {
     toast(`Export failed: ${err.message}`, "error");
@@ -934,9 +1123,15 @@ function readCardFile(input, slot) {
   input.value = "";
 }
 
+function cardLabel(c) {
+  if (!c) return "—";
+  const name = c.model_id || c.profile || "card";
+  const dev = c.device ? `/${c.device.toUpperCase()}` : "";
+  return esc(`${name}${dev}`);
+}
+
 function updateCompareStatus() {
-  const label = (c) => (c ? esc(c.model_id || c.profile || "card") : "—");
-  $("#compare-status").innerHTML = `A: ${label(state.cardA)} &nbsp;·&nbsp; B: ${label(state.cardB)}`;
+  $("#compare-status").innerHTML = `A: ${cardLabel(state.cardA)} &nbsp;·&nbsp; B: ${cardLabel(state.cardB)}`;
 }
 
 async function compareCards() {
@@ -950,19 +1145,26 @@ async function compareCards() {
     const diff = await postJSON("/benchmark/compare", { card_a: state.cardA, card_b: state.cardB });
     const sd = diff.summary_delta || {};
     const arrow = (d) => (d == null ? "" : d > 0 ? ` ▲ +${d}` : d < 0 ? ` ▼ ${d}` : " =");
+    const pair = (av, bv) => `${esc(av ?? "—")} → ${esc(bv ?? "—")}`;
     const rows = (diff.tests || [])
       .map(
         (r) => `<tr><td>${esc(r.name)}</td>
-          <td class="num">${esc(r.accuracy_a ?? "—")} → ${esc(r.accuracy_b ?? "—")}${esc(arrow(r.accuracy_delta))}</td>
-          <td class="num">${esc(r.latency_a ?? "—")} → ${esc(r.latency_b ?? "—")}${esc(arrow(r.latency_delta))}</td></tr>`
+          <td class="num">${pair(r.accuracy_a, r.accuracy_b)}${esc(arrow(r.accuracy_delta))}</td>
+          <td class="num">${pair(r.latency_a, r.latency_b)}${esc(arrow(r.latency_delta))}</td>
+          <td class="num">${pair(r.tps_a, r.tps_b)}${esc(arrow(r.tps_delta))}</td></tr>`
       )
       .join("");
+    // Only show the aggregate tok/s stat when at least one card carried it.
+    const tpsStat =
+      sd.tps_a != null || sd.tps_b != null
+        ? ` &nbsp;·&nbsp; avg tok/s ${esc(sd.tps_a ?? "—")} → ${esc(sd.tps_b ?? "—")}${esc(arrow(sd.avg_tokens_per_second))}`
+        : "";
     $("#compare-body").innerHTML = `
       <div class="result">${esc(diff.label_a)} → ${esc(diff.label_b)} &nbsp;·&nbsp;
-        avg accuracy${esc(arrow(sd.avg_accuracy))} &nbsp;·&nbsp; avg latency${esc(arrow(sd.avg_latency_s))} &nbsp;·&nbsp;
+        avg accuracy${esc(arrow(sd.avg_accuracy))} &nbsp;·&nbsp; avg latency${esc(arrow(sd.avg_latency_s))}${tpsStat} &nbsp;·&nbsp;
         passed ${esc(sd.passed_a ?? "?")} → ${esc(sd.passed_b ?? "?")}</div>
       <div class="table-wrap"><table class="results">
-        <thead><tr><th>Test</th><th class="num">Accuracy (A → B)</th><th class="num">Latency (A → B)</th></tr></thead>
+        <thead><tr><th>Test</th><th class="num">Accuracy (A → B)</th><th class="num">Latency (A → B)</th><th class="num">tok/s (A → B)</th></tr></thead>
         <tbody>${rows}</tbody></table></div>`;
   } catch (err) {
     toast(`Compare failed: ${err.message}`, "error");

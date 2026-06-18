@@ -42,7 +42,11 @@ fit check and the pull gate. You can override it to test against a different car
   registry (`POST /benchmark/validate`) and reports per-row errors.
 - **Run** streams per-test results into the table and ends with a summary
   (`POST /benchmark/run`, Server-Sent Events). Leave the editor empty to run the built-in
-  capability suite instead of an uploaded set.
+  capability suite instead of an uploaded set. While running you get a **live progress bar**
+  ("N / M completed") and a **Cancel** button; each row shows **latency**, **tok/s**, the
+  **accuracy**, an inline **failure reason** on FAIL, and an expandable **▸ response preview**.
+  The run ends with a **stat strip** (passed · avg accuracy · avg latency · avg tok/s · total)
+  and a **By category** rollup so you can see where a model is strong or weak at a glance.
 
 ### Question-set schema
 
@@ -75,10 +79,12 @@ Graders are selected by `type` from a fixed registry (uploads stay safe JSON —
 ## Report cards & comparison (Tab 2)
 
 - **Export card** (enabled after a run) downloads a self-contained `.html` **report card** —
-  model + hardware + per-test scores, with the data embedded as JSON so it stays reproducible and
-  re-importable (`POST /benchmark/export`).
+  model + hardware + device tag + per-test scores (latency, **tok/s**, accuracy) and a **By
+  category** rollup, with the data embedded as JSON so it stays reproducible and re-importable
+  (`POST /benchmark/export`).
 - **Compare report cards** takes two exported cards and diffs them per test and in aggregate —
-  old model vs new, or quant A vs B (`POST /benchmark/compare`).
+  old model vs new, quant A vs B, or **the same model on GPU vs CPU**. The diff includes accuracy,
+  latency, and **tok/s** columns so the speed trade-off is explicit (`POST /benchmark/compare`).
 
 ## Tune for my GPU (Tab 1)
 
