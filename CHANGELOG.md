@@ -9,7 +9,6 @@ All notable changes to this project should be documented here.
   frozen button. The server's load timeout **scales with the device** (longer for CPU offload)
   and is overridable via `OLLAMA_LOAD_TIMEOUT`; a load timeout returns a clear "it may still be
   loading — click Refresh status" message rather than a generic failure.
-
 - **Decision-grade run results**: the benchmark Run shows a **live progress bar**
   ("N / M completed"), a **Cancel** button, **tok/s** per test, inline **failure
   reasons**, an expandable **response preview** per row, and a completion **stat strip**
@@ -19,7 +18,6 @@ All notable changes to this project should be documented here.
   a per-test **tok/s** column, and a **By category** table. The A/B compare view adds a
   **tok/s (A → B)** column and aggregate tok/s delta — so a "Qwen/GPU vs Qwen/CPU" diff
   shows the speed difference directly.
-
 - **Better discovery** (Phase 5): "New on Hugging Face" now has a search box, results-per-query
   limit, and GGUF-only toggle — the API already accepted `queries`/`limit`/`gguf_only`, the UI
   now surfaces them. Installed rows show quantization level, parameter size, and modified date.
@@ -28,7 +26,6 @@ All notable changes to this project should be documented here.
   (Auto / GPU / CPU) selector. The tag is stored in the exported report card (`device` field) and
   surfaces in the card header (`[GPU]`/`[CPU]` next to the model name in HTML and Markdown). The
   compare view labels runs as `model/GPU` vs `model/CPU` so A/B diffs are unambiguous.
-
 - **Tiered fit warnings** (`/system/fit-check`): adds `tier`/`severity`/`headline`/`cpu_deployable`
   — green (comfortable), yellow (tight, or won't-fit-GPU-but-runs-on-CPU), red (too big anywhere) —
   using system RAM to judge CPU deployability. The coarse `verdict` is unchanged (backward-compatible).
