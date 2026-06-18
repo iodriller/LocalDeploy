@@ -204,11 +204,13 @@ async function streamSSE(response, onEvent) {
 }
 
 // POST that may return JSON (e.g. a blocked action) or an SSE stream.
-async function postMaybeStream(url, body, onEvent) {
+// `signal` (optional) lets the caller abort an in-flight stream (cancel a pull).
+async function postMaybeStream(url, body, onEvent, signal) {
   const resp = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify(body ?? {}),
+    signal,
   });
   if (handle401(resp)) throw new Error("unauthorized");
   const ct = resp.headers.get("content-type") || "";
@@ -477,6 +479,16 @@ function verdictBadge(verdict) {
   return `<span class="badge ${cls}">${esc(verdict)}</span>`;
 }
 
+// Tiered fit badge (Phase 3): green = comfortable, yellow = tight / CPU-only
+// (soft warnings), red = won't fit anywhere (hard). Falls back to the coarse
+// verdict for older responses without a severity.
+function fitBadge(res) {
+  const sevCls = { ok: "fits", soft: "tight", hard: "wont", unknown: "unknown" };
+  const cls = sevCls[res.severity] || (res.verdict === "FITS" ? "fits" : res.verdict === "WONT_FIT" ? "wont" : "unknown");
+  const label = res.tier ? res.tier.replace(/_/g, " ") : res.verdict || "?";
+  return `<span class="badge ${cls}" title="${esc(res.headline || "")}">${esc(label)}</span>`;
+}
+
 async function refreshInstalled() {
   const btn = $("#btn-installed");
   busy(btn, true);
@@ -502,12 +514,16 @@ async function refreshInstalled() {
             <span class="spacer"></span>
             <span class="fit"></span>
             <button class="btn fit-btn">Fit check</button>
+            <button class="btn danger del-btn" title="Delete from disk">Delete</button>
           </div>`;
         })
         .join("") +
       `</div>`;
     $$(".fit-btn", body).forEach((b) =>
       b.addEventListener("click", () => fitCheckRow(b.closest(".mrow")))
+    );
+    $$(".del-btn", body).forEach((b) =>
+      b.addEventListener("click", () => deleteModel(b.closest(".mrow").dataset.model, b))
     );
     // Auto-run the fit check for each row so warnings appear without a click.
     $$(".mrow", body).forEach((row) => fitCheckRow(row));
@@ -530,7 +546,7 @@ async function fitCheckRow(row) {
       const req = res.estimate_gb?.required;
       const free = res.free_vram_gb;
       const detail = req != null ? ` ~${req} GB${free != null ? ` / ${free} GB free` : ""}` : "";
-      slot.innerHTML = `${verdictBadge(res.verdict)}<span class="meta">${esc(detail)}</span>`;
+      slot.innerHTML = `${fitBadge(res)}<span class="meta">${esc(detail)}</span>`;
     } else {
       slot.innerHTML = `<span class="muted">${esc(res.message || "n/a")}</span>`;
     }
@@ -603,6 +619,7 @@ async function pullModel(modelArg) {
     return;
   }
   const btn = $("#btn-pull");
+  const cancelBtn = $("#btn-pull-cancel");
   const log = $("#pull-log");
   busy(btn, true);
   log.classList.remove("hidden");
@@ -611,6 +628,11 @@ async function pullModel(modelArg) {
     log.textContent += line + "\n";
     log.scrollTop = log.scrollHeight;
   };
+  // Wire a cancel that aborts the stream (closes the connection; Ollama stops).
+  const controller = new AbortController();
+  cancelBtn.hidden = false;
+  const onCancel = () => controller.abort();
+  cancelBtn.addEventListener("click", onCancel);
   try {
     const out = await postMaybeStream(
       "/models/pull",
@@ -623,10 +645,10 @@ async function pullModel(modelArg) {
               ? ` ${Math.round((evt.completed / evt.total) * 100)}%`
               : "";
           append(`${evt.status}${pct}`);
-        } else {
-          append(JSON.stringify(evt));
         }
-      }
+        // Unknown event shapes are ignored rather than dumped as raw JSON (I23).
+      },
+      controller.signal
     );
     if (!out.streamed) {
       const j = out.json || {};
@@ -642,7 +664,54 @@ async function pullModel(modelArg) {
       await refreshInstalled();
     }
   } catch (err) {
-    append(`error: ${err.message}`);
+    if (err.name === "AbortError") {
+      append("cancelled.");
+      toast("Pull cancelled.", "info");
+    } else {
+      append(`error: ${err.message}`);
+    }
+  } finally {
+    cancelBtn.hidden = true;
+    cancelBtn.removeEventListener("click", onCancel);
+    busy(btn, false);
+  }
+}
+
+// Free all loaded models from memory/VRAM (the "unstick / reset" button).
+async function freeMemory() {
+  const btn = $("#btn-free");
+  busy(btn, true);
+  try {
+    const res = await postJSON("/models/free", {});
+    if (res.success) {
+      toast(res.message || "Memory freed.", "success");
+      await refreshStatus();
+    } else {
+      toast(res.error || "Could not free memory.", "error");
+    }
+  } catch (err) {
+    toast(`Free memory failed: ${err.message}`, "error");
+  } finally {
+    busy(btn, false);
+  }
+}
+
+// Delete a model from disk (with confirm), then refresh the installed list.
+async function deleteModel(name, btn) {
+  if (!window.confirm(`Delete "${name}" from disk? This frees space but you'll need to pull it again.`)) {
+    return;
+  }
+  busy(btn, true);
+  try {
+    const res = await postJSON("/models/delete", { model: name });
+    if (res.success) {
+      toast(res.message || `Deleted ${name}.`, "success");
+      await refreshInstalled();
+    } else {
+      toast(res.error || res.message || "Could not delete.", "error");
+    }
+  } catch (err) {
+    toast(`Delete failed: ${err.message}`, "error");
   } finally {
     busy(btn, false);
   }
@@ -994,6 +1063,7 @@ $("#btn-stop").addEventListener("click", stopModel);
 $("#btn-switch").addEventListener("click", switchModel);
 $("#btn-installed").addEventListener("click", refreshInstalled);
 $("#btn-updates").addEventListener("click", checkUpdates);
+$("#btn-free").addEventListener("click", freeMemory);
 $("#btn-pull").addEventListener("click", () => pullModel());
 $("#btn-example").addEventListener("click", loadExample);
 $("#btn-validate").addEventListener("click", validateSet);

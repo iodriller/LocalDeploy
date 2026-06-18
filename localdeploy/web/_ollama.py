@@ -110,6 +110,35 @@ def unload_model(model: str) -> Dict[str, Any]:
     return response.json()
 
 
+def delete_model(model: str) -> Dict[str, Any]:
+    """Delete a model from disk via /api/delete (frees disk space)."""
+    base = base_url()
+    response = requests.delete(f"{base}/api/delete", json={"name": model}, timeout=30)
+    # Ollama returns 200 (often with an empty body) on success, 404 if absent.
+    if response.status_code == 404:
+        raise BackendCallError(f"Model '{model}' is not installed.")
+    response.raise_for_status()
+    return {"deleted": model}
+
+
+def unload_all() -> Tuple[int, Optional[str]]:
+    """Unload every currently-loaded model from memory. Returns (count, error)."""
+    running, err = list_running()
+    if err is not None:
+        return 0, err
+    unloaded = 0
+    for m in running:
+        name = m.get("name")
+        if not name:
+            continue
+        try:
+            unload_model(name)
+            unloaded += 1
+        except (BackendCallError, requests.RequestException):
+            continue  # best-effort; keep unloading the rest
+    return unloaded, None
+
+
 def pull_stream(model: str) -> Iterator[Dict[str, Any]]:
     """Yield progress events from `ollama pull` (JSON lines)."""
     base = base_url()

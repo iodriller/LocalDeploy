@@ -25,8 +25,10 @@ A newcomer can go end-to-end without reading anything else:
 | Refresh status | Loaded model(s), Ollama health, VRAM, **GPU/CPU placement** | `GET /system/status` |
 | Deploy to (Auto/GPU/CPU) | Force where the model runs (`num_gpu`: 0 = CPU, max = GPU) | `POST /models/serve` |
 | Start / Stop / Switch | Warm / unload / pivot the selected profile | `POST /models/{serve,stop,switch}` |
-| Pull | Download an Ollama model, streamed, fit-gated | `POST /models/pull` |
-| Fit check (per model) | Estimate whether a model fits your VRAM | `POST /system/fit-check` |
+| Pull / Cancel | Download an Ollama model, streamed, fit-gated; Cancel aborts an in-flight pull | `POST /models/pull` |
+| Fit check (per model) | Tiered estimate: green (comfortable), yellow (tight / CPU-only), red (won't fit) | `POST /system/fit-check` |
+| Delete | Remove a model from disk (frees space) | `POST /models/delete` |
+| Free memory | Unload all models from memory/VRAM | `POST /models/free` |
 | Check New Models | Newer matching models on Hugging Face | `POST /registry/check-updates` |
 | Refresh installed | Models already pulled locally | `GET /registry/installed` |
 
