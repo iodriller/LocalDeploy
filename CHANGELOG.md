@@ -4,6 +4,12 @@ All notable changes to this project should be documented here.
 
 ## Unreleased
 
+- **Warm-up robustness**: Start/Switch now show a **live "Loading…Ns" counter** (with a
+  "large models on CPU can take a minute" hint when targeting CPU) instead of an apparently
+  frozen button. The server's load timeout **scales with the device** (longer for CPU offload)
+  and is overridable via `OLLAMA_LOAD_TIMEOUT`; a load timeout returns a clear "it may still be
+  loading — click Refresh status" message rather than a generic failure.
+
 - **Decision-grade run results**: the benchmark Run shows a **live progress bar**
   ("N / M completed"), a **Cancel** button, **tok/s** per test, inline **failure
   reasons**, an expandable **response preview** per row, and a completion **stat strip**

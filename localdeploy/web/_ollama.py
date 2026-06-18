@@ -77,13 +77,32 @@ def list_running() -> Tuple[List[Dict[str, Any]], Optional[str]]:
     return out, None
 
 
+# Warming a model means loading all its weights into memory. On the GPU this is
+# quick; forcing CPU offload (num_gpu=0) for a large model can take minutes, so a
+# flat 120s timeout would spuriously fail those. Both are overridable via env.
+_GPU_LOAD_TIMEOUT = 120
+_CPU_LOAD_TIMEOUT = 600
+
+
+def _load_timeout(num_gpu: Optional[int]) -> int:
+    """Pick a warm-up timeout: longer for CPU offload, overridable via env."""
+    override = os.getenv("OLLAMA_LOAD_TIMEOUT")
+    if override:
+        try:
+            return int(override)
+        except ValueError:
+            pass
+    return _CPU_LOAD_TIMEOUT if num_gpu == 0 else _GPU_LOAD_TIMEOUT
+
+
 def load_model(
     model: str, keep_alive: str = "5m", num_gpu: Optional[int] = None
 ) -> Dict[str, Any]:
     """Warm a model into memory. An empty prompt makes Ollama load without generating.
 
     ``num_gpu`` sets how many layers to offload to the GPU (0 = force CPU). When
-    None, Ollama decides (auto) — identical to the prior behaviour.
+    None, Ollama decides (auto) — identical to the prior behaviour. The request
+    timeout scales with the target device (CPU loads are slower).
     """
     base = base_url()
     payload: Dict[str, Any] = {"model": model, "keep_alive": keep_alive}
@@ -92,7 +111,7 @@ def load_model(
     response = requests.post(
         f"{base}/api/generate",
         json=payload,
-        timeout=120,
+        timeout=_load_timeout(num_gpu),
     )
     response.raise_for_status()
     return response.json()

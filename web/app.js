@@ -420,18 +420,34 @@ function showServeResult(res) {
   node.textContent = (res && (res.message || res.error)) || (ok ? "Done." : "Failed.");
 }
 
+// Label the warm-up wait so loading a large model (slow on CPU) shows a live
+// elapsed counter instead of an apparently-frozen button.
+function warmupLabel(device) {
+  return device === "cpu"
+    ? "Loading on CPU (large models can take a minute)"
+    : "Loading model into memory";
+}
+
 async function serveModel() {
   const btn = $("#btn-serve");
+  const device = $("#serve-device").value;
   busy(btn, true);
+  const node = $("#serve-result");
+  node.className = "result";
+  const stop = startElapsed(node, warmupLabel(device));
   try {
     const res = await postJSON("/models/serve", {
       profile: $("#profile-select").value,
       keep_alive: $("#keep-alive").value.trim() || "5m",
-      device: $("#serve-device").value,
+      device,
     });
+    stop();
     showServeResult(res);
     await refreshStatus();
   } catch (err) {
+    stop();
+    node.className = "result err";
+    node.textContent = `Serve failed: ${err.message}`;
     toast(`Serve failed: ${err.message}`, "error");
   } finally {
     busy(btn, false);
@@ -454,17 +470,25 @@ async function stopModel() {
 
 async function switchModel() {
   const btn = $("#btn-switch");
+  const device = $("#serve-device").value;
   busy(btn, true);
+  const node = $("#serve-result");
+  node.className = "result";
+  const stop = startElapsed(node, warmupLabel(device));
   try {
     const res = await postJSON("/models/switch", {
       to_profile: $("#profile-select").value,
       from_model: state.servedModels[0] || null,
       keep_alive: $("#keep-alive").value.trim() || "5m",
-      device: $("#serve-device").value,
+      device,
     });
+    stop();
     showServeResult(res);
     await refreshStatus();
   } catch (err) {
+    stop();
+    node.className = "result err";
+    node.textContent = `Switch failed: ${err.message}`;
     toast(`Switch failed: ${err.message}`, "error");
   } finally {
     busy(btn, false);
