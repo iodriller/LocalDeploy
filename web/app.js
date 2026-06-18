@@ -227,13 +227,31 @@ function busy(button, on) {
 
 function updateHwChip(hw) {
   const chip = $("#hw-chip");
+  const ram = hw?.system?.ram_total_mb ? ` · ${fmtMb(hw.system.ram_total_mb)} RAM` : "";
   if (hw && hw.gpu_available && hw.gpus?.[0]) {
     const g = hw.gpus[0];
-    chip.innerHTML = `<span class="dot"></span>${esc(g.name)} · ${fmtMb(g.vram_free_mb)} free`;
+    chip.innerHTML = `<span class="dot"></span>${esc(g.name)} · ${fmtMb(g.vram_free_mb)} free${ram}`;
   } else {
-    chip.innerHTML = `<span class="dot none"></span>CPU only`;
+    chip.innerHTML = `<span class="dot none"></span>CPU only${ram}`;
   }
   chip.classList.remove("hidden");
+}
+
+// Render the CPU + RAM block shared by the GPU and CPU-only hardware views.
+function cpuRamRows(sys) {
+  if (!sys) return "";
+  const cores =
+    sys.physical_cores != null
+      ? `${esc(sys.physical_cores)} cores / ${esc(sys.logical_cores ?? "?")} threads`
+      : `${esc(sys.logical_cores ?? "?")} logical cores`;
+  const ram =
+    sys.ram_total_mb != null
+      ? `${fmtMb(sys.ram_total_mb)} total · ${fmtMb(sys.ram_available_mb ?? 0)} available`
+      : `<span class="muted">install psutil for RAM details</span>`;
+  return `
+    <span class="k">CPU</span><span>${esc(sys.cpu_model || "Unknown")}</span>
+    <span class="k">Cores</span><span>${cores}</span>
+    <span class="k">RAM</span><span>${ram}</span>`;
 }
 
 // Read the target VRAM the user wants to validate against (manual or probed).
@@ -314,9 +332,9 @@ async function checkHardware() {
     const body = $("#hardware-body");
     if (!hw.gpu_available) {
       state.freeVramMb = null;
-      state.lastHardware = { gpu: null, vram_total_mb: null, vram_free_mb: null };
-      body.innerHTML = `<div class="muted">${esc(hw.message || "No GPU detected.")}</div>
-        <div class="muted small">Logical cores: ${esc(hw.system?.logical_cores ?? "?")}</div>`;
+      state.lastHardware = { gpu: null, vram_total_mb: null, vram_free_mb: null, system: hw.system };
+      body.innerHTML = `<div class="muted" style="margin-bottom:.5rem">${esc(hw.message || "No GPU detected.")}</div>
+        <div class="kv">${cpuRamRows(hw.system)}</div>`;
       return;
     }
     const g = hw.gpus?.[0];
@@ -325,7 +343,12 @@ async function checkHardware() {
       return;
     }
     state.freeVramMb = g.vram_free_mb ?? null;
-    state.lastHardware = { gpu: g.name, vram_total_mb: g.vram_total_mb, vram_free_mb: g.vram_free_mb };
+    state.lastHardware = {
+      gpu: g.name,
+      vram_total_mb: g.vram_total_mb,
+      vram_free_mb: g.vram_free_mb,
+      system: hw.system,
+    };
     if (state.freeVramMb != null && $("#vram-target").value.trim() === "") {
       $("#vram-target").value = state.freeVramMb;
     }
@@ -333,7 +356,7 @@ async function checkHardware() {
       <span class="k">GPU</span><span>${esc(g.name)}</span>
       <span class="k">VRAM</span><span>${fmtMb(g.vram_total_mb)} total · ${fmtMb(g.vram_free_mb)} free · ${fmtMb(g.vram_used_mb)} used</span>
       <span class="k">Driver</span><span>${esc(g.driver_version ?? "?")}</span>
-      <span class="k">Cores</span><span>${esc(hw.system?.logical_cores ?? "?")}</span>
+      ${cpuRamRows(hw.system)}
     </div>`;
   } catch (err) {
     toast(`Hardware check failed: ${err.message}`, "error");
@@ -363,11 +386,16 @@ async function refreshStatus() {
     let served;
     if (state.servedModels.length) {
       served = s.ollama.running
-        .map(
-          (m) =>
-            `<div class="mrow"><span class="name">${esc(m.name)}</span>
-             <span class="meta">VRAM ${fmtMb(Math.round((m.size_vram || 0) / 1e6))}</span></div>`
-        )
+        .map((m) => {
+          const place =
+            m.placement === "Split"
+              ? `<span class="badge split">${esc(m.gpu_percent)}% GPU</span>`
+              : m.placement
+                ? `<span class="badge ${m.placement === "GPU" ? "fits" : "cpu"}">${esc(m.placement)}</span>`
+                : "";
+          return `<div class="mrow"><span class="name">${esc(m.name)}</span>
+             <span class="meta">${place} VRAM ${fmtMb(Math.round((m.size_vram || 0) / 1e6))}</span></div>`;
+        })
         .join("");
     } else {
       served = `<div class="muted">No model is currently loaded.</div>`;
@@ -397,6 +425,7 @@ async function serveModel() {
     const res = await postJSON("/models/serve", {
       profile: $("#profile-select").value,
       keep_alive: $("#keep-alive").value.trim() || "5m",
+      device: $("#serve-device").value,
     });
     showServeResult(res);
     await refreshStatus();
@@ -429,6 +458,7 @@ async function switchModel() {
       to_profile: $("#profile-select").value,
       from_model: state.servedModels[0] || null,
       keep_alive: $("#keep-alive").value.trim() || "5m",
+      device: $("#serve-device").value,
     });
     showServeResult(res);
     await refreshStatus();
