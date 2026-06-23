@@ -1,5 +1,6 @@
 param(
     [switch]$Background,
+    [switch]$OpenUI,
     [switch]$OpenDocs,
     [switch]$SkipInstall
 )
@@ -11,6 +12,53 @@ Set-Location $ProjectRoot
 function Write-Step {
     param([string]$Message)
     Write-Host "==> $Message" -ForegroundColor Cyan
+}
+
+function Read-DotEnv {
+    $values = @{}
+    $path = Join-Path $ProjectRoot ".env"
+    if (-not (Test-Path -LiteralPath $path)) {
+        return $values
+    }
+    foreach ($line in Get-Content -LiteralPath $path) {
+        $trimmed = $line.Trim()
+        if (-not $trimmed -or $trimmed.StartsWith("#") -or -not $trimmed.Contains("=")) {
+            continue
+        }
+        $name, $value = $trimmed.Split("=", 2)
+        $values[$name.Trim()] = $value.Trim().Trim('"').Trim("'")
+    }
+    return $values
+}
+
+function Env-Value {
+    param(
+        [hashtable]$EnvFile,
+        [string]$Name,
+        [string]$Default = $null
+    )
+    $processValue = [Environment]::GetEnvironmentVariable($Name)
+    if ($processValue) {
+        return $processValue
+    }
+    if ($EnvFile.ContainsKey($Name)) {
+        return $EnvFile[$Name]
+    }
+    return $Default
+}
+
+function Get-ApiBaseUrl {
+    param([hashtable]$EnvFile)
+    $hostName = Env-Value -EnvFile $EnvFile -Name "API_HOST" -Default "127.0.0.1"
+    $port = Env-Value -EnvFile $EnvFile -Name "API_PORT" -Default "8000"
+    $browserHost = $hostName
+    if ($browserHost -eq "0.0.0.0" -or $browserHost -eq "::") {
+        $browserHost = "127.0.0.1"
+    }
+    elseif ($browserHost -eq "::1") {
+        $browserHost = "[::1]"
+    }
+    return "http://${browserHost}:${port}"
 }
 
 function Find-Ollama {
@@ -46,6 +94,12 @@ if (-not (Test-Path -LiteralPath ".\config.json")) {
     Write-Step "Created config.json"
 }
 
+$envFile = Read-DotEnv
+$apiBaseUrl = Get-ApiBaseUrl -EnvFile $envFile
+$healthUrl = "$apiBaseUrl/health"
+$uiUrl = "$apiBaseUrl/ui"
+$docsUrl = "$apiBaseUrl/docs"
+
 $python = ".\.venv\Scripts\python.exe"
 if (-not (Test-Path -LiteralPath $python)) {
     if ($SkipInstall) {
@@ -70,9 +124,9 @@ elseif (-not (Test-Http "http://localhost:11434/api/tags")) {
     Start-Sleep -Seconds 3
 }
 
-& ".\scripts\start_llamacpp.ps1" -SkipIfDisabled
+& ".\scripts\start_llamacpp.ps1" -Optional
 
-if (Test-Http "http://127.0.0.1:8000/health") {
+if (Test-Http $healthUrl) {
     Write-Step "LocalDeploy API is already running"
 }
 elseif ($Background) {
@@ -84,7 +138,7 @@ elseif ($Background) {
     $process.Id | Set-Content -Path ".\logs\api_server.pid"
     for ($i = 0; $i -lt 30; $i++) {
         Start-Sleep -Milliseconds 500
-        if (Test-Http "http://127.0.0.1:8000/health") {
+        if (Test-Http $healthUrl) {
             break
         }
     }
@@ -96,17 +150,22 @@ else {
     exit $LASTEXITCODE
 }
 
-if (-not (Test-Http "http://127.0.0.1:8000/health")) {
-    throw "LocalDeploy API did not start at http://127.0.0.1:8000"
+if (-not (Test-Http $healthUrl)) {
+    throw "LocalDeploy API did not start at $apiBaseUrl"
 }
 
 Write-Host ""
 Write-Host "LocalDeploy is ready:" -ForegroundColor Green
-Write-Host "  API:     http://127.0.0.1:8000"
-Write-Host "  Docs:    http://127.0.0.1:8000/docs"
+Write-Host "  UI:      $uiUrl"
+Write-Host "  API:     $apiBaseUrl"
+Write-Host "  Docs:    $docsUrl"
 Write-Host "  Chat:    .\scripts\chat.ps1 -Prompt `"How are you?`""
 Write-Host "  Bench:   python test_models.py --all --safe-mode true --max-output-tokens 256"
 
+if ($OpenUI) {
+    Start-Process $uiUrl
+}
+
 if ($OpenDocs) {
-    Start-Process "http://127.0.0.1:8000/docs"
+    Start-Process $docsUrl
 }
