@@ -9,6 +9,14 @@ cd path\to\LocalDeploy
 .\scripts\chat.ps1 -Prompt "How are you?"
 ```
 
+To launch the local API + web UI from an existing checkout:
+
+```powershell
+.\scripts\start.ps1 -Background -OpenUI
+```
+
+The launcher prints the UI, API, and docs URLs after `/health` responds.
+
 Interactive chat:
 
 ```powershell

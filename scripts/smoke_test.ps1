@@ -32,6 +32,16 @@ foreach ($script in @(".\install.ps1") + (Get-ChildItem -LiteralPath ".\scripts"
     }
 }
 
+Write-Host "Checking optional llama.cpp startup is non-blocking"
+$previousEnableLlamaCpp = $env:ENABLE_LLAMA_CPP
+try {
+    $env:ENABLE_LLAMA_CPP = "true"
+    & ".\scripts\start_llamacpp.ps1" -Optional
+}
+finally {
+    $env:ENABLE_LLAMA_CPP = $previousEnableLlamaCpp
+}
+
 Write-Host "Checking API import and safety validation"
 @'
 from api_server import run_local_request
