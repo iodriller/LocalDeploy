@@ -96,7 +96,7 @@ def _load_timeout(num_gpu: Optional[int]) -> int:
 
 
 def load_model(
-    model: str, keep_alive: str = "5m", num_gpu: Optional[int] = None
+    model: str, keep_alive: str = "60m", num_gpu: Optional[int] = None
 ) -> Dict[str, Any]:
     """Warm a model into memory. An empty prompt makes Ollama load without generating.
 

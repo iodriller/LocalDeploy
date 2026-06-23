@@ -33,6 +33,22 @@ def benchmark_example() -> Dict[str, Any]:
     return _bench().EXAMPLE_QUESTION_SET
 
 
+@router.get("/benchmark/test-bench")
+def benchmark_test_bench() -> Dict[str, Any]:
+    bench = _bench()
+    tests = list(bench.TEST_CASES)
+    categories: Dict[str, int] = {}
+    for test in tests:
+        categories[test.category] = categories.get(test.category, 0) + 1
+    return {
+        "success": True,
+        "test_count": len(tests),
+        "categories": categories,
+        "question_set": bench.BUILTIN_QUESTION_SET,
+        "tests": [{"name": t.name, "category": t.category, "max_output_tokens": t.max_output_tokens} for t in tests],
+    }
+
+
 @router.post("/benchmark/validate")
 async def benchmark_validate(request: Request) -> Dict[str, Any]:
     try:

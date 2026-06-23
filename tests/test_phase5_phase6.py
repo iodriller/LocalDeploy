@@ -94,6 +94,49 @@ def test_check_updates_hf_response_shape(monkeypatch) -> None:
     assert c["pull_name"] == "hf.co/unsloth/gemma-3-4b-it-GGUF"
 
 
+def test_check_updates_adds_fit_and_filters_gpu_matches(monkeypatch) -> None:
+    from localdeploy.web import registry as reg
+
+    candidates = [
+        {"id": "org/qwen-4b-q4_k_m-GGUF", "pullable": True, "pull_name": "hf.co/org/qwen-4b-q4_k_m-GGUF"},
+        {"id": "org/qwen-27b-q4_k_m-GGUF", "pullable": True, "pull_name": "hf.co/org/qwen-27b-q4_k_m-GGUF"},
+    ]
+
+    monkeypatch.setattr(reg, "_list_hf", lambda q, limit, gguf_only=True: (list(candidates), None))
+    monkeypatch.setattr(reg, "offline_mode", lambda: False)
+    from localdeploy.web import _ollama
+
+    monkeypatch.setattr(_ollama, "list_installed", lambda: ([], None))
+
+    resp = client.post(
+        "/registry/check-updates",
+        json={"queries": ["qwen"], "free_vram_mb": 8192, "fit_filter": "gpu"},
+    ).json()
+    found = resp["results"][0]["candidates"]
+    assert [c["id"] for c in found] == ["org/qwen-4b-q4_k_m-GGUF"]
+    assert found[0]["fit"]["verdict"] == "FITS"
+
+
+def test_check_updates_installed_match_requires_family_and_size(monkeypatch) -> None:
+    from localdeploy.web import registry as reg
+
+    candidates = [
+        {"id": "org/qwen3-8b-GGUF"},
+        {"id": "org/qwen3.6-27B-GGUF"},
+    ]
+
+    monkeypatch.setattr(reg, "_list_hf", lambda q, limit, gguf_only=True: (list(candidates), None))
+    monkeypatch.setattr(reg, "offline_mode", lambda: False)
+    from localdeploy.web import _ollama
+
+    monkeypatch.setattr(_ollama, "list_installed", lambda: ([{"name": "qwen3:8b"}], None))
+
+    resp = client.post("/registry/check-updates", json={"queries": ["qwen"]}).json()
+    found = resp["results"][0]["candidates"]
+    assert found[0]["installed_match"] is True
+    assert found[1]["installed_match"] is False
+
+
 def test_installed_list_includes_details(monkeypatch) -> None:
     """Installed endpoint returns details (quant, param size) for UI rendering."""
     from localdeploy.web import _ollama

@@ -48,6 +48,7 @@ class FitRequest(BaseModel):
     quant: Optional[str] = None
     context: Optional[int] = None
     free_vram_mb: Optional[int] = None
+    size_bytes: Optional[int] = None
 
 
 def _parse_params_b(text: Optional[str]) -> Optional[float]:
@@ -76,6 +77,15 @@ def _kv_quant_factor(quant: Optional[str]) -> float:
         if key in q:
             return value
     return 1.0
+
+
+def _parse_quant(text: Optional[str]) -> Optional[str]:
+    """Pull a GGUF-style quant label out of a model or repo name."""
+    if not text:
+        return None
+    lowered = text.lower()
+    match = re.search(r"\b(iq[2345]_[a-z0-9_]+|q[234568](?:_[a-z0-9_]+)?)\b", lowered)
+    return match.group(1).upper() if match else None
 
 
 def _round(value: float) -> float:
@@ -150,6 +160,7 @@ def _resolve_from_profile(req: FitRequest) -> Dict[str, Any]:
         "quant": req.quant,
         "context": req.context,
         "kv_quant": None,
+        "size_bytes": req.size_bytes,
     }
     if not req.profile:
         return resolved
@@ -165,7 +176,7 @@ def _resolve_from_profile(req: FitRequest) -> Dict[str, Any]:
         resolved["params_b"] = _parse_params_b(profile.get("model_id")) or _parse_params_b(
             profile.get("name")
         )
-    resolved["quant"] = resolved["quant"] or profile.get("quantization")
+    resolved["quant"] = resolved["quant"] or profile.get("quantization") or _parse_quant(profile.get("model_id"))
     if resolved["context"] is None:
         resolved["context"] = profile.get("safe_context_limit") or profile.get("context_limit")
     resolved["kv_quant"] = profile.get("kv_cache_type_k") or profile.get("kv_cache_type_v")
@@ -179,7 +190,7 @@ def fit_check(req: FitRequest) -> Dict[str, Any]:
         return {"success": False, "verdict": "UNKNOWN", "message": resolved["error"]}
 
     params_b = resolved["params_b"] or _parse_params_b(resolved.get("model_id"))
-    if not params_b:
+    if not params_b and not resolved.get("size_bytes"):
         return {
             "success": False,
             "verdict": "UNKNOWN",
@@ -190,11 +201,24 @@ def fit_check(req: FitRequest) -> Dict[str, Any]:
         }
 
     context = resolved["context"] or 4096
-    quant = resolved["quant"]
+    quant = resolved["quant"] or _parse_quant(resolved.get("model_id"))
 
-    weights_gb = params_b * _weight_gb_per_b(quant)
-    kv_factor = _kv_quant_factor(resolved.get("kv_quant"))
-    kv_cache_gb = _KV_MB_PER_TOKEN_PER_B * params_b * kv_factor * context / 1024.0
+    size_bytes = resolved.get("size_bytes")
+    if size_bytes:
+        # Installed Ollama/GGUF size is a much better load-footprint anchor than
+        # guessing from parameter count. Keep KV cache out of this load estimate;
+        # long prompts can still need more memory, which the note makes explicit.
+        weights_gb = size_bytes / 1_000_000_000.0
+        kv_cache_gb = 0.0
+        note = (
+            "Estimate uses installed model size plus runtime overhead. Long context "
+            "windows can need extra memory during generation."
+        )
+    else:
+        weights_gb = params_b * _weight_gb_per_b(quant)
+        kv_factor = _kv_quant_factor(resolved.get("kv_quant"))
+        kv_cache_gb = _KV_MB_PER_TOKEN_PER_B * params_b * kv_factor * context / 1024.0
+        note = "Conservative estimate. The real proof is a short warmup via /models/serve."
     required_gb = weights_gb + kv_cache_gb + _OVERHEAD_GB
 
     # Pull both VRAM and system RAM from the hardware probe (Phase 1). RAM lets us
@@ -216,8 +240,8 @@ def fit_check(req: FitRequest) -> Dict[str, Any]:
         "quant": quant or "default (~Q4)",
         "context": context,
     }
-    note = "Conservative estimate. The real proof is a short warmup via /models/serve."
-
+    if size_bytes:
+        model_info["size_gb"] = _round(size_bytes / 1_000_000_000.0)
     free_vram_gb = (free_vram_mb / 1024.0) if free_vram_mb is not None else None
     ram_available_gb = (ram_available_mb / 1024.0) if ram_available_mb is not None else None
     cls = _classify(required_gb, free_vram_gb, ram_available_gb)
