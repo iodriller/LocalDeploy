@@ -1519,6 +1519,12 @@ def build_grader(spec: Any) -> Callable[[str], float]:
 
         return grade_set
 
+    if gtype == "builtin":
+        name = spec.get("name")
+        if not isinstance(name, str) or name not in BUILTIN_GRADER_BY_NAME:
+            raise ValueError("builtin grader requires a valid built-in test name")
+        return BUILTIN_GRADER_BY_NAME[name]
+
     raise ValueError(f"unknown grader type '{gtype}' (allowed: {', '.join(GRADER_TYPES)})")
 
 
@@ -1590,6 +1596,28 @@ def build_test_cases(payload: Dict[str, Any]) -> List[TestCase]:
             )
         )
     return cases
+
+
+GRADER_TYPES = tuple(dict.fromkeys([*GRADER_TYPES, "builtin"]))
+
+
+BUILTIN_GRADER_BY_NAME = {test.name: test.grader for test in TEST_CASES}
+
+
+BUILTIN_QUESTION_SET: Dict[str, Any] = {
+    "version": 1,
+    "questions": [
+        {
+            "name": test.name,
+            "category": test.category,
+            "prompt": test.prompt,
+            "max_output_tokens": test.max_output_tokens,
+            "grader": {"type": "builtin", "name": test.name},
+            "grader_explainer": test.grader_explainer,
+        }
+        for test in TEST_CASES
+    ],
+}
 
 
 EXAMPLE_QUESTION_SET: Dict[str, Any] = {

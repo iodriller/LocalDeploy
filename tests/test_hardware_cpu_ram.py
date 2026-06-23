@@ -7,7 +7,15 @@ from localdeploy.web.hardware import _cpu_and_memory, detect_hardware
 def test_system_block_has_cpu_and_ram_keys():
     sys = detect_hardware()["system"]
     # The contract: these keys always exist (values may be None if psutil absent).
-    for key in ("cpu_model", "logical_cores", "physical_cores", "ram_total_mb", "ram_available_mb"):
+    for key in (
+        "cpu_model",
+        "logical_cores",
+        "physical_cores",
+        "ram_total_mb",
+        "ram_available_mb",
+        "psutil_available",
+        "ram_probe_message",
+    ):
         assert key in sys
 
 
