@@ -22,6 +22,22 @@ irm https://raw.githubusercontent.com/iodriller/localdeploy/main/run.ps1 | iex
 That's the whole setup. The script installs Docker if you don't have it, downloads everything,
 and starts the server. Then open **http://localhost:8000/ui** in your browser.
 
+### Existing clone / local launch
+
+If you already have this repo and want to start the API + UI without Docker, use the local
+launcher from the repo root:
+
+```powershell
+.\scripts\start.ps1 -Background -OpenUI
+```
+
+The UI is served at **http://127.0.0.1:8000/ui** by default. The launcher honors `API_HOST` and
+`API_PORT` from `.env`, so a custom port prints and opens the matching URL.
+
+llama.cpp is optional. If `ENABLE_LLAMA_CPP=true` but no enabled llama.cpp profile or GGUF file is
+configured, the local launcher now skips that backend and still starts the API/UI. Start
+llama.cpp directly with `.\scripts\start_llamacpp.ps1` when you want failures to be fatal.
+
 ---
 
 ## What you can do in the UI
@@ -58,7 +74,7 @@ Uncomment the `deploy.resources` block in `docker-compose.yml` (requires the
 ```bash
 git clone https://github.com/iodriller/localdeploy.git
 cd localdeploy
-docker compose up
+docker compose up --build -d
 ```
 
 Then open **http://localhost:8000/ui**.
@@ -76,7 +92,15 @@ Set `OFFLINE=true` to block that too.
 ## For developers
 
 <details>
-<summary>Manual install without Docker (macOS/Linux, Ollama already running)</summary>
+<summary>Manual install without Docker (Ollama already running)</summary>
+
+Windows:
+
+```powershell
+.\scripts\start.ps1 -Background -OpenUI
+```
+
+macOS/Linux:
 
 ```bash
 git clone https://github.com/iodriller/localdeploy.git

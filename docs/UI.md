@@ -7,6 +7,22 @@ runtime, no external/CDN assets — so it runs anywhere the API runs and works f
 The UI is **opt-out**: set `ENABLE_WEB_UI=false` to disable it (the API behaves exactly as it did
 before the UI existed).
 
+## Launching an existing clone
+
+From a local checkout on Windows:
+
+```powershell
+.\scripts\start.ps1 -Background -OpenUI
+```
+
+That starts the API in the background, waits for `/health`, and opens `/ui`. It uses `API_HOST`
+and `API_PORT` from `.env`; if `API_HOST=0.0.0.0`, the browser URL uses `127.0.0.1`.
+
+The UI does not require llama.cpp. During normal API/UI startup, incomplete optional llama.cpp
+configuration is skipped with a warning so Ollama-backed profiles and diagnostics remain usable.
+Run `.\scripts\start_llamacpp.ps1` directly when you are intentionally bringing up a GGUF profile
+and want missing server/model paths to fail fast.
+
 ## First-time flow
 
 A newcomer can go end-to-end without reading anything else:
