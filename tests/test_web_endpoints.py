@@ -83,6 +83,23 @@ def test_fit_check_large_long_context_wont_fit_8gb() -> None:
     assert body["suggestions"]
 
 
+def test_fit_check_installed_size_matches_loaded_8b_footprint() -> None:
+    body = client.post(
+        "/system/fit-check",
+        json={
+            "model_id": "qwen3:8b",
+            "params_b": 8.2,
+            "quant": "Q4_K_M",
+            "context": 8192,
+            "size_bytes": 5_225_388_164,
+            "free_vram_mb": 8192,
+        },
+    ).json()
+    assert body["success"] is True
+    assert body["verdict"] == "FITS"
+    assert body["estimate_gb"]["required"] < 7
+
+
 def test_fit_check_resolves_profile() -> None:
     body = client.post(
         "/system/fit-check",

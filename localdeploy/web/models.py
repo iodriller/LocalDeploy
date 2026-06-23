@@ -88,6 +88,14 @@ def system_status() -> Dict[str, Any]:
     running, run_error = _ollama.list_running()
     for m in running:
         m.update(_placement(m.get("size"), m.get("size_vram")))
+        if isinstance(m.get("size"), int):
+            m["size_mb"] = round(m["size"] / 1_000_000)
+        if isinstance(m.get("size_vram"), int):
+            m["size_vram_mb"] = round(m["size_vram"] / 1_000_000)
+        m["activity"] = "loaded"
+        m["activity_note"] = (
+            "Ollama reports this model is loaded/warm. It does not expose per-request activity here."
+        )
     hardware = detect_hardware()
     return {
         "success": True,
@@ -169,7 +177,7 @@ def models_pull(req: PullRequest):
 class ServeRequest(BaseModel):
     model: Optional[str] = None
     profile: Optional[str] = None
-    keep_alive: str = "5m"
+    keep_alive: str = "60m"
     device: Optional[str] = None  # "auto" | "gpu" | "cpu"
     num_gpu: Optional[int] = None  # advanced override (layers offloaded to GPU)
 
@@ -183,7 +191,7 @@ class SwitchRequest(BaseModel):
     to_model: Optional[str] = None
     to_profile: Optional[str] = None
     from_model: Optional[str] = None
-    keep_alive: str = "5m"
+    keep_alive: str = "60m"
     device: Optional[str] = None
     num_gpu: Optional[int] = None
 

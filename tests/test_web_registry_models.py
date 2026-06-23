@@ -7,6 +7,7 @@ monkeypatching for the Hugging Face and Ollama-pull paths.
 from __future__ import annotations
 
 import pytest
+import requests
 
 try:
     from fastapi.testclient import TestClient
@@ -18,6 +19,34 @@ from localdeploy.web import models as models_mod
 from localdeploy.web import registry
 
 client = TestClient(app)
+
+
+@pytest.fixture(autouse=True)
+def _simulate_ollama_down(monkeypatch) -> None:
+    """Keep default tests independent from a real Ollama service on localhost."""
+
+    error = "Ollama is not reachable at http://localhost:11434. Start Ollama and retry."
+
+    def list_installed():
+        return [], error
+
+    def list_running():
+        return [], error
+
+    def load_model(*_args, **_kwargs):
+        raise requests.ConnectionError(error)
+
+    def unload_model(*_args, **_kwargs):
+        raise requests.ConnectionError(error)
+
+    def pull_stream(*_args, **_kwargs):
+        raise requests.ConnectionError(error)
+
+    monkeypatch.setattr(registry._ollama, "list_installed", list_installed)
+    monkeypatch.setattr(models_mod._ollama, "list_running", list_running)
+    monkeypatch.setattr(models_mod._ollama, "load_model", load_model)
+    monkeypatch.setattr(models_mod._ollama, "unload_model", unload_model)
+    monkeypatch.setattr(models_mod._ollama, "pull_stream", pull_stream)
 
 
 # --- Step 4: registry --------------------------------------------------------
@@ -70,6 +99,31 @@ def test_list_hf_marks_gguf_repos_pullable(monkeypatch) -> None:
     assert err is None
     assert items[0]["pullable"] is True
     assert items[0]["pull_name"] == "hf.co/TheBloke/Foo-GGUF"
+
+
+def test_list_hf_enriches_missing_or_zero_stats(monkeypatch) -> None:
+    import huggingface_hub
+
+    class FakeSearchModel:
+        id = "TheBloke/Foo-GGUF"
+        lastModified = "2026-01-01"
+        downloads = 0
+        likes = 0
+        gated = False
+
+    class FakeInfo:
+        downloads = 42
+        likes = 7
+
+    monkeypatch.setattr(
+        huggingface_hub.HfApi, "list_models", lambda self, **kw: [FakeSearchModel()]
+    )
+    monkeypatch.setattr(huggingface_hub.HfApi, "model_info", lambda self, mid: FakeInfo())
+
+    items, err = registry._list_hf("foo", 5, gguf_only=True)
+    assert err is None
+    assert items[0]["downloads"] == 42
+    assert items[0]["likes"] == 7
 
 
 def test_check_updates_surfaces_pull_name(monkeypatch) -> None:
@@ -193,6 +247,19 @@ def test_serve_cpu_device_forces_num_gpu_zero(monkeypatch) -> None:
     assert body["success"] is True
     assert body["device"] == "CPU"
     assert calls["num_gpu"] == 0
+
+
+def test_serve_default_keep_alive_is_sixty_minutes(monkeypatch) -> None:
+    calls = {}
+    monkeypatch.setattr(
+        models_mod._ollama,
+        "load_model",
+        lambda m, k, num_gpu=None: calls.update(model=m, keep_alive=k, num_gpu=num_gpu) or {},
+    )
+    monkeypatch.setattr(models_mod._ollama, "list_running", lambda: ([], None))
+    body = client.post("/models/serve", json={"model": "gemma3:4b"}).json()
+    assert body["success"] is True
+    assert calls["keep_alive"] == "60m"
 
 
 def test_stop_success_path(monkeypatch) -> None:

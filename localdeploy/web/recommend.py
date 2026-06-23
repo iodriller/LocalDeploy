@@ -1,6 +1,6 @@
 """Step 14 (D2) - one-click "Tune for my GPU".
 
-POST /system/recommend fit-filters the configured profiles, runs a short
+POST /system/recommend fit-filters the saved run profiles, runs a short
 benchmark subset on the ones that fit, and ranks them by a transparent
 quality x speed x headroom score. It reuses the existing fit-check (Step 3) and
 benchmark engine (Step 8) - this is orchestration only, no new scoring engine.
@@ -97,7 +97,7 @@ def recommend(req: RecommendRequest) -> Dict[str, Any]:
     names = req.profiles or [n for n, p in profiles_map.items() if p.get("enabled", False)]
     names = [n for n in names if n in profiles_map]
     if not names:
-        return {"success": False, "error": "No profiles to evaluate (enable some or pass 'profiles')."}
+        return {"success": False, "error": "No saved run profiles to evaluate (enable some or pass 'profiles')."}
 
     # Fit-filter first so we never benchmark something that can't load.
     candidates: List[Dict[str, Any]] = []
