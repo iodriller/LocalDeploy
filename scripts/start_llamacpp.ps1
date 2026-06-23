@@ -1,5 +1,6 @@
 param(
-    [switch]$SkipIfDisabled
+    [switch]$SkipIfDisabled,
+    [switch]$Optional
 )
 
 $ErrorActionPreference = "Stop"
@@ -9,6 +10,15 @@ Set-Location $ProjectRoot
 function Write-Step {
     param([string]$Message)
     Write-Host "==> $Message" -ForegroundColor Cyan
+}
+
+function Stop-LlamaStartup {
+    param([string]$Message)
+    if ($SkipIfDisabled -or $Optional) {
+        Write-Warning "$Message Skipping optional llama.cpp startup."
+        return $true
+    }
+    throw $Message
 }
 
 function Read-DotEnv {
@@ -162,11 +172,7 @@ function Add-ArgIfPresent {
 
 $envFile = Read-DotEnv
 if (-not (Env-Bool -EnvFile $envFile -Name "ENABLE_LLAMA_CPP" -Default $false)) {
-    if ($SkipIfDisabled) {
-        Write-Step "llama.cpp is disabled"
-        return
-    }
-    throw "llama.cpp is disabled. Set ENABLE_LLAMA_CPP=true in .env."
+    if (Stop-LlamaStartup "llama.cpp is disabled. Set ENABLE_LLAMA_CPP=true in .env.") { return }
 }
 
 $baseUrl = Env-Value -EnvFile $envFile -Name "LLAMACPP_BASE_URL" -Default "http://localhost:8080"
@@ -174,9 +180,14 @@ $modelsUrl = "$($baseUrl.TrimEnd('/'))/v1/models"
 $config = Get-Config -EnvFile $envFile
 $profile = Resolve-LlamaProfile -Config $config -EnvFile $envFile
 if (-not $profile) {
-    throw "No enabled llama.cpp profile found in config.json."
+    if (Stop-LlamaStartup "No enabled llama.cpp profile found in config.json.") { return }
 }
-Assert-GpuOnlyProfile -EnvFile $envFile -Profile $profile
+try {
+    Assert-GpuOnlyProfile -EnvFile $envFile -Profile $profile
+}
+catch {
+    if (Stop-LlamaStartup $_.Exception.Message) { return }
+}
 
 if (Test-LlamaCppReady $modelsUrl) {
     Write-Step "llama.cpp server is already running at $baseUrl"
@@ -185,12 +196,12 @@ if (Test-LlamaCppReady $modelsUrl) {
 
 $serverPath = Find-LlamaServer -EnvFile $envFile
 if (-not $serverPath) {
-    throw "llama-server.exe was not found. Install llama.cpp or set LLAMACPP_SERVER_PATH in .env."
+    if (Stop-LlamaStartup "llama-server.exe was not found. Install llama.cpp or set LLAMACPP_SERVER_PATH in .env.") { return }
 }
 
 $modelPath = $profile.model_id
 if (-not $modelPath -or -not (Test-Path -LiteralPath $modelPath)) {
-    throw "llama.cpp model file not found: $modelPath"
+    if (Stop-LlamaStartup "llama.cpp model file not found: $modelPath") { return }
 }
 
 $uri = [Uri]$baseUrl
@@ -247,9 +258,9 @@ for ($i = 0; $i -lt $startupTimeout; $i++) {
         if (Test-Path -LiteralPath $err) {
             $stderr = (Get-Content -LiteralPath $err -Tail 40) -join "`n"
         }
-        throw "llama.cpp server exited during startup. $stderr"
+        if (Stop-LlamaStartup "llama.cpp server exited during startup. $stderr") { return }
     }
     $process.Refresh()
 }
 
-throw "llama.cpp server did not become ready at $baseUrl within $startupTimeout seconds."
+if (Stop-LlamaStartup "llama.cpp server did not become ready at $baseUrl within $startupTimeout seconds.") { return }
