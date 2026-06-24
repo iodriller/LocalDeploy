@@ -55,6 +55,16 @@ def _resolve_num_gpu(device: Optional[str], num_gpu: Optional[int]) -> Optional[
     return None
 
 
+def _target_label(num_gpu: Optional[int]) -> str:
+    if num_gpu is None:
+        return "auto"
+    if num_gpu == 0:
+        return "CPU"
+    if num_gpu == _FORCE_GPU_LAYERS:
+        return "GPU"
+    return f"{num_gpu} GPU layer(s)"
+
+
 def _placement(size: Any, size_vram: Any) -> Dict[str, Any]:
     """Derive a GPU/CPU placement label from total vs VRAM-resident bytes."""
     if isinstance(size, int) and isinstance(size_vram, int) and size > 0:
@@ -62,6 +72,20 @@ def _placement(size: Any, size_vram: Any) -> Dict[str, Any]:
         label = "GPU" if pct >= 99 else ("CPU" if pct <= 1 else "Split")
         return {"gpu_percent": pct, "placement": label}
     return {"gpu_percent": None, "placement": None}
+
+
+def _matches_model_name(running_name: Any, model_id: str) -> bool:
+    name = str(running_name or "")
+    base = model_id.split(":")[0]
+    return name == model_id or name.split(":")[0] == base
+
+
+def _expected_placement(num_gpu: Optional[int]) -> Optional[str]:
+    if num_gpu == 0:
+        return "CPU"
+    if num_gpu == _FORCE_GPU_LAYERS:
+        return "GPU"
+    return None
 
 
 def _resolve_target(
@@ -199,6 +223,22 @@ class SwitchRequest(BaseModel):
 def _serve_ollama(model_id: str, keep_alive: str, num_gpu: Optional[int] = None) -> Dict[str, Any]:
     if require_gpu_only():
         return {"success": False, "error": "GPU-only mode is enabled; refusing Ollama serve."}
+    target = _target_label(num_gpu)
+    if num_gpu is not None:
+        try:
+            _ollama.unload_model(model_id)
+        except BackendCallError as exc:
+            return {"success": False, "error": f"Could not unload '{model_id}' before switching to {target}: {exc}"}
+        except requests.ConnectionError:
+            return {"success": False, "error": "Ollama is not running or is unreachable. Start Ollama and retry."}
+        except requests.Timeout:
+            return {
+                "success": False,
+                "timeout": True,
+                "error": f"Timed out unloading '{model_id}' before switching to {target}. Wait a moment, then retry.",
+            }
+        except requests.RequestException as exc:
+            return {"success": False, "error": f"Failed to unload '{model_id}' before switching to {target}: {exc}"}
     try:
         _ollama.load_model(model_id, keep_alive, num_gpu=num_gpu)
     except BackendCallError as exc:
@@ -222,14 +262,31 @@ def _serve_ollama(model_id: str, keep_alive: str, num_gpu: Optional[int] = None)
     running, _ = _ollama.list_running()
     for m in running:
         m.update(_placement(m.get("size"), m.get("size_vram")))
-    target = {0: "CPU", _FORCE_GPU_LAYERS: "GPU"}.get(num_gpu, "auto") if num_gpu is not None else "auto"
+    expected = _expected_placement(num_gpu)
+    if expected is not None:
+        match = next((m for m in running if _matches_model_name(m.get("name"), model_id)), None)
+        actual = match.get("placement") if match else None
+        if actual and actual != expected:
+            return {
+                "success": False,
+                "backend": "ollama",
+                "served": model_id,
+                "running": running,
+                "device": target,
+                "error": (
+                    f"Requested {expected}, but Ollama reported {actual}. "
+                    "The model was unloaded and reloaded before warm-up; benchmark was not started."
+                ),
+            }
     return {
         "success": True,
         "backend": "ollama",
         "served": model_id,
         "running": running,
         "device": target,
-        "message": f"'{model_id}' warmed on {target} and kept alive for {keep_alive}.",
+        "message": f"'{model_id}' reloaded on {target} and kept alive for {keep_alive}."
+        if num_gpu is not None
+        else f"'{model_id}' warmed on {target} and kept alive for {keep_alive}.",
     }
 
 

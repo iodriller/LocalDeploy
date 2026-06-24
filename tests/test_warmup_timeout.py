@@ -62,6 +62,7 @@ def test_serve_ollama_timeout_is_graceful(monkeypatch) -> None:
         raise requests.Timeout("read timed out")
 
     monkeypatch.setattr(models, "require_gpu_only", lambda: False)
+    monkeypatch.setattr(models._ollama, "unload_model", lambda _m: {})
     monkeypatch.setattr(models._ollama, "load_model", raise_timeout)
 
     res = models._serve_ollama("gemma3:27b", "5m", num_gpu=0)

@@ -159,6 +159,7 @@ Write-Host "LocalDeploy is ready:" -ForegroundColor Green
 Write-Host "  UI:      $uiUrl"
 Write-Host "  API:     $apiBaseUrl"
 Write-Host "  Docs:    $docsUrl"
+Write-Host "  Open UI: .\scripts\start_ui.ps1  (starts the API if needed, then opens the UI)"
 Write-Host "  Chat:    .\scripts\chat.ps1 -Prompt `"How are you?`""
 Write-Host "  Bench:   python test_models.py --all --safe-mode true --max-output-tokens 256"
 

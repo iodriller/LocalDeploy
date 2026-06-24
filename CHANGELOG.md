@@ -9,10 +9,20 @@ All notable changes to this project should be documented here.
   prevented the *entire* script from parsing (blank/dead UI). Replaced with straight quotes.
   Added a CI step (`node --check web/app.js`) and a pytest guard so a JS parse error can never
   ship silently again (the Python-only suite never loaded the UI before).
-- **One-click CPU-vs-GPU comparison**: a new *Run on CPU & GPU ▶▶* button deploys the selected
-  profile to CPU, benchmarks it, redeploys to GPU, benchmarks it, then auto-diffs the two in the
-  Compare panel — closing the "should I run this on CPU or GPU?" loop without manual steps.
-  Reuses the existing serve/benchmark/compare endpoints (pure orchestration).
+- **Benchmark workspace V2**: the benchmark tab is now a local experiment workspace with a
+  multi-profile Run Builder, sequential run queue, leaderboard, category heatmap, SVG
+  speed/quality scatter, per-test matrix, local browser history, selected-run comparison, and
+  report-card import/export. **CPU + GPU** now creates two queued benchmark batches instead of a
+  separate special-case button.
+- **Benchmark queue UX**: waiting benchmark rows can now be moved up/down or removed before they
+  run, while the active run appears only in the main progress panel with elapsed time.
+- **Comparison auto-select**: fresh benchmark results now join the existing selected comparison
+  set instead of replacing it, so a second run appears next to the first run automatically.
+- **Per-test matrix demoted**: the per-test matrix is now collapsed as an advanced diagnostic
+  view instead of occupying the main results dashboard by default.
+- **Benchmark deployments are temporary**: `/benchmark/run` now unloads each Ollama model after
+  its profile finishes, including forced CPU/GPU benchmark deployments. The benchmark tab no
+  longer leaves a model served as a side effect.
 - Quieter device auto-detect (inline note instead of a per-run toast); the run progress bar is
   now an ARIA `progressbar` so screen readers announce progress.
 
@@ -28,18 +38,16 @@ All notable changes to this project should be documented here.
   (`severity: hard`) case and notes the CPU fallback for the soft case.
 - **Tune for my GPU** labels skipped CPU-capable profiles as "CPU-only (skipped for GPU tuning)"
   instead of the misleading "won't fit VRAM".
-- **Run table**: dropped the redundant Profile column (the UI runs one profile); the model name
-  moved into the completion stat strip.
-- **Warm-up robustness**: Start/Switch now show a **live "Loading…Ns" counter** (with a
+- **Run table**: detailed benchmark rows now live below the dashboard and can be filtered by
+  model, category, pass/fail, and slowest failures.
+- **Warm-up robustness**: Deploy/replace actions now show a **live "Loading…Ns" counter** (with a
   "large models on CPU can take a minute" hint when targeting CPU) instead of an apparently
   frozen button. The server's load timeout **scales with the device** (longer for CPU offload)
   and is overridable via `OLLAMA_LOAD_TIMEOUT`; a load timeout returns a clear "it may still be
   loading — click Refresh status" message rather than a generic failure.
-- **Decision-grade run results**: the benchmark Run shows a **live progress bar**
-  ("N / M completed"), a **Cancel** button, **tok/s** per test, inline **failure
-  reasons**, an expandable **response preview** per row, and a completion **stat strip**
-  (passed · avg accuracy · avg latency · avg tok/s · total time). A **per-category
-  rollup** (passed / avg accuracy / avg latency) appears after each run.
+- **Decision-grade run results**: the benchmark workspace shows queued model/device variants,
+  live progress, **Cancel**, **tok/s** per test, inline failure reasons, response previews,
+  leaderboard ranking, per-category heatmap, and per-test matrix views.
 - **Report cards & compare carry speed**: exported cards now include `avg_tokens_per_second`,
   a per-test **tok/s** column, and a **By category** table. The A/B compare view adds a
   **tok/s (A → B)** column and aggregate tok/s delta — so a "Qwen/GPU vs Qwen/CPU" diff
