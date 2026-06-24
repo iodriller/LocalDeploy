@@ -32,9 +32,9 @@ A newcomer can go end-to-end without reading anything else:
    streams live. The pull is **fit-checked** first and blocked only for hard "fits nowhere"
    warnings unless **Warn only; pull anyway** is checked.
 3. **Deploy** — load the model into memory with an Ollama keep-alive.
-4. **Deploy & Benchmark tab** — load the example question set, **Validate**, then **Run**.
+4. **Benchmark & Compare tab** — load the example question set, **Validate**, then **Run**.
 
-## Tab 1 — Serve & Diagnose
+## Tab 1 — Setup & Deploy
 
 | Control | What it does | Endpoint |
 |---|---|---|
@@ -52,7 +52,7 @@ A newcomer can go end-to-end without reading anything else:
 The **Target free VRAM (MB)** field is auto-filled from the hardware probe and is used by both the
 fit check and the pull gate. You can override it to test against a different card.
 
-## Tab 2 — Deploy & Benchmark
+## Tab 2 — Benchmark & Compare
 
 The benchmark tab is a local experiment workspace. It keeps run records in browser
 `localStorage` under `localdeploy.benchmarkRuns.v1`; there is no backend database.
