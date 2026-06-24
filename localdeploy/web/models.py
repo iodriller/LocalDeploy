@@ -262,23 +262,22 @@ def _serve_ollama(model_id: str, keep_alive: str, num_gpu: Optional[int] = None)
     running, _ = _ollama.list_running()
     for m in running:
         m.update(_placement(m.get("size"), m.get("size_vram")))
+    # If the device request couldn't be honored (e.g. a model too big to fully
+    # fit GPU lands on Split), warn but proceed: the run is still useful and is
+    # labeled with the *actual* placement, so nothing is mislabeled. A hard
+    # failure here just produced confusing "status failed" rows for a reasonable
+    # device choice.
     expected = _expected_placement(num_gpu)
+    warning = None
     if expected is not None:
         match = next((m for m in running if _matches_model_name(m.get("name"), model_id)), None)
         actual = match.get("placement") if match else None
         if actual and actual != expected:
-            return {
-                "success": False,
-                "backend": "ollama",
-                "served": model_id,
-                "running": running,
-                "device": target,
-                "error": (
-                    f"Requested {expected}, but Ollama reported {actual}. "
-                    "The model was unloaded and reloaded before warm-up; benchmark was not started."
-                ),
-            }
-    return {
+            warning = (
+                f"Requested {expected}, but Ollama placed '{model_id}' on {actual} "
+                f"(it may not fully fit {expected}). Results are labeled with the actual placement."
+            )
+    result = {
         "success": True,
         "backend": "ollama",
         "served": model_id,
@@ -288,6 +287,9 @@ def _serve_ollama(model_id: str, keep_alive: str, num_gpu: Optional[int] = None)
         if num_gpu is not None
         else f"'{model_id}' warmed on {target} and kept alive for {keep_alive}.",
     }
+    if warning:
+        result["warning"] = warning
+    return result
 
 
 def _llamacpp_status_message() -> Dict[str, Any]:
