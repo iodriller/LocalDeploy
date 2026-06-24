@@ -1,3 +1,7 @@
 -r requirements.txt
 pytest>=7.0
 httpx>=0.27
+# UI smoke tests (tests/test_ui_playwright.py). After installing, fetch the
+# browser once:  python -m playwright install chromium
+# The UI tests skip cleanly if Playwright or its browser isn't present.
+playwright>=1.40

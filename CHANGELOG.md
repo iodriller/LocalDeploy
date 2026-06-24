@@ -4,6 +4,23 @@ All notable changes to this project should be documented here.
 
 ## Unreleased
 
+- **Forced CPU/GPU benchmarks now measure the device they ask for.** Previously a
+  `device=cpu` (or `gpu`) run only pinned the placement at warm-up; the benchmark's own
+  `/chat` calls didn't pass `num_gpu`, so Ollama could silently re-place the model (a CPU
+  run drifting onto the GPU). `num_gpu` is now threaded through `/chat` → `execute_test` →
+  `iter_run`, so every inference call stays on the requested device end-to-end. Verified:
+  `device=cpu` reports `actual_device=cpu`, `device=gpu` reports `gpu`.
+- **Fewer spurious "status failed" benchmark rows.** Forcing CPU/GPU used to hard-fail
+  whenever Ollama placed the model differently (e.g. a model too big for pure GPU lands on
+  Split). It now warns and proceeds, recording the run with its actual placement.
+- **Benchmark history/queue management**: per-run delete (×) in the run library, a confirm on
+  Clear history, and the ability to dismiss finished/failed queue rows (individually or via
+  **Clear finished**); failed rows show their error reason inline. The running-model **Kill**
+  button is now **Unload** for consistency.
+- **Browser UI smoke tests** (`tests/test_ui_playwright.py`): optional Playwright-driven checks
+  that load the real `/ui` in headless Chromium and exercise tab switching and the benchmark
+  history controls. They skip cleanly when Playwright or its browser isn't installed; added
+  `playwright` to `requirements-dev.txt`.
 - **Fixed: the web UI was completely broken** — `web/app.js` contained smart/curly quotes
   (`“ ”`) used as string delimiters in the "Check New Models" function, a `SyntaxError` that
   prevented the *entire* script from parsing (blank/dead UI). Replaced with straight quotes.
