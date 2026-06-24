@@ -67,7 +67,7 @@ All notable changes to this project should be documented here.
   (unload all models from memory/VRAM), with **Delete** buttons per installed model, a **Free memory**
   button, and a **Cancel** button to abort an in-flight pull.
 - **Hardware panel now shows CPU + RAM** (`/system/hardware`): CPU model, physical/logical cores,
-  and system RAM total/available via `psutil` (graceful fallback when absent). See `docs/ROADMAP.md`.
+  and system RAM total/available via `psutil` (graceful fallback when absent).
 - **Choose CPU vs GPU at deploy time**: the Serve panel has a *Deploy to* selector (Auto / GPU /
   CPU). Forces Ollama `num_gpu` (0 = CPU, max = GPU); Auto is unchanged from before. `/system/status`
   now labels each running model's placement (GPU / CPU / Split N%). Additive and backwards-compatible.

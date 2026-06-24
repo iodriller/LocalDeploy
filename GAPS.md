@@ -114,8 +114,6 @@ These are coded and statically checked but could not be executed here:
 - `tests/README.md` lists only the original three test files; it doesn't mention the newer
   `test_web_*`, `test_benchmark_*`, `test_model_management`, `test_warmup_timeout`, and
   `test_device_target` suites (213 tests total as of `e4451c7`).
-- The launch plan (`PUBLIC_LAUNCH_PLAN.md`) is a planning artifact; steps are complete but the doc
-  isn't annotated as such.
 
 ---
 
