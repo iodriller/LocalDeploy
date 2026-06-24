@@ -240,14 +240,15 @@ def benchmark_run(req: RunRequest):
                         if unload_event:
                             yield sse(unload_event)
                         return
-                    yield sse(
-                        {
-                            "event": "deploy_end",
-                            "profile": profile_name,
-                            "model_id": model_id,
-                            "device": requested_device,
-                        }
-                    )
+                    deploy_end = {
+                        "event": "deploy_end",
+                        "profile": profile_name,
+                        "model_id": model_id,
+                        "device": requested_device,
+                    }
+                    if served.get("warning"):
+                        deploy_end["warning"] = served["warning"]
+                    yield sse(deploy_end)
             for event in bench.iter_run(base_url, profiles_map, selected, tests, req.timeout):
                 if event.get("event") == "profile_end":
                     actual = current_placement(str(event.get("profile") or ""))

@@ -853,7 +853,7 @@ async function refreshStatus() {
               </div>
               <div class="row gap">
                 ${place}
-                <button class="btn danger compact kill-model-btn">Kill</button>
+                <button class="btn danger compact kill-model-btn" title="Unload this model from memory/VRAM">Unload</button>
               </div>
             </div>
             ${vramBarHtml(vramMb, total, usedLabel)}
@@ -1712,34 +1712,47 @@ function renderRunQueue(queue) {
     slot.innerHTML = `<div class="muted small">No other queued runs.</div>`;
     return;
   }
-  slot.innerHTML = visible
-    .map((item) => {
-      const cls = item.status === "complete" ? "on" : item.status === "failed" ? "wont" : "off";
-      const elapsed = item.elapsedSeconds != null
-        ? `${item.elapsedSeconds}s`
-        : item.startedAt
-          ? `${Math.round((Date.now() - item.startedAt) / 1000)}s`
-          : "0s";
-      const canEdit = item.status === "waiting";
-      const controls = canEdit
-        ? `<div class="queue-actions" aria-label="Queue controls">
-            <button class="btn compact queue-move" data-id="${esc(item.id)}" data-delta="-1" title="Move up">Up</button>
-            <button class="btn compact queue-move" data-id="${esc(item.id)}" data-delta="1" title="Move down">Down</button>
-            <button class="btn compact danger queue-remove" data-id="${esc(item.id)}" title="Remove from queue">Remove</button>
-          </div>`
-        : "";
-      return `<div class="queue-row" data-id="${esc(item.id)}">
-        <div class="queue-row-main">
-          <b>${esc(runLabel(item))}</b>
-          <span class="muted small">${esc(item.profile)} · ${esc(item.current || item.status)} · ${esc(elapsed)}</span>
-        </div>
-        <div class="queue-row-side">
-          <span class="badge ${cls}">${esc(item.status)}</span>
-          ${controls}
-        </div>
-      </div>`;
-    })
-    .join("");
+  const finished = visible.filter((item) => ["complete", "failed", "stopped"].includes(item.status)).length;
+  slot.innerHTML =
+    (finished > 1
+      ? `<div class="queue-toolbar"><button class="btn compact" id="btn-clear-finished" title="Remove completed, failed, and stopped rows from the queue">Clear finished (${finished})</button></div>`
+      : "") +
+    visible
+      .map((item) => {
+        const cls = item.status === "complete" ? "on" : item.status === "failed" ? "wont" : "off";
+        const elapsed = item.elapsedSeconds != null
+          ? `${item.elapsedSeconds}s`
+          : item.startedAt
+            ? `${Math.round((Date.now() - item.startedAt) / 1000)}s`
+            : "0s";
+        const canMove = item.status === "waiting";
+        const isFinished = ["complete", "failed", "stopped"].includes(item.status);
+        // Waiting rows can be reordered + removed; finished rows can be dismissed.
+        const controls =
+          canMove || isFinished
+            ? `<div class="queue-actions" aria-label="Queue controls">
+                ${canMove ? `<button class="btn compact queue-move" data-id="${esc(item.id)}" data-delta="-1" title="Move up">Up</button>
+                <button class="btn compact queue-move" data-id="${esc(item.id)}" data-delta="1" title="Move down">Down</button>` : ""}
+                <button class="btn compact danger queue-remove" data-id="${esc(item.id)}" title="${canMove ? "Remove from queue" : "Dismiss"}">${canMove ? "Remove" : "Dismiss"}</button>
+              </div>`
+            : "";
+        const reason = item.status === "failed" && item.error
+          ? `<span class="muted small queue-reason" title="${esc(item.error)}">${esc(item.error)}</span>`
+          : "";
+        return `<div class="queue-row" data-id="${esc(item.id)}">
+          <div class="queue-row-main">
+            <b>${esc(runLabel(item))}</b>
+            <span class="muted small">${esc(item.profile)} · ${esc(item.current || item.status)} · ${esc(elapsed)}</span>
+            ${reason}
+          </div>
+          <div class="queue-row-side">
+            <span class="badge ${cls}">${esc(item.status)}</span>
+            ${controls}
+          </div>
+        </div>`;
+      })
+      .join("");
+  $("#btn-clear-finished", slot)?.addEventListener("click", clearFinishedQueue);
   $$(".queue-remove", slot).forEach((btn) =>
     btn.addEventListener("click", () => removeQueuedRun(btn.dataset.id))
   );
@@ -1748,14 +1761,26 @@ function renderRunQueue(queue) {
   );
 }
 
+// Remove all finished (complete/failed/stopped) rows from the queue, leaving
+// waiting and active runs intact.
+function clearFinishedQueue() {
+  const queue = state.currentQueue || [];
+  state.currentQueue = queue.filter((item) => !["complete", "failed", "stopped"].includes(item.status));
+  renderRunQueue(state.currentQueue);
+}
+
 function removeQueuedRun(id) {
   const queue = state.currentQueue || [];
   const idx = queue.findIndex((item) => item.id === id);
-  if (idx < 0 || queue[idx].status !== "waiting") return;
+  if (idx < 0) return;
+  // Never yank the row that's actively deploying/running out from under the
+  // run loop; use the active-run Stop button for that.
+  if (["deploying", "running"].includes(queue[idx].status)) return;
+  const wasWaiting = queue[idx].status === "waiting";
   queue.splice(idx, 1);
   renderRunQueue(queue);
   const summary = $("#run-summary");
-  if (summary) {
+  if (summary && wasWaiting) {
     summary.className = "result";
     summary.textContent = `Removed a waiting benchmark. ${queue.filter((q) => q.status === "waiting").length} waiting.`;
   }
@@ -1794,6 +1819,7 @@ async function runQueueItem(item, questionInfo, timeout, controller) {
       setActiveRun(item, done, total);
     } else if (evt.event === "deploy_end") {
       item.current = "Deployment complete";
+      if (evt.warning) item.warning = evt.warning;
       setActiveRun(item, done, total);
     } else if (evt.event === "run_start") {
       item.status = "running";
@@ -2201,13 +2227,16 @@ function renderRunLibrary() {
   }
   const selected = new Set(state.selectedRunIds);
   body.innerHTML = state.benchmarkRuns
-    .map((r) => `<label class="run-library-row${selected.has(r.id) ? " selected" : ""}">
-      <input type="checkbox" value="${esc(r.id)}"${selected.has(r.id) ? " checked" : ""} />
-      <span><b>${esc(runLabel(r))}</b><span class="muted small">${esc(r.source)} · ${esc(new Date(r.createdAt).toLocaleString())}</span></span>
-      <span class="badge ${r.source === "imported-card" ? "cpu" : "on"}">${esc(r.summary.passed)}/${esc(r.summary.tests)}</span>
-    </label>`)
+    .map((r) => `<div class="run-library-row${selected.has(r.id) ? " selected" : ""}">
+      <label class="run-library-pick">
+        <input type="checkbox" value="${esc(r.id)}"${selected.has(r.id) ? " checked" : ""} />
+        <span><b>${esc(runLabel(r))}</b><span class="muted small">${esc(r.source)} · ${esc(new Date(r.createdAt).toLocaleString())}</span></span>
+        <span class="badge ${r.source === "imported-card" ? "cpu" : "on"}">${esc(r.summary.passed)}/${esc(r.summary.tests)}</span>
+      </label>
+      <button class="btn compact danger run-delete" data-id="${esc(r.id)}" title="Remove this run from history" aria-label="Remove run">×</button>
+    </div>`)
     .join("");
-  $$("input", body).forEach((input) => {
+  $$('input[type="checkbox"]', body).forEach((input) => {
     input.addEventListener("change", () => {
       const ids = new Set(state.selectedRunIds);
       if (input.checked) ids.add(input.value);
@@ -2218,6 +2247,21 @@ function renderRunLibrary() {
       renderBenchmarkWorkspace();
     });
   });
+  $$(".run-delete", body).forEach((btn) =>
+    btn.addEventListener("click", () => deleteBenchmarkRun(btn.dataset.id))
+  );
+}
+
+// Remove a single run from the local history (and any selection/baseline that
+// pointed at it), so the library can be pruned without clearing everything.
+function deleteBenchmarkRun(id) {
+  state.benchmarkRuns = state.benchmarkRuns.filter((r) => r.id !== id);
+  state.selectedRunIds = state.selectedRunIds.filter((x) => x !== id);
+  if (state.compareBaselineId === id) state.compareBaselineId = state.selectedRunIds[0] || null;
+  if (state.activeRunId === id) state.activeRunId = null;
+  if (state.lastRun?.id === id) state.lastRun = null;
+  saveBenchmarkRuns();
+  renderBenchmarkWorkspace();
 }
 
 function renderCompareControls() {
@@ -2586,6 +2630,14 @@ $("#btn-export-selected").addEventListener("click", exportSelectedRuns);
 $("#btn-compare").addEventListener("click", compareSelectedRuns);
 $("#card-import").addEventListener("change", (e) => readCardFiles(e.target));
 $("#btn-clear-runs").addEventListener("click", () => {
+  const n = state.benchmarkRuns.length;
+  if (!n) {
+    toast("No saved runs to clear.", "info");
+    return;
+  }
+  if (!window.confirm(`Clear all ${n} saved run${n === 1 ? "" : "s"} (including imported cards)? This cannot be undone.`)) {
+    return;
+  }
   state.benchmarkRuns = [];
   state.selectedRunIds = [];
   state.compareBaselineId = null;
@@ -2593,6 +2645,7 @@ $("#btn-clear-runs").addEventListener("click", () => {
   state.lastRun = null;
   saveBenchmarkRuns();
   renderBenchmarkWorkspace();
+  toast(`Cleared ${n} run${n === 1 ? "" : "s"}.`, "success");
 });
 $("#compare-baseline").addEventListener("change", (e) => {
   state.compareBaselineId = e.target.value || null;
