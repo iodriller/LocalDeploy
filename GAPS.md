@@ -8,7 +8,7 @@ unchanged and not in scope here.
 Status legend: **Open** (worth doing) · **By design** (intentional trade-off) ·
 **Unverified** (couldn't prove in this environment) · **Owner action** (a human decision).
 
-Last reviewed against the code at the tip of `claude/vehicle-public-launch-plan-ilw5ql`.
+Last reviewed against `main` at commit `e4451c7` (Benchmark workspace V2, device-aware deploy, and UI fixes).
 
 ---
 
@@ -24,7 +24,8 @@ These were found and resolved before this document:
 - Installed-model list auto-runs the fit check per row.
 - CHANGELOG, SECURITY, and the README offline claim updated.
 
-Verification at time of writing: **117 tests pass**, ruff clean, offline egress self-test passes,
+Verification at time of writing: **213 tests pass** (expanded with benchmark V2, device-aware deploy,
+warmup-timeout, and model-management suites). Ruff clean, offline egress self-test passes,
 UI verified end-to-end via headless DOM (incl. SSE streaming, export, compare, recommend,
 set-default).
 
@@ -56,9 +57,10 @@ health-check and return guidance to the existing `scripts/start_llamacpp.ps1` / 
 Spawning/killing a `llama-server` process from the API was judged fragile and platform-specific, so
 it's intentionally omitted. *Impact: llama.cpp lifecycle is manual.*
 
-### 2.5 Per-row pull from "Check New Models" — **By design (see 2.1)**
-HF candidates are informational (with links), not actionable Pull buttons, for the same id-mapping
-reason as 2.1.
+### 2.5 Per-row pull from "Discover on Hugging Face" — **Done**
+GGUF candidates now have a per-row **Pull** button via Ollama's `hf.co/<id>` shortcut (same
+fit-gate as a manual pull). Non-GGUF repos (safetensors-only) remain link-only because Ollama
+cannot pull them directly.
 
 ---
 
@@ -109,8 +111,9 @@ These are coded and statically checked but could not be executed here:
 ## 6. Test / doc housekeeping — **Open (low)**
 
 - `scripts/egress_selftest.py` could be added as a CI step to lock in the offline guarantee.
-- `tests/README.md` lists the original test files only; it doesn't mention the new
-  `test_web_*`, `test_benchmark_registry/runner` suites.
+- `tests/README.md` lists only the original three test files; it doesn't mention the newer
+  `test_web_*`, `test_benchmark_*`, `test_model_management`, `test_warmup_timeout`, and
+  `test_device_target` suites (213 tests total as of `e4451c7`).
 - The launch plan (`PUBLIC_LAUNCH_PLAN.md`) is a planning artifact; steps are complete but the doc
   isn't annotated as such.
 
