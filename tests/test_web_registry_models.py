@@ -236,17 +236,46 @@ def test_serve_success_path(monkeypatch) -> None:
 
 
 def test_serve_cpu_device_forces_num_gpu_zero(monkeypatch) -> None:
-    calls = {}
+    calls = []
+    monkeypatch.setattr(models_mod._ollama, "unload_model", lambda m: calls.append(("unload", m)) or {})
     monkeypatch.setattr(
         models_mod._ollama,
         "load_model",
-        lambda m, k, num_gpu=None: calls.update(num_gpu=num_gpu) or {},
+        lambda m, k, num_gpu=None: calls.append(("load", m, num_gpu)) or {},
     )
     monkeypatch.setattr(models_mod._ollama, "list_running", lambda: ([], None))
     body = client.post("/models/serve", json={"model": "gemma3:4b", "device": "cpu"}).json()
     assert body["success"] is True
     assert body["device"] == "CPU"
-    assert calls["num_gpu"] == 0
+    assert calls == [("unload", "gemma3:4b"), ("load", "gemma3:4b", 0)]
+
+
+def test_serve_auto_does_not_unload_before_load(monkeypatch) -> None:
+    calls = []
+    monkeypatch.setattr(models_mod._ollama, "unload_model", lambda m: calls.append(("unload", m)) or {})
+    monkeypatch.setattr(
+        models_mod._ollama,
+        "load_model",
+        lambda m, k, num_gpu=None: calls.append(("load", m, num_gpu)) or {},
+    )
+    monkeypatch.setattr(models_mod._ollama, "list_running", lambda: ([], None))
+    body = client.post("/models/serve", json={"model": "gemma3:4b", "device": "auto"}).json()
+    assert body["success"] is True
+    assert calls == [("load", "gemma3:4b", None)]
+
+
+def test_serve_cpu_fails_if_ollama_reports_split(monkeypatch) -> None:
+    monkeypatch.setattr(models_mod._ollama, "unload_model", lambda _m: {})
+    monkeypatch.setattr(models_mod._ollama, "load_model", lambda _m, _k, num_gpu=None: {})
+    monkeypatch.setattr(
+        models_mod._ollama,
+        "list_running",
+        lambda: ([{"name": "gemma3:4b", "size": 1000, "size_vram": 500}], None),
+    )
+    body = client.post("/models/serve", json={"model": "gemma3:4b", "device": "cpu"}).json()
+    assert body["success"] is False
+    assert "Requested CPU" in body["error"]
+    assert "Split" in body["error"]
 
 
 def test_serve_default_keep_alive_is_sixty_minutes(monkeypatch) -> None:

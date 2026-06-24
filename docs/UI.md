@@ -28,9 +28,10 @@ and want missing server/model paths to fail fast.
 A newcomer can go end-to-end without reading anything else:
 
 1. **Check My Hardware** — detects your GPU and free VRAM (or reports CPU-only).
-2. **Pull a model** — type an Ollama name (e.g. `gemma3:4b`) and pull it; progress streams live.
-   The pull is **fit-checked** first and blocked if it won't fit your VRAM (override available).
-3. **Start** — warm the model into memory (Ollama keep-alive).
+2. **Manual pull by model name** — type an Ollama name (e.g. `gemma3:4b`) and pull it; progress
+   streams live. The pull is **fit-checked** first and blocked only for hard "fits nowhere"
+   warnings unless **Warn only; pull anyway** is checked.
+3. **Deploy** — load the model into memory with an Ollama keep-alive.
 4. **Deploy & Benchmark tab** — load the example question set, **Validate**, then **Run**.
 
 ## Tab 1 — Serve & Diagnose
@@ -40,7 +41,7 @@ A newcomer can go end-to-end without reading anything else:
 | Check My Hardware | GPU name + VRAM (NVIDIA) or **Apple Silicon (Metal, unified memory)**, **CPU model, cores, and system RAM** | `GET /system/hardware` |
 | Refresh status | Loaded model(s), Ollama health, VRAM, **GPU/CPU placement** | `GET /system/status` |
 | Deploy to (Auto/GPU/CPU) | Force where the model runs (`num_gpu`: 0 = CPU, max = GPU) | `POST /models/serve` |
-| Start / Stop / Switch | Warm / unload / pivot the selected profile | `POST /models/{serve,stop,switch}` |
+| Deploy / unload / replace | Load / unload / replace the selected profile | `POST /models/{serve,stop,switch}` |
 | Pull / Cancel | Download an Ollama model, streamed, fit-gated; Cancel aborts an in-flight pull | `POST /models/pull` |
 | Fit check (per model) | Tiered estimate: green (comfortable), yellow (tight / CPU-only), red (won't fit) | `POST /system/fit-check` |
 | Delete | Remove a model from disk (frees space) | `POST /models/delete` |
@@ -53,16 +54,36 @@ fit check and the pull gate. You can override it to test against a different car
 
 ## Tab 2 — Deploy & Benchmark
 
-- **Load example** populates the editor with a canonical question set (`GET /benchmark/example`).
-- **Upload .json** loads a set from disk; **Validate** checks it against the schema and grader
-  registry (`POST /benchmark/validate`) and reports per-row errors.
-- **Run** streams per-test results into the table and ends with a summary
-  (`POST /benchmark/run`, Server-Sent Events). Leave the editor empty to run the built-in
-  capability suite instead of an uploaded set. While running you get a **live progress bar**
-  ("N / M completed") and a **Cancel** button; each row shows **latency**, **tok/s**, the
-  **accuracy**, an inline **failure reason** on FAIL, and an expandable **▸ response preview**.
-  The run ends with a **stat strip** (passed · avg accuracy · avg latency · avg tok/s · total)
-  and a **By category** rollup so you can see where a model is strong or weak at a glance.
+The benchmark tab is a local experiment workspace. It keeps run records in browser
+`localStorage` under `localdeploy.benchmarkRuns.v1`; there is no backend database.
+
+- **Question set** is open by default. Leave the editor empty to use the built-in LocalDeploy
+  suite, or use **Use LocalDeploy test bench** to load the built-in JSON into the editor for
+  inspection/editing. **Validate** checks custom JSON against the schema and grader registry
+  (`POST /benchmark/validate`).
+- **Run Builder** replaces the old single-profile form. Select one or more saved profiles as
+  chips, review the built-in/custom test-set summary, choose **Auto**, **CPU**, **GPU**, or
+  **CPU + GPU**, then click **Run benchmark suite**.
+- **Run queue** creates one row per model/device variant and runs sequentially by default to avoid
+  VRAM contention. Each queued row shows waiting/deploying/running/complete/failed state, current
+  test progress, elapsed progress, and supports cancellation. Waiting rows can be moved up/down
+  or removed before they run; the active run is shown only in the larger progress panel.
+- **Benchmark device** controls placement for each queued run. **Auto** leaves the current/default
+  Ollama placement alone. **CPU** and **GPU** unload and reload the model before benchmarking so
+  the measurement matches the requested target. **CPU + GPU** is implemented as two queued batches:
+  one with `device=cpu`, one with `device=gpu`. If Ollama reports a different known placement after
+  reload, the benchmark fails cleanly instead of recording a mislabeled run.
+- Benchmark deployments are temporary. After each benchmarked Ollama profile finishes, the server
+  unloads the benchmark model so the benchmark tab does not become a permanent deployment action.
+- **Results Dashboard** is the main analysis surface after runs finish:
+  - Leaderboard sorted by pass count, average accuracy, then average latency.
+  - Winner badges for most accurate, fastest, and best tokens/second.
+  - Category heatmap with accessible red/yellow/green accuracy cells.
+  - SVG speed/quality scatter rendered locally with no chart dependency.
+  - Collapsed advanced per-test matrix for pass/fail and accuracy across selected runs.
+- **Detailed results** remains below the dashboard and adds filters for model, category, pass/fail,
+  and slowest results. Rows still show latency, tok/s, accuracy, failure reason, warning, and an
+  expandable response preview.
 
 ### Question-set schema
 
@@ -94,16 +115,18 @@ Graders are selected by `type` from a fixed registry (uploads stay safe JSON —
 
 ## Report cards & comparison (Tab 2)
 
-- **Export card** (enabled after a run) downloads a self-contained `.html` **report card** —
-  model + hardware + device tag + per-test scores (latency, **tok/s**, accuracy) and a **By
-  category** rollup, with the data embedded as JSON so it stays reproducible and re-importable
+- **Export run** downloads a self-contained `.html` report card for the active run: model,
+  hardware, requested/actual device tag, per-test scores (latency, **tok/s**, accuracy), and
+  category summary. The card embeds JSON so it stays reproducible and re-importable
   (`POST /benchmark/export`).
-- **Compare report cards** takes two exported cards and diffs them per test and in aggregate —
-  old model vs new, quant A vs B, or **the same model on GPU vs CPU**. The diff includes accuracy,
-  latency, and **tok/s** columns so the speed trade-off is explicit (`POST /benchmark/compare`).
-- **Run on CPU & GPU ▶▶** (one click) benchmarks the selected profile on **both** placements —
-  deploy CPU → run → deploy GPU → run — and auto-fills the Compare panel, so the speed/quality
-  trade-off appears without exporting and re-loading cards by hand.
+- **Export selected** downloads one card for a single selected run or a `.json` bundle when
+  multiple runs are selected. Bundles use `kind: "localdeploy.run_bundle"`.
+- **Import card(s)** accepts exported `.html` cards and `.json` bundles. Imported runs appear in
+  the same local run library as fresh benchmark results.
+- **Compare selected** replaces the old two-slot compare form. Select 2-4 current or imported
+  runs, pin a baseline, and compare deltas for pass count, accuracy, latency, and tok/s. The
+  response detail drawer can show the same test's model outputs side by side. Fresh benchmark
+  results are automatically added to the selected comparison set when there are prior runs.
 
 ## Tune for my GPU (Tab 1)
 
