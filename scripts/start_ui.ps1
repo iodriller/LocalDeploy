@@ -54,32 +54,13 @@ function Get-ApiBaseUrl {
     return "http://${browserHost}:${port}"
 }
 
-function Test-Http {
-    param([string]$Url)
-    try {
-        Invoke-RestMethod -Uri $Url -TimeoutSec 5 | Out-Null
-        return $true
-    }
-    catch {
-        return $false
-    }
-}
-
 $envFile = Read-DotEnv
 $apiBaseUrl = Get-ApiBaseUrl -EnvFile $envFile
-$healthUrl = "$apiBaseUrl/health"
 $uiUrl = "$apiBaseUrl/ui"
 
-if (Test-Http $healthUrl) {
-    Write-Step "API already running — opening the UI"
-}
-else {
-    Write-Step "API not running — starting it in the background"
-    & "$PSScriptRoot\start.ps1" -Background -SkipInstall:$SkipInstall
-    if (-not (Test-Http $healthUrl)) {
-        throw "LocalDeploy API did not start at $apiBaseUrl"
-    }
-}
+# Delegate to start.ps1 -Background: it handles "already running", zombie
+# port cleanup, venv Python resolution, and the startup health-check loop.
+& "$PSScriptRoot\start.ps1" -Background -SkipInstall:$SkipInstall
 
 Write-Host "Opening $uiUrl" -ForegroundColor Green
 Start-Process $uiUrl

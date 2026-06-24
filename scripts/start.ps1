@@ -74,14 +74,26 @@ function Find-Ollama {
 }
 
 function Test-Http {
-    param([string]$Url)
+    param([string]$Url, [int]$Timeout = 30)
     try {
-        Invoke-RestMethod -Uri $Url -TimeoutSec 5 | Out-Null
+        Invoke-RestMethod -Uri $Url -TimeoutSec $Timeout | Out-Null
         return $true
     }
     catch {
         return $false
     }
+}
+
+function Clear-ZombieOnPort {
+    param([string]$Url)
+    $uri = [System.Uri]$Url
+    $port = $uri.Port
+    $listener = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (-not $listener) { return }
+    $pid = $listener.OwningProcess
+    Write-Warning "Port $port is held by PID $pid but not answering HTTP. Killing it before starting a fresh server."
+    Stop-Process -Id $pid -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Milliseconds 600
 }
 
 if (-not (Test-Path -LiteralPath ".\.env")) {
@@ -118,7 +130,7 @@ $ollama = Find-Ollama
 if (-not $ollama) {
     Write-Warning "Ollama was not found. Run .\install.ps1 first or install Ollama manually."
 }
-elseif (-not (Test-Http "http://localhost:11434/api/tags")) {
+elseif (-not (Test-Http "http://localhost:11434/api/tags" -Timeout 5)) {
     Write-Step "Starting Ollama"
     Start-Process -FilePath $ollama -ArgumentList "serve" -WindowStyle Hidden
     Start-Sleep -Seconds 3
@@ -126,21 +138,32 @@ elseif (-not (Test-Http "http://localhost:11434/api/tags")) {
 
 & ".\scripts\start_llamacpp.ps1" -Optional
 
-if (Test-Http $healthUrl) {
+if (Test-Http $healthUrl -Timeout 5) {
     Write-Step "LocalDeploy API is already running"
 }
 elseif ($Background) {
     Write-Step "Starting LocalDeploy API in the background"
+    Clear-ZombieOnPort $healthUrl
     New-Item -ItemType Directory -Force -Path ".\logs" | Out-Null
     $out = Join-Path (Resolve-Path ".\logs") "api_server.out.log"
     $err = Join-Path (Resolve-Path ".\logs") "api_server.err.log"
-    $process = Start-Process -FilePath $python -ArgumentList "api_server.py" -WorkingDirectory $ProjectRoot -WindowStyle Hidden -PassThru -RedirectStandardOutput $out -RedirectStandardError $err
+    $pythonAbs = if (Test-Path -LiteralPath $python) { (Resolve-Path -LiteralPath $python).Path } else { $python }
+    $process = Start-Process -FilePath $pythonAbs -ArgumentList "api_server.py" -WorkingDirectory $ProjectRoot -WindowStyle Hidden -PassThru -RedirectStandardOutput $out -RedirectStandardError $err
     $process.Id | Set-Content -Path ".\logs\api_server.pid"
-    for ($i = 0; $i -lt 30; $i++) {
+    Write-Host "Waiting for server to start" -NoNewline
+    $serverReady = $false
+    for ($i = 0; $i -lt 60; $i++) {
         Start-Sleep -Milliseconds 500
-        if (Test-Http $healthUrl) {
+        Write-Host "." -NoNewline
+        if (Test-Http $healthUrl -Timeout 30) {
+            Write-Host ""
+            $serverReady = $true
             break
         }
+    }
+    Write-Host ""
+    if (-not $serverReady) {
+        throw "LocalDeploy API did not start at $apiBaseUrl"
     }
 }
 else {
@@ -148,10 +171,6 @@ else {
     Write-Host "Open another terminal for chat commands, or stop with Ctrl+C."
     & $python api_server.py
     exit $LASTEXITCODE
-}
-
-if (-not (Test-Http $healthUrl)) {
-    throw "LocalDeploy API did not start at $apiBaseUrl"
 }
 
 Write-Host ""

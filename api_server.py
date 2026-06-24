@@ -1174,8 +1174,7 @@ if __name__ == "__main__":
     import uvicorn
 
     uvicorn.run(
-        "api_server:app",
+        app,
         host=os.getenv("API_HOST", "127.0.0.1"),
         port=env_int("API_PORT", 8000),
-        reload=False,
     )
