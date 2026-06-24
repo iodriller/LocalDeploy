@@ -20,11 +20,20 @@ const state = {
   runningPlacements: {},
   lastHardware: null,
   testBenchInfo: null,
+  questionSetValidation: null,
   lastRun: null,
-  cardA: null,
-  cardB: null,
+  benchmarkRuns: [],
+  benchmarkSelectedProfiles: [],
+  selectedRunIds: [],
+  compareBaselineId: null,
+  activeRunId: null,
   fitRefreshTimer: null,
+  currentQueue: [],
+  activeController: null,
+  queueCancelled: false,
 };
+
+const BENCHMARK_RUNS_KEY = "localdeploy.benchmarkRuns.v1";
 
 function downloadFile(filename, content, mime) {
   const blob = new Blob([content], { type: mime });
@@ -58,6 +67,125 @@ function extractCard(text) {
     }
   }
   return null;
+}
+
+function runId() {
+  return `run-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function hashText(text) {
+  let h = 2166136261;
+  for (let i = 0; i < text.length; i++) {
+    h ^= text.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return (h >>> 0).toString(16).padStart(8, "0");
+}
+
+function loadBenchmarkRuns() {
+  try {
+    const raw = localStorage.getItem(BENCHMARK_RUNS_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    state.benchmarkRuns = Array.isArray(parsed) ? parsed.slice(0, 80) : [];
+    state.benchmarkRuns.forEach((r) => {
+      r.source = r.source || "restored-history";
+      r.id = r.id || runId();
+    });
+  } catch {
+    state.benchmarkRuns = [];
+  }
+}
+
+function saveBenchmarkRuns() {
+  try {
+    localStorage.setItem(BENCHMARK_RUNS_KEY, JSON.stringify(state.benchmarkRuns.slice(0, 80)));
+  } catch {
+    /* localStorage can be disabled; the current session still works */
+  }
+}
+
+function runLabel(run) {
+  const model = run?.modelId || run?.model_id || run?.profile || "run";
+  const dev = run?.actualDevice || run?.requestedDevice || run?.device;
+  return `${model}${dev ? `/${String(dev).toUpperCase()}` : ""}`;
+}
+
+function summaryFromTests(tests) {
+  const rows = tests || [];
+  const successes = rows.filter((t) => t.success);
+  const mean = (arr) => (arr.length ? arr.reduce((s, v) => s + Number(v || 0), 0) / arr.length : 0);
+  const tps = successes.map((t) => t.approx_tokens_per_second).filter((v) => v != null);
+  return {
+    tests: rows.length,
+    passed: successes.length,
+    avg_accuracy: Number(mean(rows.map((t) => t.accuracy || 0)).toFixed(3)),
+    avg_latency_s: Number(mean(rows.map((t) => t.elapsed_seconds || 0)).toFixed(3)),
+    avg_tokens_per_second: tps.length ? Number(mean(tps).toFixed(2)) : null,
+  };
+}
+
+function categorySummary(tests) {
+  const groups = {};
+  for (const t of tests || []) {
+    (groups[t.category || "?"] ||= []).push(t);
+  }
+  return Object.keys(groups)
+    .sort()
+    .map((category) => {
+      const rows = groups[category];
+      return { category, ...summaryFromTests(rows) };
+    });
+}
+
+function normalizeRunRecord(input, source = "current-run") {
+  const tests = input.tests || [];
+  const summary = input.summary || summaryFromTests(tests);
+  const profile = input.profile || input.profileName || null;
+  const modelId = input.modelId || input.model_id || profile || null;
+  const requestedDevice = input.requestedDevice || input.device || null;
+  const actualDevice = input.actualDevice || input.device || requestedDevice || null;
+  return {
+    id: input.id || runId(),
+    createdAt: input.createdAt || input.generated_at || new Date().toISOString(),
+    profile,
+    modelId,
+    requestedDevice,
+    actualDevice,
+    questionSetName: input.questionSetName || "Imported report card",
+    questionSetHash: input.questionSetHash || null,
+    hardware: input.hardware || {},
+    tests,
+    summary,
+    category_summary: input.category_summary || input.categorySummary || categorySummary(tests),
+    elapsedSeconds: input.elapsedSeconds ?? summary.elapsed_seconds ?? null,
+    source,
+  };
+}
+
+function addBenchmarkRuns(runs, selectNew = true) {
+  const normalized = runs.map((r) => normalizeRunRecord(r, r.source || "current-run"));
+  const existing = new Set(state.benchmarkRuns.map((r) => r.id));
+  const fresh = normalized.filter((r) => !existing.has(r.id));
+  const previousSelected = state.selectedRunIds.filter((id) => existing.has(id));
+  const previousLatest = state.benchmarkRuns[0]?.id ? [state.benchmarkRuns[0].id] : [];
+  state.benchmarkRuns = [...fresh, ...state.benchmarkRuns].slice(0, 80);
+  if (selectNew && fresh.length) {
+    const freshIds = fresh.map((r) => r.id);
+    let nextSelected = previousSelected.length ? previousSelected : previousLatest;
+    freshIds.forEach((id) => {
+      if (!nextSelected.includes(id)) nextSelected.push(id);
+    });
+    // Keep every newly completed run selected (no cap): a 5th+ model must stay
+    // in the dashboard/queue instead of silently dropping an earlier one.
+    state.selectedRunIds = nextSelected;
+    state.compareBaselineId = state.compareBaselineId && nextSelected.includes(state.compareBaselineId)
+      ? state.compareBaselineId
+      : nextSelected[0];
+    state.activeRunId = fresh[0].id;
+    state.lastRun = fresh[0];
+  }
+  saveBenchmarkRuns();
+  renderBenchmarkWorkspace();
 }
 
 function esc(value) {
@@ -292,7 +420,7 @@ function updateVramBudgetUI() {
   }
   if (budget && total && free != null && free < budget * 0.5) {
     help.textContent =
-      `Using ${fmtMb(budget)} as the planning budget. Live free is lower than that budget; the Served model card attributes Ollama's share when a loaded model exposes it, and the rest is not attributable from this UI. Choose "Current free" to filter without unloading anything.`;
+      `Fit checks use a ${fmtMb(budget)} budget. Live free VRAM is lower right now; choose "Current free" to filter against the memory available without unloading models.`;
   } else if (budget) {
     help.textContent = `Installed model badges, saved profile scan, and Hugging Face search all use this budget.`;
   } else {
@@ -373,6 +501,12 @@ function targetVram() {
   return state.vramBudgetMb ?? state.vramTotalMb ?? state.vramFreeMb;
 }
 
+async function refreshLiveModelState(includeInstalled = false) {
+  const jobs = [refreshStatus(), checkHardware()];
+  if (includeInstalled) jobs.push(refreshInstalled());
+  await Promise.allSettled(jobs);
+}
+
 // ---------------------------------------------------------------------------
 // Tabs
 // ---------------------------------------------------------------------------
@@ -382,6 +516,11 @@ $$(".tab").forEach((tab) =>
     $$(".tab").forEach((t) => t.setAttribute("aria-selected", t === tab ? "true" : "false"));
     const name = tab.dataset.tab;
     $$(".tab-panel").forEach((p) => p.classList.toggle("active", p.id === `tab-${name}`));
+    if (name === "serve") {
+      void refreshLiveModelState(true);
+    } else if (name === "bench") {
+      void refreshStatus();
+    }
   })
 );
 
@@ -407,6 +546,9 @@ async function loadProfiles() {
       .join("");
     $("#profile-select").innerHTML = options;
     $("#bench-profile-select").innerHTML = options;
+    renderBenchmarkProfileChips();
+    updateBenchmarkSummary();
+    renderBenchmarkWorkspace();
     setProfileActionsEnabled(state.profiles.length > 0);
     setConn(true);
   } catch (err) {
@@ -428,6 +570,124 @@ function setConn(ok) {
   const pill = $("#conn-pill");
   pill.textContent = ok ? "API: connected" : "API: unreachable";
   pill.className = `conn ${ok ? "ok" : "bad"}`;
+}
+
+function selectedBenchProfiles() {
+  const selected = state.benchmarkSelectedProfiles.filter((name) => state.profiles.includes(name));
+  if (selected.length) return selected;
+  const fallback = $("#bench-profile-select")?.value;
+  return fallback ? [fallback] : [];
+}
+
+function installedStatusForProfile(profileName) {
+  const model = state.profileModels[profileName] || profileName;
+  if (state.installedByName[model]) return { label: "pulled", cls: "on" };
+  const base = model.split(":")[0];
+  const hit = Object.keys(state.installedByName).some((name) => name === model || name.split(":")[0] === base);
+  return hit ? { label: "variant pulled", cls: "tight" } : { label: "not pulled", cls: "off" };
+}
+
+function renderBenchmarkProfileChips() {
+  const body = $("#bench-profile-chips");
+  if (!body) return;
+  if (!state.profiles.length) {
+    body.innerHTML = `<div class="muted">No saved profiles loaded.</div>`;
+    return;
+  }
+  const currentlySelected = new Set(selectedBenchProfiles());
+  if (!state.benchmarkSelectedProfiles.length) {
+    if (currentlySelected.size) {
+      state.benchmarkSelectedProfiles = Array.from(currentlySelected);
+    } else if (state.defaultProfile) {
+      state.benchmarkSelectedProfiles = [state.defaultProfile];
+      currentlySelected.add(state.defaultProfile);
+    }
+  }
+  const filter = ($("#bench-profile-filter")?.value || "").trim().toLowerCase();
+  const visibleProfiles = state.profiles.filter((name) => {
+    const model = state.profileModels[name] || name;
+    return !filter || name.toLowerCase().includes(filter) || model.toLowerCase().includes(filter);
+  });
+  if (!visibleProfiles.length) {
+    body.innerHTML = `<div class="empty-state">No profiles match this filter.</div>`;
+    return;
+  }
+  body.innerHTML = visibleProfiles
+    .map((name) => {
+      const p = state.profileData[name] || {};
+      const model = state.profileModels[name] || name;
+      const status = installedStatusForProfile(name);
+      const checked = currentlySelected.has(name) ? " checked" : "";
+      const backend = p.backend || "ollama";
+      return `<label class="profile-chip-card${checked ? " selected" : ""}">
+        <input type="checkbox" value="${esc(name)}"${checked} />
+        <span class="profile-chip-main">
+          <b title="${esc(name)}">${esc(name)}</b>
+          <span class="profile-chip-model" title="${esc(model)}">${esc(model)}</span>
+        </span>
+        <span class="profile-chip-badges">
+          <span class="badge">${esc(backend)}</span>
+          <span class="badge ${esc(status.cls)}">${esc(status.label)}</span>
+        </span>
+      </label>`;
+    })
+    .join("");
+  $$("input", body).forEach((input) => {
+    input.addEventListener("change", () => {
+      const selected = new Set(state.benchmarkSelectedProfiles);
+      if (input.checked) selected.add(input.value);
+      else selected.delete(input.value);
+      state.benchmarkSelectedProfiles = Array.from(selected);
+      input.closest(".profile-chip-card")?.classList.toggle("selected", input.checked);
+      const first = selectedBenchProfiles()[0];
+      if (first) $("#bench-profile-select").value = first;
+      updateBenchmarkSummary();
+    });
+  });
+}
+
+function currentQuestionSetInfo() {
+  const raw = $("#qs-editor")?.value?.trim() || "";
+  if (!raw) {
+    const count = state.testBenchInfo?.test_count;
+    const cats = Object.keys(state.testBenchInfo?.categories || {}).length;
+    return {
+      questions: null,
+      name: "Built-in LocalDeploy bench",
+      hash: "builtin",
+      meta: count ? `${count} tests${cats ? ` · ${cats} categories` : ""}` : "Built-in suite",
+    };
+  }
+  const parsed = JSON.parse(raw);
+  const count = Array.isArray(parsed.questions) ? parsed.questions.length : 0;
+  const cats = new Set((parsed.questions || []).map((q) => q.category || "?")).size;
+  const validation = state.questionSetValidation?.valid ? "validated" : "not validated";
+  return {
+    questions: parsed,
+    name: "Custom JSON question set",
+    hash: hashText(raw),
+    meta: `${count} question${count === 1 ? "" : "s"}${cats ? ` · ${cats} categories` : ""} · ${validation}`,
+  };
+}
+
+function updateBenchmarkSummary() {
+  const profiles = selectedBenchProfiles();
+  const setName = $("#bench-set-name");
+  const setMeta = $("#bench-set-meta");
+  try {
+    const q = currentQuestionSetInfo();
+    if (setName) setName.textContent = q.name;
+    if (setMeta) setMeta.textContent = q.meta;
+  } catch {
+    if (setName) setName.textContent = "Custom JSON question set";
+    if (setMeta) setMeta.textContent = "Invalid JSON until validated.";
+  }
+  const selected = $("#bench-selected-count");
+  if (selected) selected.textContent = `${profiles.length} profile${profiles.length === 1 ? "" : "s"}`;
+  const history = $("#bench-history-count");
+  if (history) history.textContent = `${state.benchmarkRuns.length} run${state.benchmarkRuns.length === 1 ? "" : "s"}`;
+  const exportSelected = $("#btn-export-selected");
+  if (exportSelected) exportSelected.disabled = state.selectedRunIds.length === 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -607,7 +867,7 @@ async function refreshStatus() {
         })
         .join("");
     } else {
-      served = `<div class="muted">No model is currently loaded. Start a profile below; kill buttons appear here after Ollama lists a loaded model.</div>`;
+      served = `<div class="muted">No model is currently loaded. Deploy a profile below; unload controls appear here after Ollama lists a loaded model.</div>`;
     }
     body.innerHTML = `<div style="margin-bottom:.5rem">${reachable}</div>${served}`;
     $$(".kill-model-btn", body).forEach((b) =>
@@ -627,7 +887,7 @@ async function killRunningModel(name, btn) {
     const res = await postJSON("/models/stop", { model: name });
     if (res.success) {
       toast(res.message || `Unloaded ${name}.`, "success");
-      await Promise.allSettled([refreshStatus(), checkHardware(), refreshInstalled()]);
+      await refreshLiveModelState(true);
     } else {
       toast(res.error || res.message || "Could not unload model.", "error");
     }
@@ -653,7 +913,7 @@ function detectDevice(profileName) {
 }
 
 // ---------------------------------------------------------------------------
-// Tab 1 — Serve / Stop / Switch
+// Tab 1 — Deploy / unload / replace
 // ---------------------------------------------------------------------------
 function showServeResult(res) {
   const node = $("#serve-result");
@@ -685,12 +945,12 @@ async function serveModel() {
     });
     stop();
     showServeResult(res);
-    await refreshStatus();
+    await refreshLiveModelState(true);
   } catch (err) {
     stop();
     node.className = "result err";
-    node.textContent = `Serve failed: ${err.message}`;
-    toast(`Serve failed: ${err.message}`, "error");
+    node.textContent = `Deploy failed: ${err.message}`;
+    toast(`Deploy failed: ${err.message}`, "error");
   } finally {
     busy(btn, false);
   }
@@ -712,12 +972,12 @@ async function switchModel() {
     });
     stop();
     showServeResult(res);
-    await refreshStatus();
+    await refreshLiveModelState(true);
   } catch (err) {
     stop();
     node.className = "result err";
-    node.textContent = `Switch failed: ${err.message}`;
-    toast(`Switch failed: ${err.message}`, "error");
+    node.textContent = `Deploy and replace failed: ${err.message}`;
+    toast(`Deploy and replace failed: ${err.message}`, "error");
   } finally {
     busy(btn, false);
   }
@@ -771,17 +1031,21 @@ async function refreshInstalled() {
   try {
     const data = await getJSON("/registry/installed");
     if (!data.success) {
+      state.installedByName = {};
+      renderBenchmarkProfileChips();
       body.innerHTML = `<div class="muted">${esc(data.error || "Ollama unreachable.")}</div>`;
       return;
     }
     state.installedByName = {};
     if (!data.installed.length) {
+      renderBenchmarkProfileChips();
       body.innerHTML = `<div class="muted">No models pulled yet.</div>`;
       return;
     }
     data.installed.forEach((m) => {
       if (m.name) state.installedByName[m.name] = m;
     });
+    renderBenchmarkProfileChips();
     body.innerHTML =
       `<div class="mlist">` +
       data.installed
@@ -794,7 +1058,7 @@ async function refreshInstalled() {
           const params = d.parameter_size ? `<span class="meta">${esc(d.parameter_size)}</span>` : "";
           const date = m.modified_at ? `<span class="meta">${esc(m.modified_at.slice(0, 10))}</span>` : "";
           const loaded = state.servedModels.includes(m.name) ? `<span class="badge on">loaded</span>` : "";
-          const loadedHint = loaded ? `<span class="meta">Kill from Served model card</span>` : "";
+          const loadedHint = loaded ? `<span class="meta">Unload from Served model card</span>` : "";
           return `<div class="mrow model-row" data-model="${esc(m.name)}">
             <div class="model-row-main">
               <span class="name">${esc(m.name)}</span>
@@ -802,7 +1066,7 @@ async function refreshInstalled() {
               <span class="fit"></span>
             </div>
             <span class="spacer"></span>
-            <button class="btn start-installed-btn">Start</button>
+            <button class="btn start-installed-btn">Deploy</button>
             <button class="btn fit-btn">Fit check</button>
             <button class="btn danger del-btn" title="Delete from disk">Delete</button>
           </div>`;
@@ -867,10 +1131,10 @@ async function startInstalledModel(name, btn) {
     });
     stop();
     showServeResult(res);
-    await Promise.allSettled([refreshStatus(), checkHardware(), refreshInstalled()]);
+    await refreshLiveModelState(true);
   } catch (err) {
     stop();
-    toast(`Start failed: ${err.message}`, "error");
+    toast(`Deploy failed: ${err.message}`, "error");
   } finally {
     busy(btn, false);
   }
@@ -961,7 +1225,7 @@ function renderProfileFitCard(row) {
   const backend = p.backend ? `<span class="badge">${esc(p.backend)}</span>` : "";
   const enabled = p.enabled === false ? `<span class="badge off">disabled</span>` : `<span class="badge on">enabled</span>`;
   const action = installed
-    ? `<button class="btn fit-start-profile-btn" data-profile="${esc(profile)}">Start</button>`
+    ? `<button class="btn fit-start-profile-btn" data-profile="${esc(profile)}">Deploy</button>`
     : `<button class="btn fit-pull-btn" data-model="${esc(modelId)}">Pull</button>`;
   const detail = [
     req != null ? `needs ~${req} GB` : null,
@@ -1013,10 +1277,10 @@ async function startProfile(profile, btn) {
     });
     stop();
     showServeResult(res);
-    await Promise.allSettled([refreshStatus(), checkHardware(), refreshInstalled()]);
+    await refreshLiveModelState(true);
   } catch (err) {
     stop();
-    toast(`Start failed: ${err.message}`, "error");
+    toast(`Deploy failed: ${err.message}`, "error");
   } finally {
     busy(btn, false);
   }
@@ -1162,7 +1426,7 @@ async function pullModel(modelArg) {
       if (j.blocked_by === "fit-check") {
         append(`blocked by fit check: ${j.message || ""}`);
         if (j.fit?.estimate_gb) append(`  needs ~${j.fit.estimate_gb.required} GB`);
-        append("  tick “Override fit check” to pull anyway.");
+        append("  tick “Warn only; pull anyway” to continue.");
       } else {
         append(j.error || "Pull could not start.");
       }
@@ -1192,7 +1456,7 @@ async function freeMemory() {
     const res = await postJSON("/models/free", {});
     if (res.success) {
       toast(res.message || "Memory freed.", "success");
-      await refreshStatus();
+      await refreshLiveModelState(true);
     } else {
       toast(res.error || "Could not free memory.", "error");
     }
@@ -1245,9 +1509,12 @@ async function useBuiltInBench() {
     const info = await getJSON("/benchmark/test-bench");
     updateBenchHelp(info);
     $("#qs-editor").value = JSON.stringify(info.question_set || { version: 1, questions: [] }, null, 2);
+    state.questionSetValidation = null;
     $("#validate-result").className = "result ok";
     $("#validate-result").textContent =
-      `Loaded LocalDeploy test bench JSON: ${info.test_count} tests. You can edit it, validate it, or run it like any other question set.`;
+      `Loaded LocalDeploy test bench JSON: ${info.test_count} tests.`;
+    $("#question-set-details").open = true;
+    updateBenchmarkSummary();
   } catch (err) {
     toast(`Could not load LocalDeploy test bench metadata: ${err.message}`, "error");
   }
@@ -1257,8 +1524,11 @@ async function loadExample() {
   try {
     const example = await getJSON("/benchmark/example");
     $("#qs-editor").value = JSON.stringify(example, null, 2);
+    state.questionSetValidation = null;
     $("#validate-result").className = "result";
     $("#validate-result").textContent = "Loaded a small JSON sample. Run benchmark will use this custom set until you clear the editor.";
+    $("#question-set-details").open = true;
+    updateBenchmarkSummary();
   } catch (err) {
     toast(`Could not load JSON sample: ${err.message}`, "error");
   }
@@ -1270,7 +1540,10 @@ function uploadFile(input) {
   const reader = new FileReader();
   reader.onload = () => {
     $("#qs-editor").value = String(reader.result || "");
+    state.questionSetValidation = null;
     $("#validate-result").textContent = "";
+    $("#question-set-details").open = true;
+    updateBenchmarkSummary();
   };
   reader.onerror = () => toast("Could not read file.", "error");
   reader.readAsText(file);
@@ -1293,17 +1566,23 @@ async function validateSet() {
   try {
     payload = parseEditor();
   } catch (err) {
+    state.questionSetValidation = { valid: false };
     node.className = "result err";
     node.textContent = err.message;
+    $("#question-set-details").open = true;
     return null;
   }
   try {
     const report = await postJSON("/benchmark/validate", payload);
     if (report.valid) {
+      state.questionSetValidation = { valid: true, questionCount: report.question_count };
       node.className = "result ok";
       node.textContent = `Valid — ${report.question_count} question(s).`;
+      $("#question-set-details").open = true;
     } else {
+      state.questionSetValidation = { valid: false };
       node.className = "result err";
+      $("#question-set-details").open = true;
       node.innerHTML =
         `Invalid set:` +
         `<ul class="err-list">` +
@@ -1320,37 +1599,6 @@ async function validateSet() {
   }
 }
 
-// Render a per-category rollup (passed · avg accuracy · avg latency) so
-// strengths/weaknesses are visible at a glance — e.g. strong at code, weak at math.
-function renderCategoryRollup(tests) {
-  const slot = $("#run-category-rollup");
-  if (!tests.length) {
-    slot.innerHTML = "";
-    return;
-  }
-  const cats = {};
-  for (const t of tests) {
-    const c = t.category || "?";
-    (cats[c] ||= []).push(t);
-  }
-  const avg = (arr) => (arr.length ? arr.reduce((s, v) => s + v, 0) / arr.length : 0);
-  const rows = Object.keys(cats)
-    .sort()
-    .map((c) => {
-      const subset = cats[c];
-      const passed = subset.filter((t) => t.success).length;
-      const acc = avg(subset.map((t) => t.accuracy || 0)).toFixed(2);
-      const lat = avg(subset.filter((t) => t.success).map((t) => t.elapsed_seconds || 0)).toFixed(2);
-      return `<tr><td>${esc(c)}</td><td class="num">${passed}/${subset.length}</td>
-        <td class="num">${acc}</td><td class="num">${lat}s</td></tr>`;
-    })
-    .join("");
-  slot.innerHTML = `<h3 class="sub">By category</h3>
-    <div class="table-wrap"><table class="results">
-      <thead><tr><th>Category</th><th class="num">Passed</th><th class="num">Avg accuracy</th><th class="num">Avg latency</th></tr></thead>
-      <tbody>${rows}</tbody></table></div>`;
-}
-
 // ---------------------------------------------------------------------------
 // Tab 2 — Run (streamed)
 // ---------------------------------------------------------------------------
@@ -1364,12 +1612,15 @@ function collectTest(evt) {
     accuracy: evt.accuracy,
     elapsed_seconds: evt.elapsed_seconds,
     approx_tokens_per_second: evt.approx_tokens_per_second ?? null,
+    error: evt.error || null,
+    warning: evt.warning || null,
+    response_preview: evt.response_preview || "",
   };
 }
 
-// Append one test_result row (+ collapsible preview) to a tbody. Shared so the
-// single run and the CPU-vs-GPU dual run render results identically.
-function appendResultRow(tbody, evt) {
+// Append one test_result row (+ collapsible preview) to a tbody. Shared by the
+// live queue view and the persisted detailed-results table.
+function appendResultRow(tbody, evt, runName = "") {
   const tps = evt.approx_tokens_per_second ?? null;
   const resultBadge = evt.success ? `<span class="pass">PASS</span>` : `<span class="fail">FAIL</span>`;
   const errSnippet = !evt.success && evt.error
@@ -1380,7 +1631,8 @@ function appendResultRow(tbody, evt) {
   const hasPreview = !!evt.response_preview;
 
   const tr = document.createElement("tr");
-  tr.innerHTML = `<td>${esc(evt.name)}</td>
+  tr.innerHTML = `<td>${esc(runName)}</td>
+    <td>${esc(evt.name)}</td>
     <td>${esc(evt.category)}</td>
     <td>${resultBadge}${errSnippet}${warnBadge}</td>
     <td class="num">${esc(evt.elapsed_seconds)}s</td>
@@ -1391,7 +1643,7 @@ function appendResultRow(tbody, evt) {
 
   const previewTr = document.createElement("tr");
   previewTr.className = "preview-row hidden";
-  previewTr.innerHTML = `<td colspan="7"><div class="response-preview">${esc(evt.response_preview || "(no preview)")}</div></td>`;
+  previewTr.innerHTML = `<td colspan="8"><div class="response-preview">${esc(evt.response_preview || "(no preview)")}</div></td>`;
   tbody.appendChild(previewTr);
   const toggleBtn = tr.querySelector(".btn-preview");
   if (hasPreview) {
@@ -1404,445 +1656,771 @@ function appendResultRow(tbody, evt) {
   }
 }
 
-// Aggregate stats from collected tests (mirrors the server's _summary()).
-function computeRunStats(collected) {
-  const successes = collected.filter((t) => t.success);
-  const total = collected.length;
-  const mean = (arr) => arr.reduce((s, v) => s + v, 0) / arr.length;
-  const lats = successes.map((t) => t.elapsed_seconds).filter(Boolean);
-  const tpsList = successes.map((t) => t.approx_tokens_per_second).filter((v) => v != null);
-  return {
-    passed: successes.length,
-    total,
-    avgAcc: total ? mean(collected.map((t) => t.accuracy || 0)).toFixed(3) : "—",
-    avgLat: lats.length ? mean(lats).toFixed(2) : "—",
-    avgTps: tpsList.length ? mean(tpsList).toFixed(1) : "—",
-  };
-}
-
-function statStripHTML(model, st, totalSeconds) {
-  return `<div class="run-stat-strip">
-    <span><b>${esc(model)}</b></span>
-    <span class="stat-sep">·</span><span><b>${st.passed}/${st.total}</b> passed</span>
-    <span class="stat-sep">·</span><span>acc <b>${st.avgAcc}</b></span>
-    <span class="stat-sep">·</span><span>avg latency <b>${st.avgLat}s</b></span>
-    <span class="stat-sep">·</span><span>avg tok/s <b>${st.avgTps}</b></span>
-    <span class="stat-sep">·</span><span>total <b>${esc(totalSeconds)}s</b></span>
-  </div>`;
-}
-
 // Update the run progress bar's width + ARIA value together.
 function setProgress(pct) {
   const bar = $("#run-progress-bar");
   bar.style.width = `${pct}%`;
   bar.setAttribute("aria-valuenow", String(pct));
+  const label = $("#run-active-percent");
+  if (label) label.textContent = `${Math.max(0, Math.min(100, Math.round(pct)))}%`;
+}
+
+function setActiveRun(item, done = 0, total = 0) {
+  const panel = $("#run-active");
+  if (!panel) return;
+  if (!item) {
+    panel.classList.add("hidden");
+    return;
+  }
+  panel.classList.remove("hidden");
+  $("#run-active-title").textContent = runLabel(item);
+  $("#run-active-detail").textContent = item.current || item.status || "Running";
+  const elapsed = item.startedAt ? `${Math.round((Date.now() - item.startedAt) / 1000)}s elapsed` : "";
+  const tests = total ? `${done} of ${total} tests` : "";
+  $("#run-active-count").textContent = [tests, elapsed].filter(Boolean).join(" · ") || item.status || "";
+}
+
+function buildRunQueue(profiles, deviceChoice, questionInfo) {
+  const devices = deviceChoice === "both" ? ["cpu", "gpu"] : [deviceChoice || "auto"];
+  return profiles.flatMap((profile) =>
+    devices.map((device) => ({
+      id: runId(),
+      profile,
+      modelId: state.profileModels[profile] || profile,
+      requestedDevice: device,
+      actualDevice: null,
+      questionSetName: questionInfo.name,
+      questionSetHash: questionInfo.hash,
+      status: "waiting",
+      progress: 0,
+      current: "Waiting",
+      tests: [],
+      elapsedSeconds: null,
+      error: null,
+    }))
+  );
+}
+
+function renderRunQueue(queue) {
+  const slot = $("#run-queue");
+  if (!queue.length) {
+    slot.innerHTML = `<div class="muted small">Queue is empty.</div>`;
+    return;
+  }
+  const visible = queue.filter((item) => !["deploying", "running"].includes(item.status));
+  if (!visible.length) {
+    slot.innerHTML = `<div class="muted small">No other queued runs.</div>`;
+    return;
+  }
+  slot.innerHTML = visible
+    .map((item) => {
+      const cls = item.status === "complete" ? "on" : item.status === "failed" ? "wont" : "off";
+      const elapsed = item.elapsedSeconds != null
+        ? `${item.elapsedSeconds}s`
+        : item.startedAt
+          ? `${Math.round((Date.now() - item.startedAt) / 1000)}s`
+          : "0s";
+      const canEdit = item.status === "waiting";
+      const controls = canEdit
+        ? `<div class="queue-actions" aria-label="Queue controls">
+            <button class="btn compact queue-move" data-id="${esc(item.id)}" data-delta="-1" title="Move up">Up</button>
+            <button class="btn compact queue-move" data-id="${esc(item.id)}" data-delta="1" title="Move down">Down</button>
+            <button class="btn compact danger queue-remove" data-id="${esc(item.id)}" title="Remove from queue">Remove</button>
+          </div>`
+        : "";
+      return `<div class="queue-row" data-id="${esc(item.id)}">
+        <div class="queue-row-main">
+          <b>${esc(runLabel(item))}</b>
+          <span class="muted small">${esc(item.profile)} · ${esc(item.current || item.status)} · ${esc(elapsed)}</span>
+        </div>
+        <div class="queue-row-side">
+          <span class="badge ${cls}">${esc(item.status)}</span>
+          ${controls}
+        </div>
+      </div>`;
+    })
+    .join("");
+  $$(".queue-remove", slot).forEach((btn) =>
+    btn.addEventListener("click", () => removeQueuedRun(btn.dataset.id))
+  );
+  $$(".queue-move", slot).forEach((btn) =>
+    btn.addEventListener("click", () => moveQueuedRun(btn.dataset.id, Number(btn.dataset.delta)))
+  );
+}
+
+function removeQueuedRun(id) {
+  const queue = state.currentQueue || [];
+  const idx = queue.findIndex((item) => item.id === id);
+  if (idx < 0 || queue[idx].status !== "waiting") return;
+  queue.splice(idx, 1);
+  renderRunQueue(queue);
+  const summary = $("#run-summary");
+  if (summary) {
+    summary.className = "result";
+    summary.textContent = `Removed a waiting benchmark. ${queue.filter((q) => q.status === "waiting").length} waiting.`;
+  }
+}
+
+function moveQueuedRun(id, delta) {
+  const queue = state.currentQueue || [];
+  const idx = queue.findIndex((item) => item.id === id);
+  const next = idx + delta;
+  if (idx < 0 || next < 0 || next >= queue.length) return;
+  if (queue[idx].status !== "waiting" || queue[next].status !== "waiting") return;
+  [queue[idx], queue[next]] = [queue[next], queue[idx]];
+  renderRunQueue(queue);
+}
+
+async function runQueueItem(item, questionInfo, timeout, controller) {
+  const summary = $("#run-summary");
+  const body = { profiles: [item.profile], timeout };
+  if (item.requestedDevice && item.requestedDevice !== "auto") body.device = item.requestedDevice;
+  if (questionInfo.questions) body.questions = questionInfo.questions;
+
+  let total = 0;
+  let done = 0;
+  const started = Date.now();
+  item.startedAt = started;
+  item.status = "running";
+  item.current = "Starting";
+  setActiveRun(item);
+  renderRunQueue(state.currentQueue || []);
+  let out;
+  try {
+    out = await postMaybeStream("/benchmark/run", body, (evt) => {
+    if (evt.event === "deploy_start") {
+      item.status = "deploying";
+      item.current = `Deploying on ${(evt.device || item.requestedDevice).toUpperCase()}`;
+      setActiveRun(item, done, total);
+    } else if (evt.event === "deploy_end") {
+      item.current = "Deployment complete";
+      setActiveRun(item, done, total);
+    } else if (evt.event === "run_start") {
+      item.status = "running";
+      item.done = 0;
+      total = evt.test_count || 0;
+      item.total = total;
+      item.current = `0 / ${total} tests`;
+      setProgress(0);
+      setActiveRun(item, 0, total);
+    } else if (evt.event === "profile_start") {
+      item.status = "running";
+      item.current = "Model warm-up";
+      setActiveRun(item, done, total);
+    } else if (evt.event === "test_result") {
+      item.status = "running";
+      done++;
+      item.tests.push(collectTest(evt));
+      item.progress = total ? Math.round((done / total) * 100) : item.progress;
+      item.done = done;
+      item.total = total;
+      item.current = `${done} / ${total || "?"} tests`;
+      setProgress(item.progress);
+      setActiveRun(item, done, total);
+    } else if (evt.event === "profile_aborted") {
+      item.status = "failed";
+      item.error = evt.reason || "profile aborted";
+      item.current = item.error;
+      setActiveRun(item, done, total);
+    } else if (evt.event === "profile_end") {
+      if (evt.actual_device) item.actualDevice = evt.actual_device;
+      item.current = "Benchmark complete";
+      setActiveRun(item, done || total, total);
+    } else if (evt.event === "benchmark_unload_end") {
+      item.current = "Temporary benchmark model unloaded";
+      setActiveRun(item, done || total, total);
+    } else if (evt.event === "benchmark_unload_error") {
+      item.current = "Benchmark complete; unload needs manual check";
+      item.warning = evt.error || "temporary benchmark unload failed";
+      setActiveRun(item, done || total, total);
+    } else if (evt.event === "run_end") {
+      item.elapsedSeconds = evt.elapsed_seconds;
+      item.progress = 100;
+      setProgress(100);
+      setActiveRun(item, done || total, total);
+    } else if (evt.event === "error") {
+      item.status = "failed";
+      item.error = evt.error || "run failed";
+      item.current = item.error;
+      setActiveRun(item, done, total);
+    }
+    renderRunQueue(state.currentQueue || []);
+    }, controller.signal);
+  } catch (err) {
+    // A whole-queue cancel sets queueCancelled and bubbles up so the loop stops.
+    // A per-item Stop aborts only this run: mark it stopped and let the caller
+    // continue with the rest of the queue.
+    if (err.name === "AbortError") {
+      if (state.queueCancelled) throw err;
+      item.status = "stopped";
+      item.current = "Stopped";
+      item.error = "Stopped by user";
+      setActiveRun(null);
+      renderRunQueue(state.currentQueue || []);
+      const note = $("#run-summary");
+      if (note) {
+        note.className = "result";
+        note.textContent = `Stopped ${runLabel(item)}. Continuing with the rest of the queue.`;
+      }
+      return null;
+    }
+    throw err;
+  }
+
+  if (!out.streamed) {
+    const j = out.json || {};
+    item.status = "failed";
+    item.error = j.error || "Run could not start.";
+    item.current = item.error;
+    renderRunQueue(state.currentQueue || []);
+    return null;
+  }
+  if (item.status === "failed") return null;
+  if (!item.tests.length) {
+    item.status = "failed";
+    item.error = "No test results streamed.";
+    item.current = item.error;
+    renderRunQueue(state.currentQueue || []);
+    return null;
+  }
+  item.actualDevice = item.actualDevice || (item.requestedDevice === "auto" ? null : item.requestedDevice);
+  item.status = "complete";
+  item.progress = 100;
+  item.current = "Complete";
+  item.elapsedSeconds = item.elapsedSeconds ?? Number(((Date.now() - started) / 1000).toFixed(2));
+  const run = normalizeRunRecord(
+    {
+      ...item,
+      hardware: state.lastHardware || {},
+      source: "current-run",
+      summary: summaryFromTests(item.tests),
+      category_summary: categorySummary(item.tests),
+    },
+    "current-run"
+  );
+  summary.className = "result";
+  summary.textContent = `Completed ${runLabel(run)}. Continuing queue.`;
+  renderRunQueue(state.currentQueue || []);
+  return run;
 }
 
 async function runBenchmark() {
   const btn = $("#btn-run");
   const cancelBtn = $("#btn-run-cancel");
   const summary = $("#run-summary");
-  const table = $("#run-table");
-  const tbody = $("tbody", table);
-  const progressWrap = $("#run-progress-wrap");
-  const progressBar = $("#run-progress-bar");
-  const currentTestLabel = $("#run-current-test");
-
-  // Use the editor's question set if present; otherwise run built-in tests.
-  let questions = null;
-  if ($("#qs-editor").value.trim()) {
-    try {
-      questions = parseEditor();
-    } catch (err) {
-      summary.className = "result err";
-      summary.textContent = err.message;
-      return;
-    }
+  const profiles = selectedBenchProfiles();
+  if (!profiles.length) {
+    summary.className = "result err";
+    summary.textContent = "Select at least one profile.";
+    return;
   }
-
-  busy(btn, true);
-  const bothBtn = $("#btn-run-both");
-  if (bothBtn) bothBtn.disabled = true;
-  tbody.innerHTML = "";
-  $("#run-category-rollup").innerHTML = "";
-  table.classList.remove("hidden");
-  summary.className = "result";
-  // Live counter so the wait before the first result (model load) isn't silent.
-  const stopTimer = startElapsed(summary, "Running");
-  // Disable export until THIS run succeeds, so it can't point at a stale result.
-  $("#btn-export").disabled = true;
-
-  // Progress state — populated once run_start arrives.
-  let runTotal = 0;
-  let runDone = 0;
-  const updateProgress = (label) => {
-    if (runTotal <= 0) return;
-    setProgress(Math.round((runDone / runTotal) * 100));
-    currentTestLabel.textContent = label || `${runDone} / ${runTotal} completed`;
-  };
-
-  // AbortController so the Cancel button can stop an in-flight benchmark.
-  const controller = new AbortController();
-  cancelBtn.hidden = false;
-  const onCancel = () => controller.abort();
-  cancelBtn.addEventListener("click", onCancel);
-
-  const selectedProfile = $("#bench-profile-select").value;
-  const benchDevice = ($("#bench-device")?.value || "auto").toLowerCase();
-  const body = {
-    profiles: [selectedProfile],
-    timeout: Number($("#bench-timeout").value) || 240,
-  };
-  if (questions) body.questions = questions;
-
-  const collected = [];
+  let questionInfo;
   try {
-    const out = await postMaybeStream("/benchmark/run", body, (evt) => {
-      if (evt.event === "run_start") {
-        runTotal = evt.test_count || 0;
-        progressWrap.classList.remove("hidden");
-        updateProgress(`0 / ${runTotal} completed — waiting for model to load…`);
-      } else if (evt.event === "profile_start") {
-        currentTestLabel.textContent = `Profile: ${esc(evt.profile)}${evt.model_id ? ` · ${esc(evt.model_id)}` : ""} — loading…`;
-      } else if (evt.event === "test_result") {
-        runDone++;
-        collected.push(collectTest(evt));
-        updateProgress(`${runDone} / ${runTotal} completed`);
-        appendResultRow(tbody, evt);
-      } else if (evt.event === "profile_aborted") {
-        const tr = document.createElement("tr");
-        tr.innerHTML = `<td colspan="7" class="fail">${esc(evt.profile)} aborted: ${esc(evt.reason)}</td>`;
-        tbody.appendChild(tr);
-      } else if (evt.event === "run_end") {
-        stopTimer();
-        progressWrap.classList.add("hidden");
-
-        const runModel = state.profileModels[selectedProfile] || selectedProfile;
-        summary.className = "result ok";
-        summary.innerHTML = statStripHTML(runModel, computeRunStats(collected), evt.elapsed_seconds);
-        renderCategoryRollup(collected);
-
-        if (collected.length) {
-          state.lastRun = {
-            profile: selectedProfile,
-            model_id: state.profileModels[selectedProfile] || selectedProfile,
-            hardware: state.lastHardware || {},
-            device: benchDevice !== "auto" ? benchDevice : null,
-            tests: collected,
-          };
-          $("#btn-export").disabled = false;
-          $("#btn-export").title = "Download a shareable report card";
-        }
-      } else if (evt.event === "error") {
-        stopTimer();
-        summary.className = "result err";
-        summary.textContent = `Run error: ${evt.error}`;
-      }
-    }, controller.signal);
-
-    // Finalize the device tag from the model's *actual* placement now that it's
-    // loaded — the card label should reflect where it really ran, not a guess.
-    // A manual GPU/CPU choice stays an explicit override; we warn on mismatch.
-    if (state.lastRun && collected.length) {
-      try {
-        await refreshStatus();
-        const detected = detectDevice(selectedProfile);
-        if (benchDevice === "auto") {
-          state.lastRun.device = detected;
-          // Quiet inline note (no toast spam on repeated runs).
-          if (detected) {
-            const note = document.createElement("span");
-            note.className = "muted small";
-            note.innerHTML = ` &nbsp;·&nbsp; device ${esc(detected.toUpperCase())}`;
-            summary.querySelector(".run-stat-strip")?.appendChild(note);
-          }
-        } else if (detected && detected !== benchDevice) {
-          toast(
-            `You tagged ${benchDevice.toUpperCase()} but the model is running on ${detected.toUpperCase()}. The card keeps your tag.`,
-            "error"
-          );
-        }
-      } catch {
-        /* placement detection is best-effort; keep the manual/empty tag */
-      }
-    }
-
-    if (!out.streamed) {
-      stopTimer();
-      const j = out.json || {};
-      summary.className = "result err";
-      if (j.validation) {
-        summary.innerHTML =
-          `Invalid question set:` +
-          `<ul class="err-list">` +
-          (j.validation.errors || []).map((e) => `<li>${esc(e.error)}</li>`).join("") +
-          `</ul>`;
-      } else {
-        summary.textContent = j.error || "Run could not start.";
-      }
-    }
+    questionInfo = currentQuestionSetInfo();
   } catch (err) {
-    if (err.name === "AbortError") {
-      stopTimer();
-      summary.className = "result";
-      summary.textContent = "Run cancelled.";
-      toast("Benchmark cancelled.", "info");
-    } else {
-      summary.className = "result err";
-      summary.textContent = `Run failed: ${err.message}`;
-    }
-  } finally {
-    stopTimer();
-    progressWrap.classList.add("hidden");
-    cancelBtn.hidden = true;
-    cancelBtn.removeEventListener("click", onCancel);
-    if (bothBtn) bothBtn.disabled = false;
-    busy(btn, false);
-  }
-}
-
-// One-click CPU-vs-GPU: deploy the profile to CPU, benchmark it; deploy to GPU,
-// benchmark it; then diff the two cards in the Compare panel. Reuses the same
-// serve/benchmark/compare endpoints the manual flow uses — pure orchestration.
-async function runBothCompare() {
-  const profile = $("#bench-profile-select").value;
-  const model = state.profileModels[profile] || profile;
-  const timeout = Number($("#bench-timeout").value) || 240;
-
-  let questions = null;
-  if ($("#qs-editor").value.trim()) {
-    try {
-      questions = parseEditor();
-    } catch (err) {
-      toast(err.message, "error");
-      return;
-    }
-  }
-
-  // Without a GPU both phases land on CPU — warn before doing the long work.
-  if (state.lastHardware && !state.lastHardware.gpu &&
-      !window.confirm("No GPU was detected — both runs would execute on CPU and the comparison won't be meaningful. Continue anyway?")) {
+    summary.className = "result err";
+    summary.textContent = `Question set error: ${err.message}`;
     return;
   }
 
-  const btn = $("#btn-run-both");
-  const runBtn = $("#btn-run");
-  const cancelBtn = $("#btn-run-cancel");
-  const summary = $("#run-summary");
-  const tbody = $("tbody", $("#run-table"));
-  const progressWrap = $("#run-progress-wrap");
-  const currentTestLabel = $("#run-current-test");
-
-  busy(btn, true);
-  runBtn.disabled = true;
-  $("#btn-export").disabled = true;
+  const deviceChoice = ($("#bench-device")?.value || "auto").toLowerCase();
+  const queue = buildRunQueue(profiles, deviceChoice, questionInfo);
+  state.currentQueue = queue;
+  renderRunQueue(queue);
   $("#run-table").classList.remove("hidden");
-  $("#run-category-rollup").innerHTML = "";
-
-  const controller = new AbortController();
+  const categoryRollup = $("#run-category-rollup");
+  if (categoryRollup) categoryRollup.innerHTML = "";
+  summary.className = "result";
+  summary.textContent = `Running ${queue.length} queued benchmark${queue.length === 1 ? "" : "s"}.`;
+  setProgress(0);
+  setActiveRun(queue[0]);
+  btn.disabled = true;
   cancelBtn.hidden = false;
-  const onCancel = () => controller.abort();
+  $("#btn-export").disabled = true;
+
+  state.queueCancelled = false;
+  // The global Cancel stops the whole queue: flag it, then abort whatever run
+  // is currently active so its stream unwinds immediately.
+  const onCancel = () => {
+    state.queueCancelled = true;
+    state.activeController?.abort();
+  };
   cancelBtn.addEventListener("click", onCancel);
-
-  const cards = {};
+  const completed = [];
+  const timeout = Number($("#bench-timeout").value) || 240;
+  const activeTimer = setInterval(() => {
+    const active = queue.find((q) => ["deploying", "running"].includes(q.status));
+    if (active) setActiveRun(active, active.done || 0, active.total || 0);
+  }, 1000);
   try {
-    for (const [phase, device] of [["1", "cpu"], ["2", "gpu"]]) {
-      // 1) Deploy to the device (serve returns once the model is warm).
-      summary.className = "result";
-      summary.innerHTML = `<span class="spin-inline"></span> Phase ${phase}/2 — deploying on ${device.toUpperCase()}…`;
-      const served = await postJSON("/models/serve", { profile, keep_alive: "60m", device });
-      if (!served.success) throw new Error(`Could not deploy on ${device.toUpperCase()}: ${served.error || served.message || "serve failed"}`);
-
-      // 2) Benchmark it, streaming rows into the shared table.
-      tbody.innerHTML = "";
-      progressWrap.classList.remove("hidden");
-      setProgress(0);
-      const stopTimer = startElapsed(summary, `Phase ${phase}/2 — running on ${device.toUpperCase()}`);
-      const collected = [];
-      let total = 0;
-      let done = 0;
-      let endSeconds = "—";
-      let runError = null;
-      const body = { profiles: [profile], timeout };
-      if (questions) body.questions = questions;
-      try {
-        await postMaybeStream("/benchmark/run", body, (evt) => {
-          if (evt.event === "run_start") {
-            total = evt.test_count || 0;
-          } else if (evt.event === "test_result") {
-            done++;
-            collected.push(collectTest(evt));
-            appendResultRow(tbody, evt);
-            if (total > 0) setProgress(Math.round((done / total) * 100));
-            currentTestLabel.textContent = `${device.toUpperCase()} · ${done} / ${total || "?"} completed`;
-          } else if (evt.event === "profile_aborted") {
-            const tr = document.createElement("tr");
-            tr.innerHTML = `<td colspan="7" class="fail">${esc(evt.profile)} aborted: ${esc(evt.reason)}</td>`;
-            tbody.appendChild(tr);
-          } else if (evt.event === "run_end") {
-            endSeconds = evt.elapsed_seconds;
-          } else if (evt.event === "error") {
-            runError = evt.error;
-          }
-        }, controller.signal);
-      } finally {
-        stopTimer();
+    let index = 0;
+    while (index < queue.length) {
+      if (state.queueCancelled) throw new DOMException("Aborted", "AbortError");
+      const item = queue[index];
+      if (!item || item.status !== "waiting") {
+        index++;
+        continue;
       }
-      if (runError) throw new Error(runError);
-      if (!collected.length) throw new Error(`No results from the ${device.toUpperCase()} run (is the model pulled?).`);
-
-      // 3) Confirm where it actually ran; warn if Ollama didn't honor the request.
-      let detected = null;
-      try {
-        await refreshStatus();
-        detected = detectDevice(profile);
-      } catch {
-        /* best-effort */
-      }
-      if (detected && detected !== device) {
-        toast(`Requested ${device.toUpperCase()} but the model ran on ${detected.toUpperCase()}.`, "error");
-      }
-      cards[device] = {
-        profile,
-        model_id: model,
-        device: detected || device,
-        hardware: state.lastHardware || {},
-        tests: collected,
-        _seconds: endSeconds,
-      };
+      // One controller per item so the active-run Stop button can abort just
+      // this run while the queue keeps going.
+      const itemController = new AbortController();
+      state.activeController = itemController;
+      const run = await runQueueItem(item, questionInfo, timeout, itemController);
+      state.activeController = null;
+      if (run) completed.push(run);
+      index++;
     }
-
-    // 4) Diff the two cards and surface the comparison.
-    progressWrap.classList.add("hidden");
-    const diff = await postJSON("/benchmark/compare", { card_a: cards.cpu, card_b: cards.gpu });
-    renderCompare(diff);
-    state.cardA = cards.cpu;
-    state.cardB = cards.gpu;
-    updateCompareStatus();
-    // Keep the GPU run exportable as the "last run".
-    state.lastRun = cards.gpu;
-    $("#btn-export").disabled = false;
-    $("#btn-export").title = "Download the GPU report card";
-
-    summary.className = "result ok";
-    summary.innerHTML =
-      `Compared <b>${esc(model)}</b> on CPU vs GPU — see the comparison below. ` +
-      statStripHTML(`${model} (GPU)`, computeRunStats(cards.gpu.tests), cards.gpu._seconds);
-    $("#compare-body").scrollIntoView({ behavior: "smooth", block: "nearest" });
+    if (completed.length) {
+      addBenchmarkRuns(completed, true);
+      summary.className = "result ok";
+      summary.textContent = `Completed ${completed.length}/${queue.length} benchmark run${queue.length === 1 ? "" : "s"}.`;
+    } else {
+      renderBenchmarkWorkspace();
+      summary.className = "result err";
+      summary.textContent = "No benchmark runs completed.";
+    }
   } catch (err) {
-    progressWrap.classList.add("hidden");
     if (err.name === "AbortError") {
+      queue.filter((q) => ["waiting", "deploying", "running"].includes(q.status)).forEach((q) => {
+        q.status = "failed";
+        q.current = "Cancelled";
+      });
       summary.className = "result";
-      summary.textContent = "CPU-vs-GPU run cancelled.";
-      toast("Cancelled.", "info");
+      summary.textContent = "Benchmark queue cancelled.";
+      toast("Benchmark queue cancelled.", "info");
     } else {
       summary.className = "result err";
-      summary.textContent = `CPU-vs-GPU run failed: ${err.message}`;
+      summary.textContent = `Benchmark queue failed: ${err.message}`;
     }
+    if (completed.length) addBenchmarkRuns(completed, true);
+    renderRunQueue(queue);
   } finally {
+    clearInterval(activeTimer);
+    setActiveRun(null);
+    state.activeController = null;
+    state.queueCancelled = false;
     cancelBtn.hidden = true;
     cancelBtn.removeEventListener("click", onCancel);
-    runBtn.disabled = false;
-    busy(btn, false);
+    btn.disabled = false;
+    await refreshLiveModelState(true);
+    updateBenchmarkSummary();
   }
 }
 
 // ---------------------------------------------------------------------------
-// Tab 2 — Report cards: export + compare (Step 13)
+// Tab 2 — Report cards: export + compare
 // ---------------------------------------------------------------------------
+function runsForDashboard() {
+  if (!state.selectedRunIds.length) return state.benchmarkRuns;
+  const selected = new Set(state.selectedRunIds);
+  return state.benchmarkRuns.filter((r) => selected.has(r.id));
+}
+
+function renderWinners(runs) {
+  const slot = $("#winner-badges");
+  if (!runs.length) {
+    slot.innerHTML = "";
+    return;
+  }
+  const ranked = [...runs].sort((a, b) =>
+    (b.summary.passed || 0) - (a.summary.passed || 0) ||
+    (b.summary.avg_accuracy || 0) - (a.summary.avg_accuracy || 0) ||
+    (a.summary.avg_latency_s || 999999) - (b.summary.avg_latency_s || 999999)
+  );
+  const top = ranked[0];
+  const fastest = [...runs].filter((r) => r.summary.avg_latency_s != null).sort((a, b) => a.summary.avg_latency_s - b.summary.avg_latency_s)[0];
+  const bestTps = [...runs].filter((r) => r.summary.avg_tokens_per_second != null).sort((a, b) => b.summary.avg_tokens_per_second - a.summary.avg_tokens_per_second)[0];
+  const categories = new Set(runs.flatMap((r) => (r.category_summary || categorySummary(r.tests)).map((c) => c.category)));
+  slot.innerHTML = [
+    `<div class="metric-tile"><span>Top run</span><strong>${esc(runLabel(top))}</strong><small>${esc(top.summary.passed)}/${esc(top.summary.tests)} passed</small></div>`,
+    `<div class="metric-tile"><span>Accuracy</span><strong>${esc(top.summary.avg_accuracy)}</strong><small>${esc(top.questionSetName || "benchmark")}</small></div>`,
+    fastest ? `<div class="metric-tile"><span>Fastest</span><strong>${esc(fastest.summary.avg_latency_s)}s</strong><small>${esc(runLabel(fastest))}</small></div>` : "",
+    bestTps ? `<div class="metric-tile"><span>Best tok/s</span><strong>${esc(bestTps.summary.avg_tokens_per_second)}</strong><small>${esc(runLabel(bestTps))}</small></div>` : "",
+    `<div class="metric-tile"><span>Categories</span><strong>${esc(categories.size)}</strong><small>${esc(runs.length)} run${runs.length === 1 ? "" : "s"}</small></div>`,
+  ].join("");
+}
+
+function renderLeaderboard(runs) {
+  const slot = $("#leaderboard-body");
+  if (!runs.length) {
+    slot.innerHTML = "Run a benchmark suite to populate the leaderboard.";
+    return;
+  }
+  const rows = [...runs]
+    .sort((a, b) =>
+      (b.summary.passed || 0) - (a.summary.passed || 0) ||
+      (b.summary.avg_accuracy || 0) - (a.summary.avg_accuracy || 0) ||
+      (a.summary.avg_latency_s || 999999) - (b.summary.avg_latency_s || 999999)
+    )
+    .map((r, i) => `<div class="leaderboard-row">
+      <span class="rank">${i + 1}</span>
+      <div class="leaderboard-name"><b>${esc(runLabel(r))}</b><span>${esc(r.questionSetName || "")}</span></div>
+      <div class="leaderboard-metrics">
+        <span><b>${esc(r.summary.passed)}/${esc(r.summary.tests)}</b> passed</span>
+        <span><b>${esc(r.summary.avg_accuracy)}</b> acc</span>
+        <span><b>${esc(r.summary.avg_latency_s)}s</b> latency</span>
+        <span><b>${esc(r.summary.avg_tokens_per_second ?? "—")}</b> tok/s</span>
+      </div>
+    </div>`)
+    .join("");
+  slot.innerHTML = `<div class="leaderboard-list">${rows}</div>`;
+}
+
+function heatColor(acc) {
+  const n = Math.max(0, Math.min(1, Number(acc || 0)));
+  if (n >= 0.8) return "heat-good";
+  if (n >= 0.5) return "heat-warn";
+  return "heat-bad";
+}
+
+function renderHeatmap(runs) {
+  const slot = $("#heatmap-body");
+  if (!runs.length) {
+    slot.innerHTML = "No runs yet.";
+    return;
+  }
+  const categories = Array.from(new Set(runs.flatMap((r) => (r.category_summary || categorySummary(r.tests)).map((c) => c.category)))).sort();
+  const cols = `minmax(140px, 180px) repeat(${runs.length}, minmax(120px, 160px))`;
+  const cells = categories
+    .map((cat) => `<div class="heat-category">${esc(cat)}</div>${runs
+      .map((r) => {
+        const c = (r.category_summary || categorySummary(r.tests)).find((x) => x.category === cat);
+        const acc = c?.avg_accuracy ?? null;
+        return `<div class="heat-cell ${acc == null ? "" : heatColor(acc)}" title="${esc(runLabel(r))} · ${esc(cat)}">${acc == null ? "—" : Number(acc).toFixed(2)}</div>`;
+      })
+      .join("")}`)
+    .join("");
+  slot.innerHTML = `<div class="heatmap-scroll"><div class="heatmap-grid" style="grid-template-columns:${cols}">
+    <div class="heat-head">Category</div>${runs.map((r) => `<div class="heat-head">${esc(runLabel(r))}</div>`).join("")}
+    ${cells}
+  </div></div>`;
+}
+
+function renderScatter(runs) {
+  const slot = $("#scatter-body");
+  const points = runs.filter((r) => r.summary.avg_latency_s != null && r.summary.avg_accuracy != null);
+  if (!points.length) {
+    slot.innerHTML = "No runs yet.";
+    return;
+  }
+  if (points.length < 2) {
+    const r = points[0];
+    slot.innerHTML = `<div class="scatter-single">
+      <span class="eyebrow">One run captured</span>
+      <strong>${esc(r.summary.avg_accuracy)} accuracy</strong>
+      <span>${esc(r.summary.avg_latency_s)}s latency · ${esc(r.summary.avg_tokens_per_second ?? "—")} tok/s</span>
+      <small>Run another model or device to compare speed vs quality.</small>
+    </div>`;
+    return;
+  }
+  const maxLat = Math.max(...points.map((r) => Number(r.summary.avg_latency_s || 0)), 1);
+  const labels = points
+    .map((r, i) => {
+      const x = 46 + (Number(r.summary.avg_latency_s || 0) / maxLat) * 260;
+      const y = 170 - Number(r.summary.avg_accuracy || 0) * 125;
+      return `<g>
+        <circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="6" />
+        <text x="${(x + 10).toFixed(1)}" y="${(y + 4).toFixed(1)}">${esc(String(i + 1))}</text>
+        <title>${esc(runLabel(r))}: ${esc(r.summary.avg_latency_s)}s, acc ${esc(r.summary.avg_accuracy)}</title>
+      </g>`;
+    })
+    .join("");
+  slot.innerHTML = `<svg class="scatter" viewBox="0 0 340 205" role="img" aria-label="Speed quality scatter">
+    <line x1="40" y1="180" x2="316" y2="180"></line><line x1="40" y1="34" x2="40" y2="180"></line>
+    <line class="gridline" x1="40" y1="96" x2="316" y2="96"></line>
+    <text x="118" y="199">avg latency, lower is better</text><text x="8" y="28">accuracy</text>
+    ${labels}
+  </svg>`;
+}
+
+function renderMatrix(runs) {
+  const slot = $("#matrix-body");
+  if (!runs.length) {
+    slot.innerHTML = "No runs yet.";
+    return;
+  }
+  const tests = Array.from(new Set(runs.flatMap((r) => (r.tests || []).map((t) => t.name)))).sort();
+  const maxRows = 80;
+  const rows = tests.slice(0, maxRows)
+    .map((name) => `<tr><th>${esc(name)}</th>${runs
+      .map((r) => {
+        const t = (r.tests || []).find((x) => x.name === name);
+        const cls = !t ? "" : t.success ? "matrix-pass" : "matrix-fail";
+        return `<td><span class="matrix-pill ${cls}">${t ? `${t.success ? "PASS" : "FAIL"} · ${Number(t.accuracy || 0).toFixed(2)}` : "—"}</span></td>`;
+      })
+      .join("")}</tr>`)
+    .join("");
+  const note = tests.length > maxRows ? `<div class="muted small matrix-note">Showing first ${maxRows} of ${tests.length} tests. Use Detailed results for filters.</div>` : "";
+  slot.innerHTML = `<div class="table-wrap matrix-wrap"><table class="results matrix">
+    <thead><tr><th>Test</th>${runs.map((r) => `<th>${esc(runLabel(r))}</th>`).join("")}</tr></thead>
+    <tbody>${rows}</tbody></table></div>${note}`;
+}
+
+function renderDetailedResults(runs = runsForDashboard()) {
+  const table = $("#run-table");
+  const tbody = $("tbody", table);
+  const runFilter = $("#detail-filter-run");
+  const catFilter = $("#detail-filter-category");
+  const resultFilter = $("#detail-filter-result")?.value || "";
+  const selectedRun = runFilter?.value || "";
+  const selectedCat = catFilter?.value || "";
+  const categories = Array.from(new Set(state.benchmarkRuns.flatMap((r) => (r.tests || []).map((t) => t.category || "?")))).sort();
+  if (runFilter) {
+    const current = runFilter.value;
+    runFilter.innerHTML = `<option value="">All runs</option>${state.benchmarkRuns.map((r) => `<option value="${esc(r.id)}">${esc(runLabel(r))}</option>`).join("")}`;
+    runFilter.value = current;
+  }
+  if (catFilter) {
+    const current = catFilter.value;
+    catFilter.innerHTML = `<option value="">All categories</option>${categories.map((c) => `<option value="${esc(c)}">${esc(c)}</option>`).join("")}`;
+    catFilter.value = current;
+  }
+  const rows = [];
+  for (const r of state.benchmarkRuns) {
+    if (selectedRun && r.id !== selectedRun) continue;
+    for (const t of r.tests || []) {
+      if (selectedCat && t.category !== selectedCat) continue;
+      if (resultFilter === "pass" && !t.success) continue;
+      if (resultFilter === "fail" && t.success) continue;
+      if (resultFilter === "slow" && t.success) continue;
+      rows.push({ run: r, test: t });
+    }
+  }
+  if (resultFilter === "slow") rows.sort((a, b) => Number(b.test.elapsed_seconds || 0) - Number(a.test.elapsed_seconds || 0));
+  tbody.innerHTML = "";
+  rows.slice(0, 250).forEach(({ run, test }) => appendResultRow(tbody, test, runLabel(run)));
+  table.classList.toggle("hidden", rows.length === 0);
+}
+
+function renderRunLibrary() {
+  const body = $("#run-library");
+  if (!body) return;
+  if (!state.benchmarkRuns.length) {
+    body.innerHTML = `<div class="muted small">No completed or imported runs yet.</div>`;
+    return;
+  }
+  const selected = new Set(state.selectedRunIds);
+  body.innerHTML = state.benchmarkRuns
+    .map((r) => `<label class="run-library-row${selected.has(r.id) ? " selected" : ""}">
+      <input type="checkbox" value="${esc(r.id)}"${selected.has(r.id) ? " checked" : ""} />
+      <span><b>${esc(runLabel(r))}</b><span class="muted small">${esc(r.source)} · ${esc(new Date(r.createdAt).toLocaleString())}</span></span>
+      <span class="badge ${r.source === "imported-card" ? "cpu" : "on"}">${esc(r.summary.passed)}/${esc(r.summary.tests)}</span>
+    </label>`)
+    .join("");
+  $$("input", body).forEach((input) => {
+    input.addEventListener("change", () => {
+      const ids = new Set(state.selectedRunIds);
+      if (input.checked) ids.add(input.value);
+      else ids.delete(input.value);
+      state.selectedRunIds = Array.from(ids);
+      if (!state.selectedRunIds.includes(state.compareBaselineId)) state.compareBaselineId = state.selectedRunIds[0] || null;
+      state.activeRunId = input.checked ? input.value : state.activeRunId;
+      renderBenchmarkWorkspace();
+    });
+  });
+}
+
+function renderCompareControls() {
+  const baseline = $("#compare-baseline");
+  if (baseline) {
+    baseline.innerHTML = state.selectedRunIds
+      .map((id) => {
+        const r = state.benchmarkRuns.find((x) => x.id === id);
+        return r ? `<option value="${esc(id)}">${esc(runLabel(r))}</option>` : "";
+      })
+      .join("");
+    baseline.value = state.compareBaselineId || state.selectedRunIds[0] || "";
+  }
+  const status = $("#compare-status");
+  if (status) status.textContent = `${state.selectedRunIds.length} selected. Select 2 or more runs to compare.`;
+  $("#btn-export-selected").disabled = state.selectedRunIds.length === 0;
+  $("#btn-export").disabled = !state.activeRunId && !state.lastRun;
+}
+
+function selectedComparisonRuns() {
+  return state.selectedRunIds.map((id) => state.benchmarkRuns.find((r) => r.id === id)).filter(Boolean);
+}
+
+function renderComparison(runs, baseline) {
+  if (!runs.length || !baseline) {
+    $("#compare-body").innerHTML = "";
+    $("#response-drawer").classList.add("hidden");
+    return;
+  }
+  state.compareBaselineId = baseline.id;
+  const baseSummary = baseline.summary || summaryFromTests(baseline.tests);
+  const delta = (a, b) => (a == null || b == null ? "—" : (Number(b) - Number(a)).toFixed(3));
+  const rows = runs
+    .map((r) => {
+      const s = r.summary || summaryFromTests(r.tests);
+      return `<tr><td><b>${esc(runLabel(r))}</b>${r.id === baseline.id ? ` <span class="badge on">baseline</span>` : ""}</td>
+        <td class="num">${esc(s.passed)}/${esc(s.tests)}</td>
+        <td class="num">${esc(s.avg_accuracy)} <span class="muted">(${esc(delta(baseSummary.avg_accuracy, s.avg_accuracy))})</span></td>
+        <td class="num">${esc(s.avg_latency_s)}s <span class="muted">(${esc(delta(baseSummary.avg_latency_s, s.avg_latency_s))})</span></td>
+        <td class="num">${esc(s.avg_tokens_per_second ?? "—")} <span class="muted">(${esc(delta(baseSummary.avg_tokens_per_second, s.avg_tokens_per_second))})</span></td></tr>`;
+    })
+    .join("");
+  const tests = Array.from(new Set(runs.flatMap((r) => (r.tests || []).map((t) => t.name)))).sort();
+  const testButtons = tests
+    .map((name) => `<button class="btn compact response-compare-btn" data-test="${esc(name)}">${esc(name)}</button>`)
+    .join("");
+  $("#compare-body").innerHTML = `<div class="table-wrap"><table class="results">
+    <thead><tr><th>Run</th><th class="num">Passed</th><th class="num">Accuracy Δ</th><th class="num">Latency Δ</th><th class="num">tok/s Δ</th></tr></thead>
+    <tbody>${rows}</tbody></table></div>
+    <h3 class="sub">Response detail</h3><div class="response-test-list">${testButtons}</div>`;
+  $$(".response-compare-btn", $("#compare-body")).forEach((b) => {
+    b.addEventListener("click", () => renderResponseDrawer(b.dataset.test, runs));
+  });
+}
+
+function renderAutoComparison() {
+  const runs = selectedComparisonRuns();
+  const baseline = state.benchmarkRuns.find((r) => r.id === state.compareBaselineId) || runs[0];
+  if (runs.length >= 2 && baseline) {
+    renderComparison(runs, baseline);
+  } else {
+    $("#compare-body").innerHTML = "";
+    $("#response-drawer").classList.add("hidden");
+  }
+}
+
+function renderBenchmarkWorkspace() {
+  const runs = runsForDashboard();
+  const hasRuns = state.benchmarkRuns.length > 0;
+  $("#results-dashboard-card")?.classList.toggle("hidden", !hasRuns);
+  $("#detailed-results-card")?.classList.toggle("hidden", !hasRuns);
+  renderWinners(runs);
+  renderLeaderboard(runs);
+  renderHeatmap(runs);
+  renderScatter(runs);
+  renderMatrix(runs);
+  renderRunLibrary();
+  renderCompareControls();
+  renderAutoComparison();
+  renderDetailedResults(runs);
+  updateBenchmarkSummary();
+}
+
+async function exportOneRun(run, btn) {
+  busy(btn, true);
+  try {
+    const out = await postJSON("/benchmark/export", {
+      profile: run.profile,
+      model_id: run.modelId,
+      device: run.actualDevice || run.requestedDevice,
+      hardware: run.hardware,
+      tests: run.tests,
+      summary: run.summary,
+      category_summary: run.category_summary,
+    });
+    if (!out.success) throw new Error(out.error || "export failed");
+    const name = (run.profile || run.modelId || "model").replace(/[^\w.-]+/g, "_");
+    const devSuffix = run.actualDevice || run.requestedDevice ? `-${run.actualDevice || run.requestedDevice}` : "";
+    downloadFile(`localdeploy-card-${name}${devSuffix}.html`, out.html, "text/html");
+    toast("Report card downloaded.", "success");
+  } finally {
+    busy(btn, false);
+  }
+}
+
 async function exportCard() {
-  if (!state.lastRun) {
-    toast("Run a benchmark first.", "error");
+  const run = state.benchmarkRuns.find((r) => r.id === state.activeRunId) || state.lastRun;
+  if (!run) {
+    toast("Select or run a benchmark first.", "error");
     return;
   }
   const btn = $("#btn-export");
-  busy(btn, true);
   try {
-    const out = await postJSON("/benchmark/export", state.lastRun);
-    if (!out.success) throw new Error(out.error || "export failed");
-    const name = (state.lastRun.profile || "model").replace(/[^\w.-]+/g, "_");
-    const devSuffix = state.lastRun.device ? `-${state.lastRun.device}` : "";
-    downloadFile(`localdeploy-card-${name}${devSuffix}.html`, out.html, "text/html");
-    toast("Report card downloaded.", "success");
+    await exportOneRun(run, btn);
   } catch (err) {
     toast(`Export failed: ${err.message}`, "error");
-  } finally {
-    busy(btn, false);
   }
 }
 
-function readCardFile(input, slot) {
-  const file = input.files?.[0];
-  if (!file) return;
-  const reader = new FileReader();
-  reader.onload = () => {
-    const card = extractCard(String(reader.result || ""));
-    if (!card) {
-      toast(`${file.name}: not a LocalDeploy report card.`, "error");
-      return;
+async function exportSelectedRuns() {
+  const runs = state.selectedRunIds.map((id) => state.benchmarkRuns.find((r) => r.id === id)).filter(Boolean);
+  if (!runs.length) {
+    toast("Select at least one run.", "error");
+    return;
+  }
+  const btn = $("#btn-export-selected");
+  if (runs.length === 1) {
+    try {
+      await exportOneRun(runs[0], btn);
+    } catch (err) {
+      toast(`Export failed: ${err.message}`, "error");
     }
-    state[slot] = card;
-    updateCompareStatus();
-  };
-  reader.onerror = () => toast("Could not read file.", "error");
-  reader.readAsText(file);
+    return;
+  }
+  downloadFile(
+    `localdeploy-benchmark-runs-${new Date().toISOString().slice(0, 10)}.json`,
+    JSON.stringify({ kind: "localdeploy.run_bundle", version: 1, runs }, null, 2),
+    "application/json"
+  );
+  toast("Selected runs exported as JSON bundle.", "success");
+}
+
+function readCardFiles(input) {
+  const files = Array.from(input.files || []);
+  if (!files.length) return;
+  Promise.all(
+    files.map(
+      (file) =>
+        new Promise((resolve) => {
+          const reader = new FileReader();
+          reader.onload = () => {
+            const text = String(reader.result || "");
+            let runs = [];
+            try {
+              const parsed = JSON.parse(text);
+              if (parsed.kind === "localdeploy.run_bundle" && Array.isArray(parsed.runs)) runs = parsed.runs;
+            } catch {
+              /* maybe a report card HTML */
+            }
+            const card = runs.length ? null : extractCard(text);
+            if (card) runs = [card];
+            resolve(runs.map((r) => ({ ...normalizeRunRecord(r, "imported-card"), source: "imported-card" })));
+          };
+          reader.onerror = () => resolve([]);
+          reader.readAsText(file);
+        })
+    )
+  ).then((groups) => {
+    const runs = groups.flat();
+    if (!runs.length) toast("No LocalDeploy report cards found.", "error");
+    else {
+      addBenchmarkRuns(runs, true);
+      toast(`Imported ${runs.length} run${runs.length === 1 ? "" : "s"}.`, "success");
+    }
+  });
   input.value = "";
 }
 
-function cardLabel(c) {
-  if (!c) return "—";
-  const name = c.model_id || c.profile || "card";
-  const dev = c.device ? `/${c.device.toUpperCase()}` : "";
-  return esc(`${name}${dev}`);
-}
-
-function updateCompareStatus() {
-  $("#compare-status").innerHTML = `A: ${cardLabel(state.cardA)} &nbsp;·&nbsp; B: ${cardLabel(state.cardB)}`;
-}
-
-// Render a /benchmark/compare result into the Compare panel. Shared by the
-// manual two-card compare and the one-click CPU-vs-GPU flow.
-function renderCompare(diff) {
-  const sd = diff.summary_delta || {};
-  const arrow = (d) => (d == null ? "" : d > 0 ? ` ▲ +${d}` : d < 0 ? ` ▼ ${d}` : " =");
-  const pair = (av, bv) => `${esc(av ?? "—")} → ${esc(bv ?? "—")}`;
-  const rows = (diff.tests || [])
-    .map(
-      (r) => `<tr><td>${esc(r.name)}</td>
-        <td class="num">${pair(r.accuracy_a, r.accuracy_b)}${esc(arrow(r.accuracy_delta))}</td>
-        <td class="num">${pair(r.latency_a, r.latency_b)}${esc(arrow(r.latency_delta))}</td>
-        <td class="num">${pair(r.tps_a, r.tps_b)}${esc(arrow(r.tps_delta))}</td></tr>`
-    )
-    .join("");
-  // Only show the aggregate tok/s stat when at least one card carried it.
-  const tpsStat =
-    sd.tps_a != null || sd.tps_b != null
-      ? ` &nbsp;·&nbsp; avg tok/s ${esc(sd.tps_a ?? "—")} → ${esc(sd.tps_b ?? "—")}${esc(arrow(sd.avg_tokens_per_second))}`
-      : "";
-  $("#compare-body").innerHTML = `
-    <div class="result">${esc(diff.label_a)} → ${esc(diff.label_b)} &nbsp;·&nbsp;
-      avg accuracy${esc(arrow(sd.avg_accuracy))} &nbsp;·&nbsp; avg latency${esc(arrow(sd.avg_latency_s))}${tpsStat} &nbsp;·&nbsp;
-      passed ${esc(sd.passed_a ?? "?")} → ${esc(sd.passed_b ?? "?")}</div>
-    <div class="table-wrap"><table class="results">
-      <thead><tr><th>Test</th><th class="num">Accuracy (A → B)</th><th class="num">Latency (A → B)</th><th class="num">tok/s (A → B)</th></tr></thead>
-      <tbody>${rows}</tbody></table></div>`;
-}
-
-async function compareCards() {
-  if (!state.cardA || !state.cardB) {
-    toast("Load both Card A and Card B first.", "error");
+function compareSelectedRuns() {
+  const runs = selectedComparisonRuns();
+  const baseline = state.benchmarkRuns.find((r) => r.id === ($("#compare-baseline")?.value || state.compareBaselineId)) || runs[0];
+  if (runs.length < 2 || !baseline) {
+    toast("Select 2 or more runs to compare.", "error");
     return;
   }
-  const btn = $("#btn-compare");
-  busy(btn, true);
-  try {
-    const diff = await postJSON("/benchmark/compare", { card_a: state.cardA, card_b: state.cardB });
-    renderCompare(diff);
-  } catch (err) {
-    toast(`Compare failed: ${err.message}`, "error");
-  } finally {
-    busy(btn, false);
-  }
+  renderComparison(runs, baseline);
+}
+
+function renderResponseDrawer(testName, runs) {
+  const drawer = $("#response-drawer");
+  drawer.classList.remove("hidden");
+  drawer.innerHTML = `<div class="card-head"><h3 class="sub">Responses: ${esc(testName)}</h3><button class="btn compact" id="close-response-drawer">Close</button></div>
+    <div class="response-compare-grid">${runs
+      .map((r) => {
+        const t = (r.tests || []).find((x) => x.name === testName);
+        return `<div class="response-compare-card">
+          <b>${esc(runLabel(r))}</b>
+          <div class="muted small">${t ? `${t.success ? "PASS" : "FAIL"} · acc ${t.accuracy} · ${t.elapsed_seconds}s` : "Not run"}</div>
+          <pre>${esc(t?.response_preview || t?.error || "(no response preview)")}</pre>
+        </div>`;
+      })
+      .join("")}</div>`;
+  $("#close-response-drawer").addEventListener("click", () => drawer.classList.add("hidden"));
 }
 
 // ---------------------------------------------------------------------------
@@ -1983,13 +2561,47 @@ $("#btn-builtin-bench").addEventListener("click", useBuiltInBench);
 $("#btn-example").addEventListener("click", loadExample);
 $("#btn-validate").addEventListener("click", validateSet);
 $("#btn-run").addEventListener("click", runBenchmark);
-$("#btn-run-both").addEventListener("click", runBothCompare);
+$("#btn-stop-active")?.addEventListener("click", () => {
+  if (state.activeController && !state.activeController.signal.aborted) {
+    state.activeController.abort();
+    toast("Stopping the current run…", "info");
+  }
+});
+$("#btn-select-all-runs")?.addEventListener("click", () => {
+  state.selectedRunIds = state.benchmarkRuns.map((r) => r.id);
+  if (!state.selectedRunIds.includes(state.compareBaselineId)) {
+    state.compareBaselineId = state.selectedRunIds[0] || null;
+  }
+  renderBenchmarkWorkspace();
+});
+$("#btn-deselect-all-runs")?.addEventListener("click", () => {
+  state.selectedRunIds = [];
+  state.compareBaselineId = null;
+  renderBenchmarkWorkspace();
+});
 $("#upload-json").addEventListener("change", (e) => uploadFile(e.target));
 $("#btn-recommend").addEventListener("click", recommendTune);
 $("#btn-export").addEventListener("click", exportCard);
-$("#btn-compare").addEventListener("click", compareCards);
-$("#card-a").addEventListener("change", (e) => readCardFile(e.target, "cardA"));
-$("#card-b").addEventListener("change", (e) => readCardFile(e.target, "cardB"));
+$("#btn-export-selected").addEventListener("click", exportSelectedRuns);
+$("#btn-compare").addEventListener("click", compareSelectedRuns);
+$("#card-import").addEventListener("change", (e) => readCardFiles(e.target));
+$("#btn-clear-runs").addEventListener("click", () => {
+  state.benchmarkRuns = [];
+  state.selectedRunIds = [];
+  state.compareBaselineId = null;
+  state.activeRunId = null;
+  state.lastRun = null;
+  saveBenchmarkRuns();
+  renderBenchmarkWorkspace();
+});
+$("#compare-baseline").addEventListener("change", (e) => {
+  state.compareBaselineId = e.target.value || null;
+  renderAutoComparison();
+});
+$("#bench-profile-filter")?.addEventListener("input", renderBenchmarkProfileChips);
+["#detail-filter-run", "#detail-filter-category", "#detail-filter-result"].forEach((sel) => {
+  $(sel)?.addEventListener("change", () => renderDetailedResults());
+});
 
 $("#fit-filter")?.addEventListener("change", () => {
   if (!$("#fit-finder-body").textContent.includes("Not scanned")) scanConfiguredFits();
@@ -2024,6 +2636,10 @@ $("#qs-editor").addEventListener("keydown", (e) => {
     runBenchmark();
   }
 });
+$("#qs-editor").addEventListener("input", () => {
+  state.questionSetValidation = null;
+  updateBenchmarkSummary();
+});
 
 // Make the file-upload "buttons" (a <label> wrapping a hidden <input>) reachable
 // and operable by keyboard — labels aren't tab stops and hidden inputs can't be
@@ -2042,7 +2658,9 @@ $$(".btn.file").forEach((label) => {
 // Initial load — populate the live sections so a newcomer sees real state
 // (hardware, what's running, what's installed) instead of "Not loaded yet."
 (async function init() {
+  loadBenchmarkRuns();
   await loadProfiles();
+  renderBenchmarkWorkspace();
   await Promise.allSettled([
     checkHardware(),
     refreshStatus(),

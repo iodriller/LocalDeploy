@@ -39,9 +39,15 @@ def test_no_smart_quotes_as_js_delimiters() -> None:
 
 def test_ui_assets_are_cache_busted_and_no_favicon_404() -> None:
     html = (WEB_DIR / "index.html").read_text(encoding="utf-8")
-    assert 'href="styles.css?v=20260623-ui7"' in html
-    assert 'src="app.js?v=20260623-ui7"' in html
+    assert 'href="styles.css?v=20260624-ui14"' in html
+    assert 'src="app.js?v=20260624-ui14"' in html
     assert 'rel="icon" href="data:,"' in html
+
+
+def test_benchmark_workspace_v2_labels_are_present() -> None:
+    html = (WEB_DIR / "index.html").read_text(encoding="utf-8")
+    for label in ("Run Builder", "Leaderboard", "Category heatmap", "Compare selected"):
+        assert label in html
 
 
 def test_new_ui_controls_have_safe_bindings() -> None:
@@ -64,7 +70,7 @@ def test_hardware_is_readonly_and_model_budget_lives_with_models() -> None:
     assert "Custom GB" in models
     assert 'id="keep-alive" value="60m"' in html
     assert 'id="btn-stop"' not in html
-    assert "Kill controls appear inside the Served model card" in html
+    assert "Unload it from the Served model card" in html
 
 
 def test_saved_profiles_and_benchmark_copy_are_clear() -> None:
@@ -94,5 +100,5 @@ def test_ui_does_not_guess_unattributed_vram_sources() -> None:
     assert "LocalDeploy cannot attribute" not in js
     assert "Ollama reports" not in js
     assert "Ollama model VRAM" in js
-    assert "Kill from Served model card" in js
+    assert "Unload from Served model card" in js
     assert "downloads not reported" in js

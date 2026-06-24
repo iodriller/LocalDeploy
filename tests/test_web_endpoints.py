@@ -25,7 +25,7 @@ def test_ui_is_served() -> None:
     response = client.get("/ui/")
     assert response.status_code == 200
     assert "LocalDeploy" in response.text
-    assert "Serve &amp; Diagnose" in response.text  # two-tab shell present
+    assert "Setup &amp; Deploy" in response.text  # two-tab shell present
 
 
 def test_ui_static_assets_served() -> None:

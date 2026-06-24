@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>LocalDeploy</title>
     <link rel="icon" href="data:," />
-    <link rel="stylesheet" href="styles.css?v=20260623-ui7" />
+    <link rel="stylesheet" href="styles.css?v=20260624-ui14" />
   </head>
   <body>
     <header class="topbar">
@@ -14,8 +14,8 @@
         <span>LocalDeploy</span>
       </div>
       <nav class="tabs" role="tablist">
-        <button class="tab active" data-tab="serve" role="tab" aria-selected="true">Serve &amp; Diagnose</button>
-        <button class="tab" data-tab="bench" role="tab" aria-selected="false">Deploy &amp; Benchmark</button>
+        <button class="tab active" data-tab="serve" role="tab" aria-selected="true">Setup &amp; Deploy</button>
+        <button class="tab" data-tab="bench" role="tab" aria-selected="false">Benchmark &amp; Compare</button>
       </nav>
       <div class="topbar-right">
         <div id="hw-chip" class="chip hidden" title="Detected GPU / VRAM"></div>
@@ -27,8 +27,8 @@
       <!-- ===================== TAB 1: Serve & Diagnose ===================== -->
       <section id="tab-serve" class="tab-panel active">
         <div class="hint">
-          New here? <b>Check My Hardware</b> → pull a model → <b>Start</b> it → then open the
-          <b>Deploy &amp; Benchmark</b> tab.
+          New here? <b>Check My Hardware</b> → pull a model → <b>Deploy</b> it → then open the
+          <b>Benchmark &amp; Compare</b> tab.
         </div>
         <div class="grid">
           <!-- Hardware -->
@@ -63,7 +63,7 @@
 
         <!-- Serve controls -->
         <div class="card">
-          <div class="card-head"><h2>Start / Switch</h2></div>
+          <div class="card-head"><h2>Deploy local model</h2></div>
           <div class="row gap wrap">
             <label class="field grow">
               <span>Profile</span>
@@ -82,11 +82,11 @@
               <input type="text" id="keep-alive" value="60m" />
             </label>
             <div class="row gap actions">
-              <button class="btn primary" id="btn-serve">Start</button>
-              <button class="btn" id="btn-switch">Switch to this</button>
+              <button class="btn primary" id="btn-serve">Deploy model</button>
+              <button class="btn" id="btn-switch">Deploy and replace</button>
             </div>
           </div>
-          <p class="muted small">Start warms the selected saved run profile. Kill controls appear inside the Served model card when Ollama reports a loaded model.</p>
+          <p class="muted small">Loads the selected profile into Ollama using the keep-alive above. Unload it from the Served model card.</p>
           <div id="serve-result" class="result"></div>
         </div>
 
@@ -97,7 +97,7 @@
             <div class="row gap">
               <button class="btn" id="btn-free" title="Unload all models from memory/VRAM">Free memory</button>
               <button class="btn" id="btn-installed">Refresh installed</button>
-              <button class="btn" id="btn-updates">Auto search installed</button>
+              <button class="btn" id="btn-updates" title="Search Hugging Face for newer versions of your installed models">Check for updates</button>
             </div>
           </div>
 
@@ -125,12 +125,12 @@
 
           <div class="row gap wrap" style="margin-bottom: 0.75rem">
             <label class="field grow">
-              <span>Pull a model (Ollama name, e.g. <code>gemma3:4b</code>)</span>
-              <input type="text" id="pull-model" placeholder="gemma3:4b" />
+              <span>Manual pull by model name</span>
+              <input type="text" id="pull-model" placeholder="gemma3:4b or hf.co/org/model-GGUF" />
             </label>
-            <label class="check" title="Skip the VRAM safety check and pull anyway. Warning: a model larger than your free VRAM may fail to load or run very slowly on CPU.">
+            <label class="check" title="Keep the warning, but do not block the pull when the fit check says the model is risky.">
               <input type="checkbox" id="pull-override" />
-              <span>Override fit check ⚠</span>
+              <span>Warn only; pull anyway</span>
             </label>
             <button class="btn primary" id="btn-pull">Pull</button>
             <button class="btn danger" id="btn-pull-cancel" hidden>Cancel</button>
@@ -151,7 +151,7 @@
             <div class="section-title">
               <div>
                 <h3>Saved run profiles</h3>
-                <p class="muted small">Profiles are recipes from <code>config.json</code>: model id, backend, context limit, output limit, and safety settings. Scan them to see what is already pulled, what fits the budget above, and what can be started or pulled next.</p>
+                <p class="muted small">Profiles are recipes from <code>config.json</code>: model id, backend, context limit, output limit, and safety settings. Scan them to see what is already pulled, what fits the budget above, and what can be deployed or pulled next.</p>
               </div>
             </div>
             <div class="row gap wrap" style="margin-bottom: 0.75rem">
@@ -232,79 +232,189 @@
               <button class="btn" id="btn-validate">Validate</button>
             </div>
           </div>
-          <p id="bench-help" class="muted small">
-            Leave the editor empty to run the built-in LocalDeploy test bench. Use JSON here only when you want a custom set:
-            each question needs <code>name</code>, <code>category</code>, <code>prompt</code>,
-            <code>max_output_tokens</code>, and a <code>grader</code> (one of
-            <span id="grader-types">…</span>).
-          </p>
-          <textarea id="qs-editor" class="editor" spellcheck="false" placeholder="Paste or load a question set as JSON…"></textarea>
-          <div id="validate-result" class="result"></div>
+          <details id="question-set-details" class="qs-details" open>
+            <summary>Question set editor</summary>
+            <p id="bench-help" class="muted small">
+              Leave the editor empty to run the built-in LocalDeploy test bench. Use JSON here only when you want a custom set:
+              each question needs <code>name</code>, <code>category</code>, <code>prompt</code>,
+              <code>max_output_tokens</code>, and a <code>grader</code> (one of
+              <span id="grader-types">…</span>).
+            </p>
+            <textarea id="qs-editor" class="editor" spellcheck="false" placeholder="Paste or load a question set as JSON…"></textarea>
+            <div id="validate-result" class="result"></div>
+          </details>
         </div>
 
         <div class="card">
           <div class="card-head">
-            <h2>Run</h2>
+            <h2>Run Builder</h2>
             <div class="row gap">
               <button class="btn danger" id="btn-run-cancel" hidden>Cancel</button>
-              <button class="btn" id="btn-export" disabled title="Run a benchmark first">Export card</button>
+              <button class="btn" id="btn-export" disabled title="Select a completed run">Export run</button>
             </div>
           </div>
+          <div class="bench-summary-grid">
+            <div class="bench-summary-card">
+              <span class="eyebrow">Test set</span>
+              <b id="bench-set-name">Built-in LocalDeploy bench</b>
+              <span id="bench-set-meta" class="muted small">Leave the editor empty for the built-in suite.</span>
+            </div>
+            <div class="bench-summary-card">
+              <span class="eyebrow">Selected models</span>
+              <b id="bench-selected-count">0 profiles</b>
+              <span class="muted small">Pick one or more saved profiles from <code>config.json</code>.</span>
+            </div>
+            <div class="bench-summary-card">
+              <span class="eyebrow">History</span>
+              <b id="bench-history-count">0 runs</b>
+              <span class="muted small">Stored locally in this browser.</span>
+            </div>
+          </div>
+          <div class="bench-picker-head">
+            <div>
+              <h3 class="sub">Models</h3>
+              <span class="muted small">Select one or more saved profiles. Runs execute sequentially.</span>
+            </div>
+            <label class="field compact-field">
+              <span>Filter</span>
+              <input type="search" id="bench-profile-filter" placeholder="Search profiles" />
+            </label>
+          </div>
+          <div id="bench-profile-chips" class="profile-chip-grid profile-list" aria-label="Benchmark profile selection"></div>
           <div class="row gap wrap">
-            <label class="field grow">
+            <label class="field grow hidden">
               <span>Profile</span>
               <select id="bench-profile-select"></select>
             </label>
-            <label class="field" title="How the run is labelled on the report card. Auto detects the model's actual placement (GPU/CPU/Split) from live status after the run; GPU/CPU are explicit overrides and warn if they disagree with what's detected.">
-              <span>Device tag ⓘ</span>
+            <label class="field" title="Where to run this benchmark. Auto uses the currently loaded/default placement; CPU/GPU reloads the model on that device before the run and warns if Ollama reports a different placement.">
+              <span>Benchmark device ⓘ</span>
               <select id="bench-device">
                 <option value="auto" selected>Auto (detect)</option>
                 <option value="gpu">GPU</option>
                 <option value="cpu">CPU</option>
+                <option value="both">CPU + GPU</option>
               </select>
             </label>
             <label class="field">
               <span>Timeout (s)</span>
               <input type="number" id="bench-timeout" value="240" min="1" />
             </label>
-            <button class="btn primary" id="btn-run">Run benchmark ▶</button>
-            <button class="btn" id="btn-run-both" title="Deploy on CPU, benchmark; deploy on GPU, benchmark; then compare the two">Run on CPU &amp; GPU ▶▶</button>
+            <button class="btn primary" id="btn-run">Run benchmark suite</button>
+            <button class="btn" id="btn-clear-runs" title="Clear local benchmark history">Clear history</button>
           </div>
-          <p class="muted small">With an empty editor, Run benchmark uses the LocalDeploy test bench. <b>Run on CPU &amp; GPU</b> benchmarks both placements and diffs them automatically. Tip: <kbd>⌘/Ctrl</kbd>+<kbd>Enter</kbd> in the editor runs it.</p>
-          <div id="run-progress-wrap" class="hidden">
-            <div class="run-progress-track"><div id="run-progress-bar" class="run-progress-fill" style="width:0%" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-label="Benchmark progress"></div></div>
-            <div id="run-current-test" class="muted small" style="margin-top:.3rem"></div>
+          <p class="muted small">CPU + GPU creates one queued run per selected model and device.</p>
+        </div>
+
+        <div class="card">
+          <div class="card-head"><h2>Run queue</h2></div>
+          <div id="run-active" class="run-active hidden" aria-live="polite">
+            <div class="run-active-top">
+              <div>
+                <span class="eyebrow">Active benchmark</span>
+                <strong id="run-active-title">Ready</strong>
+              </div>
+              <div class="row gap" style="align-items: center">
+                <span id="run-active-percent" class="run-percent">0%</span>
+                <button class="btn danger compact" id="btn-stop-active" title="Stop this run and continue with the rest of the queue">Stop</button>
+              </div>
+            </div>
+            <div class="run-progress-track large"><div id="run-progress-bar" class="run-progress-fill" style="width:0%" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-label="Benchmark progress"></div></div>
+            <div class="run-active-meta">
+              <span id="run-active-detail">Waiting</span>
+              <span id="run-active-count"></span>
+            </div>
           </div>
           <div id="run-summary" class="result"></div>
+          <div id="run-queue" class="queue-list"></div>
+        </div>
+
+        <div class="card" id="results-dashboard-card">
+          <div class="card-head">
+            <h2>Results</h2>
+            <span class="muted small">Selected benchmark runs</span>
+          </div>
+          <div id="winner-badges" class="dashboard-summary"></div>
+          <div class="dashboard-grid">
+            <section class="dashboard-panel">
+              <h3 class="sub">Leaderboard</h3>
+              <div id="leaderboard-body" class="muted small">Run a benchmark suite to populate the leaderboard.</div>
+            </section>
+            <section class="dashboard-panel">
+              <h3 class="sub">Speed vs quality</h3>
+              <div id="scatter-body" class="muted small">No runs yet.</div>
+            </section>
+          </div>
+          <section class="dashboard-panel wide">
+            <h3 class="sub">Category heatmap</h3>
+            <div id="heatmap-body" class="muted small">No runs yet.</div>
+          </section>
+          <details class="dashboard-panel wide advanced-panel">
+            <summary>
+              <span class="sub">Per-test matrix</span>
+              <span class="muted small">Advanced pass/fail grid</span>
+            </summary>
+            <div id="matrix-body" class="muted small">No runs yet.</div>
+          </details>
+        </div>
+
+        <div class="card">
+          <div class="card-head">
+            <h2>Compare selected</h2>
+            <div class="row gap">
+              <button class="btn" id="btn-export-selected" disabled>Export selected</button>
+              <button class="btn" id="btn-compare">Compare selected</button>
+            </div>
+          </div>
+          <div class="row gap wrap compare-toolbar">
+            <button class="btn compact" id="btn-select-all-runs">Select all</button>
+            <button class="btn compact" id="btn-deselect-all-runs">Deselect all</button>
+            <label class="btn file">Import card(s) <input type="file" id="card-import" accept=".html,.json" multiple hidden /></label>
+            <label class="field compact-field">
+              <span>Baseline</span>
+              <select id="compare-baseline"></select>
+            </label>
+          </div>
+          <div id="compare-status" class="muted small compare-status"></div>
+          <div id="run-library" class="run-library"></div>
+          <div id="compare-body"></div>
+          <div id="response-drawer" class="response-drawer hidden"></div>
+        </div>
+
+        <div class="card" id="detailed-results-card">
+          <div class="card-head">
+            <h2>Detailed results</h2>
+            <div class="row gap wrap">
+              <label class="field compact-field">
+                <span>Model</span>
+                <select id="detail-filter-run"><option value="">All runs</option></select>
+              </label>
+              <label class="field compact-field">
+                <span>Category</span>
+                <select id="detail-filter-category"><option value="">All categories</option></select>
+              </label>
+              <label class="field compact-field">
+                <span>Result</span>
+                <select id="detail-filter-result">
+                  <option value="">All</option>
+                  <option value="pass">Pass</option>
+                  <option value="fail">Fail</option>
+                  <option value="slow">Slowest failures</option>
+                </select>
+              </label>
+            </div>
+          </div>
           <div id="run-category-rollup"></div>
           <div class="table-wrap">
             <table id="run-table" class="results hidden">
-              <thead>
-                <tr><th>Test</th><th>Category</th><th>Result</th><th class="num">Latency</th><th class="num">tok/s</th><th class="num">Accuracy</th><th></th></tr>
-              </thead>
+              <thead><tr><th>Run</th><th>Test</th><th>Category</th><th>Result</th><th class="num">Latency</th><th class="num">tok/s</th><th class="num">Accuracy</th><th></th></tr></thead>
               <tbody></tbody>
             </table>
           </div>
-        </div>
-
-        <!-- Compare report cards -->
-        <div class="card">
-          <div class="card-head"><h2>Compare report cards</h2></div>
-          <p class="muted small">
-            Drop two exported cards (<code>.html</code>) to diff them — old model vs new, or quant A vs B.
-          </p>
-          <div class="row gap wrap">
-            <label class="btn file">Card A <input type="file" id="card-a" accept=".html,.json" hidden /></label>
-            <label class="btn file">Card B <input type="file" id="card-b" accept=".html,.json" hidden /></label>
-            <button class="btn" id="btn-compare">Compare</button>
-          </div>
-          <div id="compare-status" class="muted small" style="margin-top: 0.4rem"></div>
-          <div id="compare-body"></div>
         </div>
       </section>
     </main>
 
     <div id="toasts" class="toasts" aria-live="polite"></div>
-    <script src="app.js?v=20260623-ui7"></script>
+    <script src="app.js?v=20260624-ui14"></script>
   </body>
 </html>
