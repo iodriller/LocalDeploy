@@ -75,7 +75,7 @@ def test_recommend_ranks_fitting_profiles(monkeypatch):
         margin = 4.0 if req.profile == "gemma3_4b_ollama_safe" else 1.0
         return {"verdict": "FITS", "margin_gb": margin}
 
-    def fake_execute(base_url, name, profile, test, timeout):
+    def fake_execute(base_url, name, profile, test, timeout, num_gpu=None):
         fast = name == "gemma3_4b_ollama_safe"
         return benchmark.TestResult(
             name=test.name, category=test.category, success=True,

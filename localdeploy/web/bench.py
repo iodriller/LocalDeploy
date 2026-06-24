@@ -196,8 +196,13 @@ def benchmark_run(req: RunRequest):
             except Exception:
                 pre_existing = set()
 
+            # For a forced CPU/GPU run, pin the same num_gpu on every inference
+            # call (not just the warm-up) so the benchmark measures the requested
+            # device end-to-end instead of whatever Ollama re-places it onto.
+            forced_num_gpu: Optional[int] = None
             if requested_device in {"cpu", "gpu"}:
                 routes = ensure_model_routes()
+                forced_num_gpu = routes._resolve_num_gpu(requested_device, None)
 
                 for profile_name in selected:
                     profile = profiles_map[profile_name]
@@ -249,7 +254,7 @@ def benchmark_run(req: RunRequest):
                     if served.get("warning"):
                         deploy_end["warning"] = served["warning"]
                     yield sse(deploy_end)
-            for event in bench.iter_run(base_url, profiles_map, selected, tests, req.timeout):
+            for event in bench.iter_run(base_url, profiles_map, selected, tests, req.timeout, num_gpu=forced_num_gpu):
                 if event.get("event") == "profile_end":
                     actual = current_placement(str(event.get("profile") or ""))
                     if actual:

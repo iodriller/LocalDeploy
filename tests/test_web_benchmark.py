@@ -43,7 +43,7 @@ def test_validate_rejects_bad_set() -> None:
 
 
 def test_run_streams_results(monkeypatch) -> None:
-    def fake_execute(base_url, name, profile, test, timeout):
+    def fake_execute(base_url, name, profile, test, timeout, num_gpu=None):
         return benchmark.TestResult(
             name=test.name,
             category=test.category,
@@ -77,7 +77,7 @@ def test_run_with_device_deploys_before_benchmark(monkeypatch) -> None:
         deploys.append({"model_id": model_id, "keep_alive": keep_alive, "num_gpu": num_gpu})
         return {"success": True}
 
-    def fake_execute(base_url, name, profile, test, timeout):
+    def fake_execute(base_url, name, profile, test, timeout, num_gpu=None):
         return benchmark.TestResult(
             name=test.name,
             category=test.category,
@@ -107,10 +107,68 @@ def test_run_with_device_deploys_before_benchmark(monkeypatch) -> None:
     assert unloaded == ["gemma3:4b"]
 
 
+def test_forced_device_pins_num_gpu_on_each_inference(monkeypatch) -> None:
+    # The fix: a forced CPU run must pin num_gpu on the inference calls too, not
+    # just the warm-up — otherwise Ollama can re-place the model on GPU mid-run.
+    seen_num_gpu = []
+
+    def fake_execute(base_url, name, profile, test, timeout, num_gpu=None):
+        seen_num_gpu.append(num_gpu)
+        return benchmark.TestResult(
+            name=test.name,
+            category=test.category,
+            success=True,
+            elapsed_seconds=0.1,
+            response_length=4,
+            response_preview="ok",
+            accuracy=1.0,
+        )
+
+    monkeypatch.setattr(models_mod, "_serve_ollama", lambda *a, **k: {"success": True})
+    monkeypatch.setattr(models_mod._ollama, "list_running", lambda: ([{"name": "gemma3:4b", "size": 1, "size_vram": 0}], None))
+    monkeypatch.setattr(models_mod._ollama, "unload_model", lambda model: {})
+    monkeypatch.setattr(benchmark, "execute_test", fake_execute)
+    example = client.get("/benchmark/example").json()
+    response = client.post(
+        "/benchmark/run",
+        json={"profiles": ["gemma3_4b_ollama_safe"], "questions": example, "device": "cpu"},
+    )
+    assert response.status_code == 200
+    assert seen_num_gpu, "execute_test was never called"
+    assert all(n == 0 for n in seen_num_gpu), f"expected num_gpu=0 on every call, got {seen_num_gpu}"
+
+
+def test_auto_device_leaves_num_gpu_unset(monkeypatch) -> None:
+    # Auto (no device) must not pin num_gpu — unchanged behavior, Ollama decides.
+    seen_num_gpu = []
+
+    def fake_execute(base_url, name, profile, test, timeout, num_gpu=None):
+        seen_num_gpu.append(num_gpu)
+        return benchmark.TestResult(
+            name=test.name,
+            category=test.category,
+            success=True,
+            elapsed_seconds=0.1,
+            response_length=4,
+            response_preview="ok",
+            accuracy=1.0,
+        )
+
+    monkeypatch.setattr(models_mod._ollama, "list_running", lambda: ([], None))
+    monkeypatch.setattr(benchmark, "execute_test", fake_execute)
+    example = client.get("/benchmark/example").json()
+    response = client.post(
+        "/benchmark/run",
+        json={"profiles": ["gemma3_4b_ollama_safe"], "questions": example},
+    )
+    assert response.status_code == 200
+    assert seen_num_gpu and all(n is None for n in seen_num_gpu)
+
+
 def test_run_unloads_auto_loaded_benchmark_model(monkeypatch) -> None:
     unloaded = []
 
-    def fake_execute(base_url, name, profile, test, timeout):
+    def fake_execute(base_url, name, profile, test, timeout, num_gpu=None):
         return benchmark.TestResult(
             name=test.name,
             category=test.category,
