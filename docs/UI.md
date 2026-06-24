@@ -67,12 +67,17 @@ The benchmark tab is a local experiment workspace. It keeps run records in brows
 - **Run queue** creates one row per model/device variant and runs sequentially by default to avoid
   VRAM contention. Each queued row shows waiting/deploying/running/complete/failed state, current
   test progress, elapsed progress, and supports cancellation. Waiting rows can be moved up/down
-  or removed before they run; the active run is shown only in the larger progress panel.
+  or removed before they run; finished (complete/failed/stopped) rows can be dismissed individually
+  or all at once with **Clear finished**, and failed rows show their error reason inline. The active
+  run is shown only in the larger progress panel, with a **Stop** button that ends just that run and
+  continues the queue (vs. the global **Cancel** that stops the whole queue).
 - **Benchmark device** controls placement for each queued run. **Auto** leaves the current/default
-  Ollama placement alone. **CPU** and **GPU** unload and reload the model before benchmarking so
-  the measurement matches the requested target. **CPU + GPU** is implemented as two queued batches:
-  one with `device=cpu`, one with `device=gpu`. If Ollama reports a different known placement after
-  reload, the benchmark fails cleanly instead of recording a mislabeled run.
+  Ollama placement alone. **CPU** and **GPU** reload the model on that device *and* pin the same
+  `num_gpu` on every inference call, so the measured run stays on the requested device end-to-end
+  (not just at warm-up). **CPU + GPU** is implemented as two queued batches: one with `device=cpu`,
+  one with `device=gpu`. If Ollama can't fully honor the request (e.g. a model too big for pure GPU
+  lands on **Split**), the run still proceeds and is labeled with the *actual* placement reported by
+  `/system/status` — so nothing is mislabeled and a reasonable device choice doesn't fail outright.
 - Benchmark deployments are temporary. After each benchmarked Ollama profile finishes, the server
   unloads the benchmark model so the benchmark tab does not become a permanent deployment action.
 - **Results Dashboard** is the main analysis surface after runs finish:
@@ -123,7 +128,10 @@ Graders are selected by `type` from a fixed registry (uploads stay safe JSON —
   multiple runs are selected. Bundles use `kind: "localdeploy.run_bundle"`.
 - **Import card(s)** accepts exported `.html` cards and `.json` bundles. Imported runs appear in
   the same local run library as fresh benchmark results.
-- **Compare selected** replaces the old two-slot compare form. Select 2-4 current or imported
+- **Managing history**: each run in the library has an **×** to remove just that run; **Clear
+  history** wipes them all (with a confirm, since it also drops imported cards). **Select all** /
+  **Deselect all** drive which runs feed the dashboard and comparison.
+- **Compare selected** replaces the old two-slot compare form. Select 2 or more current or imported
   runs, pin a baseline, and compare deltas for pass count, accuracy, latency, and tok/s. The
   response detail drawer can show the same test's model outputs side by side. Fresh benchmark
   results are automatically added to the selected comparison set when there are prior runs.

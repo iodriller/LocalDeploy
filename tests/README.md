@@ -8,6 +8,13 @@ Offline tests for the full LocalDeploy stack. They run against the in-process Fa
 python -m pip install -r requirements-dev.txt
 ```
 
+The browser UI smoke tests (`test_ui_playwright.py`) also need a Chromium build,
+fetched once. They **skip cleanly** if it's absent, so this step is optional:
+
+```powershell
+python -m playwright install chromium
+```
+
 ## Run
 
 ```powershell
@@ -50,6 +57,9 @@ pytest tests/test_guardrails.py -v
 - `test_web_endpoints.py` — web control-plane routes (serve, stop, switch, hardware, status, recommend).
 - `test_web_assets.py` — JS parses as valid JavaScript, cache-busting version strings are correct, UI controls have expected IDs.
 - `test_web_differentiators.py` — report card export and A/B compare endpoints.
+- `test_ui_playwright.py` — **browser** smoke tests: launches the real app and drives `/ui` in
+  headless Chromium (tab switching, benchmark run-library per-run delete, clear-history confirm).
+  Skips cleanly if Playwright or its browser isn't installed.
 
 **Phase regression**
 - `test_phase5_phase6.py` — Phase 5 (HF discovery) and Phase 6 (device-tagged benchmark cards).

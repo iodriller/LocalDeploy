@@ -47,6 +47,11 @@ jobs:
       - name: Install dependencies
         run: python -m pip install -r requirements-dev.txt
 
+      # Install the Chromium build the browser UI smoke tests need. If this step
+      # is ever removed, those tests skip cleanly rather than failing.
+      - name: Install Playwright browser
+        run: python -m playwright install --with-deps chromium
+
       - name: Run pytest
         run: pytest -q
         env:
