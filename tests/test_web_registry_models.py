@@ -264,7 +264,10 @@ def test_serve_auto_does_not_unload_before_load(monkeypatch) -> None:
     assert calls == [("load", "gemma3:4b", None)]
 
 
-def test_serve_cpu_fails_if_ollama_reports_split(monkeypatch) -> None:
+def test_serve_cpu_warns_but_proceeds_if_ollama_reports_split(monkeypatch) -> None:
+    # A device request that Ollama can't fully honor (model too big for pure CPU
+    # so it lands on Split) should warn and proceed, not hard-fail: the run stays
+    # useful and is labeled with the actual placement.
     monkeypatch.setattr(models_mod._ollama, "unload_model", lambda _m: {})
     monkeypatch.setattr(models_mod._ollama, "load_model", lambda _m, _k, num_gpu=None: {})
     monkeypatch.setattr(
@@ -273,9 +276,9 @@ def test_serve_cpu_fails_if_ollama_reports_split(monkeypatch) -> None:
         lambda: ([{"name": "gemma3:4b", "size": 1000, "size_vram": 500}], None),
     )
     body = client.post("/models/serve", json={"model": "gemma3:4b", "device": "cpu"}).json()
-    assert body["success"] is False
-    assert "Requested CPU" in body["error"]
-    assert "Split" in body["error"]
+    assert body["success"] is True
+    assert "Requested CPU" in body["warning"]
+    assert "Split" in body["warning"]
 
 
 def test_serve_default_keep_alive_is_sixty_minutes(monkeypatch) -> None:

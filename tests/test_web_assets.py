@@ -39,8 +39,8 @@ def test_no_smart_quotes_as_js_delimiters() -> None:
 
 def test_ui_assets_are_cache_busted_and_no_favicon_404() -> None:
     html = (WEB_DIR / "index.html").read_text(encoding="utf-8")
-    assert 'href="styles.css?v=20260624-ui14"' in html
-    assert 'src="app.js?v=20260624-ui14"' in html
+    assert 'href="styles.css?v=20260624-ui15"' in html
+    assert 'src="app.js?v=20260624-ui15"' in html
     assert 'rel="icon" href="data:,"' in html
 
 
