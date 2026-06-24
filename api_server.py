@@ -51,6 +51,10 @@ class ChatRequest(BaseModel):
     safe_mode: bool = True
     allow_clamp: bool = False
     timeout_seconds: Optional[int] = None
+    # Advanced: pin GPU layers for this request (0 = force CPU, large = force GPU).
+    # Threaded into the Ollama options so a CPU/GPU benchmark measures the device it
+    # asked for instead of letting Ollama silently re-place the model.
+    num_gpu: Optional[int] = None
 
 
 class VisionRequest(ChatRequest):
@@ -509,6 +513,7 @@ def prepare_request(
         else profile.get("repeat_penalty"),
         "context_limit_used": context_limit_used,
         "max_output_tokens_used": max_output_tokens_used,
+        "num_gpu": data.get("num_gpu"),
         "timeout_seconds": timeout_seconds,
         "estimated_prompt_chars": estimated_prompt_chars,
         "estimated_prompt_tokens": estimated_prompt_tokens,

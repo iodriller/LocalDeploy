@@ -106,7 +106,7 @@ def test_validation_rejects_non_object():
 
 
 def _stub(success: bool, error: str = None):
-    def execute(base_url, name, profile, test, timeout):
+    def execute(base_url, name, profile, test, timeout, num_gpu=None):
         return _TestResult(
             name=test.name,
             category=test.category,

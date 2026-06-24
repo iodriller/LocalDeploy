@@ -1107,7 +1107,14 @@ def strip_thinking_tags(text: str) -> str:
     return text
 
 
-def call_chat(base_url: str, profile_name: str, profile_cfg: Dict[str, Any], test: TestCase, timeout: int) -> Dict[str, Any]:
+def call_chat(
+    base_url: str,
+    profile_name: str,
+    profile_cfg: Dict[str, Any],
+    test: TestCase,
+    timeout: int,
+    num_gpu: Optional[int] = None,
+) -> Dict[str, Any]:
     suffix = str(profile_cfg.get("prompt_suffix") or "")
     prompt = test.prompt + (("\n\n" + suffix) if suffix else "")
     payload = {
@@ -1116,6 +1123,10 @@ def call_chat(base_url: str, profile_name: str, profile_cfg: Dict[str, Any], tes
         "safe_mode": True,
         "max_output_tokens": test.max_output_tokens,
     }
+    # Pin the device on the inference call itself so a CPU/GPU benchmark stays on
+    # the device it warmed on instead of letting Ollama re-place the model.
+    if num_gpu is not None:
+        payload["num_gpu"] = num_gpu
     try:
         response = requests.post(f"{base_url}/chat", json=payload, timeout=timeout + 10)
     except requests.Timeout:
@@ -1145,16 +1156,22 @@ def _is_not_pulled(error: Optional[str]) -> bool:
 
 
 def execute_test(
-    base_url: str, profile_name: str, profile: Dict[str, Any], test: TestCase, timeout: int
+    base_url: str,
+    profile_name: str,
+    profile: Dict[str, Any],
+    test: TestCase,
+    timeout: int,
+    num_gpu: Optional[int] = None,
 ) -> TestResult:
     """Run one test against one profile and grade it.
 
     This is the shared per-test unit used by both the CLI run loop (`run_profile`)
     and the streaming `/benchmark/run` endpoint, so call + grading never diverge.
     It does not print PASS/FAIL or sample VRAM — those stay with the caller.
+    ``num_gpu`` pins the device on the inference call (0 = CPU) for forced runs.
     """
     started = time.perf_counter()
-    data = call_chat(base_url, profile_name, profile, test, timeout)
+    data = call_chat(base_url, profile_name, profile, test, timeout, num_gpu=num_gpu)
     elapsed = float(data.get("elapsed_seconds") or (time.perf_counter() - started))
     raw_resp = data.get("response")
     response_text = raw_resp if isinstance(raw_resp, str) else json.dumps(raw_resp or "", ensure_ascii=False)
@@ -1241,13 +1258,15 @@ def iter_run(
     selected: List[str],
     tests: List[TestCase],
     timeout: int,
+    num_gpu: Optional[int] = None,
 ) -> Iterator[Dict[str, Any]]:
     """Stream a benchmark run as a sequence of event dicts.
 
     Shares `execute_test` with the CLI so grading is identical. Emits:
     run_start, profile_start, test_result(*), profile_aborted?, profile_end,
     run_end. Used by the streaming /benchmark/run endpoint. No printing, no
-    VRAM tracking — the caller decides how to present events.
+    VRAM tracking — the caller decides how to present events. ``num_gpu`` pins
+    the device on each inference call (0 = CPU) for forced CPU/GPU runs.
     """
     yield {
         "event": "run_start",
@@ -1264,7 +1283,7 @@ def iter_run(
         consecutive_fail = 0
         prof: List[TestResult] = []
         for test in tests:
-            item = execute_test(base_url, name, profile, test, timeout)
+            item = execute_test(base_url, name, profile, test, timeout, num_gpu=num_gpu)
             prof.append(item)
             event = asdict(item)
             event["event"] = "test_result"
