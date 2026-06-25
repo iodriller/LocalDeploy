@@ -90,9 +90,9 @@ function Clear-ZombieOnPort {
     $port = $uri.Port
     $listener = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
     if (-not $listener) { return }
-    $pid = $listener.OwningProcess
-    Write-Warning "Port $port is held by PID $pid but not answering HTTP. Killing it before starting a fresh server."
-    Stop-Process -Id $pid -Force -ErrorAction SilentlyContinue
+    $ownerPid = $listener.OwningProcess
+    Write-Warning "Port $port is held by PID $ownerPid but not answering HTTP. Killing it before starting a fresh server."
+    Stop-Process -Id $ownerPid -Force -ErrorAction SilentlyContinue
     Start-Sleep -Milliseconds 600
 }
 

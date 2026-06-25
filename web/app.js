@@ -23,6 +23,7 @@ const state = {
   questionSetValidation: null,
   lastRun: null,
   benchmarkRuns: [],
+  liveBenchmarkRuns: [],
   benchmarkSelectedProfiles: [],
   selectedRunIds: [],
   compareBaselineId: null,
@@ -102,6 +103,11 @@ function saveBenchmarkRuns() {
   } catch {
     /* localStorage can be disabled; the current session still works */
   }
+}
+
+function allBenchmarkRuns() {
+  const liveIds = new Set(state.liveBenchmarkRuns.map((r) => r.id));
+  return [...state.liveBenchmarkRuns, ...state.benchmarkRuns.filter((r) => !liveIds.has(r.id))];
 }
 
 function runLabel(run) {
@@ -186,6 +192,44 @@ function addBenchmarkRuns(runs, selectNew = true) {
   }
   saveBenchmarkRuns();
   renderBenchmarkWorkspace();
+}
+
+function liveRecordFromQueueItem(item) {
+  const tests = item.tests || [];
+  return {
+    ...normalizeRunRecord(
+      {
+        ...item,
+        hardware: state.lastHardware || {},
+        summary: summaryFromTests(tests),
+        category_summary: categorySummary(tests),
+        source: "live-run",
+      },
+      "live-run"
+    ),
+    status: item.status,
+    progress: item.progress || 0,
+  };
+}
+
+function syncLiveBenchmarkRun(item, select = false) {
+  if (!item || !(item.tests || []).length) return;
+  const record = liveRecordFromQueueItem(item);
+  const idx = state.liveBenchmarkRuns.findIndex((r) => r.id === record.id);
+  if (idx >= 0) state.liveBenchmarkRuns[idx] = record;
+  else state.liveBenchmarkRuns.unshift(record);
+  state.activeRunId = record.id;
+  if (select && !state.selectedRunIds.includes(record.id)) {
+    state.selectedRunIds = [...state.selectedRunIds, record.id];
+    if (!state.compareBaselineId) state.compareBaselineId = record.id;
+  }
+  renderBenchmarkWorkspace();
+}
+
+function removeLiveBenchmarkRun(id, rerender = true) {
+  const before = state.liveBenchmarkRuns.length;
+  state.liveBenchmarkRuns = state.liveBenchmarkRuns.filter((r) => r.id !== id);
+  if (rerender && before !== state.liveBenchmarkRuns.length) renderBenchmarkWorkspace();
 }
 
 function esc(value) {
@@ -469,8 +513,8 @@ function scheduleFitRefresh() {
   clearTimeout(state.fitRefreshTimer);
   state.fitRefreshTimer = setTimeout(() => {
     $$(".mrow[data-model]", $("#installed-body")).forEach((row) => fitCheckRow(row));
-    if (!$("#fit-finder-body")?.textContent.includes("Not scanned")) scanConfiguredFits();
-    if (!$("#updates-body")?.textContent.includes("Not checked")) checkUpdates();
+    if (!$("#fit-finder-body")?.textContent.includes("not been scanned")) scanConfiguredFits();
+    if (!$("#updates-body")?.textContent.includes("No Hugging Face search")) checkUpdates();
   }, 350);
 }
 
@@ -510,19 +554,21 @@ async function refreshLiveModelState(includeInstalled = false) {
 // ---------------------------------------------------------------------------
 // Tabs
 // ---------------------------------------------------------------------------
-$$(".tab").forEach((tab) =>
-  tab.addEventListener("click", () => {
-    $$(".tab").forEach((t) => t.classList.toggle("active", t === tab));
-    $$(".tab").forEach((t) => t.setAttribute("aria-selected", t === tab ? "true" : "false"));
-    const name = tab.dataset.tab;
-    $$(".tab-panel").forEach((p) => p.classList.toggle("active", p.id === `tab-${name}`));
-    if (name === "serve") {
-      void refreshLiveModelState(true);
-    } else if (name === "bench") {
-      void refreshStatus();
-    }
-  })
-);
+function activateTab(name) {
+  $$(".tab").forEach((t) => {
+    const active = t.dataset.tab === name;
+    t.classList.toggle("active", active);
+    t.setAttribute("aria-selected", active ? "true" : "false");
+  });
+  $$(".tab-panel").forEach((p) => p.classList.toggle("active", p.id === `tab-${name}`));
+  if (name === "serve") {
+    void refreshLiveModelState(true);
+  } else if (name === "bench") {
+    void refreshStatus();
+  }
+}
+
+$$(".tab").forEach((tab) => tab.addEventListener("click", () => activateTab(tab.dataset.tab)));
 
 // ---------------------------------------------------------------------------
 // Bootstrap
@@ -1287,7 +1333,7 @@ async function startProfile(profile, btn) {
 }
 
 // ---------------------------------------------------------------------------
-// Tab 1 — Check New Models (Hugging Face)
+// Tab 1 — Hugging Face model search
 // ---------------------------------------------------------------------------
 function fmtNum(n) {
   if (n == null) return null;
@@ -1691,6 +1737,7 @@ function buildRunQueue(profiles, deviceChoice, questionInfo) {
       actualDevice: null,
       questionSetName: questionInfo.name,
       questionSetHash: questionInfo.hash,
+      createdAt: new Date().toISOString(),
       status: "waiting",
       progress: 0,
       current: "Waiting",
@@ -1704,22 +1751,35 @@ function buildRunQueue(profiles, deviceChoice, questionInfo) {
 function renderRunQueue(queue) {
   const slot = $("#run-queue");
   if (!queue.length) {
-    slot.innerHTML = `<div class="muted small">Queue is empty.</div>`;
+    slot.innerHTML = `<div class="muted small">No benchmark runs are queued.</div>`;
     return;
   }
-  const visible = queue.filter((item) => !["deploying", "running"].includes(item.status));
-  if (!visible.length) {
-    slot.innerHTML = `<div class="muted small">No other queued runs.</div>`;
-    return;
-  }
-  const finished = visible.filter((item) => ["complete", "failed", "stopped"].includes(item.status)).length;
+  const finished = queue.filter((item) => ["complete", "failed", "stopped"].includes(item.status)).length;
   slot.innerHTML =
     (finished > 1
       ? `<div class="queue-toolbar"><button class="btn compact" id="btn-clear-finished" title="Remove completed, failed, and stopped rows from the queue">Clear finished (${finished})</button></div>`
       : "") +
-    visible
+    queue
       .map((item) => {
-        const cls = item.status === "complete" ? "on" : item.status === "failed" ? "wont" : "off";
+        const cls =
+          item.status === "complete"
+            ? "on"
+            : item.status === "failed"
+              ? "wont"
+              : item.status === "stopped"
+                ? "tight"
+                : item.status === "deploying" || item.status === "running"
+                  ? "cpu"
+                  : "off";
+        const label =
+          {
+            waiting: "Queued",
+            deploying: "Deploying",
+            running: "Running",
+            complete: "Finished",
+            failed: "Failed",
+            stopped: "Stopped",
+          }[item.status] || item.status;
         const elapsed = item.elapsedSeconds != null
           ? `${item.elapsedSeconds}s`
           : item.startedAt
@@ -1727,6 +1787,11 @@ function renderRunQueue(queue) {
             : "0s";
         const canMove = item.status === "waiting";
         const isFinished = ["complete", "failed", "stopped"].includes(item.status);
+        const showProgress = ["deploying", "running"].includes(item.status) && (item.status === "deploying" || item.total || item.progress);
+        const indeterminate = item.status === "deploying" && !item.progress;
+        const progress = showProgress
+          ? `<div class="queue-row-progress"><div class="run-progress-track"><div class="run-progress-fill${indeterminate ? " indeterminate" : ""}"${indeterminate ? "" : ` style="width:${esc(item.progress || 0)}%"`}></div></div></div>`
+          : "";
         // Waiting rows can be reordered + removed; finished rows can be dismissed.
         const controls =
           canMove || isFinished
@@ -1739,14 +1804,16 @@ function renderRunQueue(queue) {
         const reason = item.status === "failed" && item.error
           ? `<span class="muted small queue-reason" title="${esc(item.error)}">${esc(item.error)}</span>`
           : "";
-        return `<div class="queue-row" data-id="${esc(item.id)}">
+        return `<div class="queue-row queue-status-${esc(item.status)}" data-id="${esc(item.id)}">
+          <span class="queue-status-dot" aria-hidden="true"></span>
           <div class="queue-row-main">
             <b>${esc(runLabel(item))}</b>
             <span class="muted small">${esc(item.profile)} · ${esc(item.current || item.status)} · ${esc(elapsed)}</span>
+            ${progress}
             ${reason}
           </div>
           <div class="queue-row-side">
-            <span class="badge ${cls}">${esc(item.status)}</span>
+            <span class="badge ${cls}">${esc(label)}</span>
             ${controls}
           </div>
         </div>`;
@@ -1833,6 +1900,10 @@ async function runQueueItem(item, questionInfo, timeout, controller) {
       item.status = "running";
       item.current = "Model warm-up";
       setActiveRun(item, done, total);
+    } else if (evt.event === "test_start") {
+      item.status = "running";
+      item.current = `Running ${evt.name || "test"}`;
+      setActiveRun(item, done, total);
     } else if (evt.event === "test_result") {
       item.status = "running";
       done++;
@@ -1843,15 +1914,18 @@ async function runQueueItem(item, questionInfo, timeout, controller) {
       item.current = `${done} / ${total || "?"} tests`;
       setProgress(item.progress);
       setActiveRun(item, done, total);
+      syncLiveBenchmarkRun(item, true);
     } else if (evt.event === "profile_aborted") {
       item.status = "failed";
       item.error = evt.reason || "profile aborted";
       item.current = item.error;
       setActiveRun(item, done, total);
+      removeLiveBenchmarkRun(item.id);
     } else if (evt.event === "profile_end") {
       if (evt.actual_device) item.actualDevice = evt.actual_device;
       item.current = "Benchmark complete";
       setActiveRun(item, done || total, total);
+      syncLiveBenchmarkRun(item, true);
     } else if (evt.event === "benchmark_unload_end") {
       item.current = "Temporary benchmark model unloaded";
       setActiveRun(item, done || total, total);
@@ -1864,11 +1938,13 @@ async function runQueueItem(item, questionInfo, timeout, controller) {
       item.progress = 100;
       setProgress(100);
       setActiveRun(item, done || total, total);
+      syncLiveBenchmarkRun(item, true);
     } else if (evt.event === "error") {
       item.status = "failed";
       item.error = evt.error || "run failed";
       item.current = item.error;
       setActiveRun(item, done, total);
+      removeLiveBenchmarkRun(item.id);
     }
     renderRunQueue(state.currentQueue || []);
     }, controller.signal);
@@ -1882,6 +1958,7 @@ async function runQueueItem(item, questionInfo, timeout, controller) {
       item.current = "Stopped";
       item.error = "Stopped by user";
       setActiveRun(null);
+      removeLiveBenchmarkRun(item.id);
       renderRunQueue(state.currentQueue || []);
       const note = $("#run-summary");
       if (note) {
@@ -1898,14 +1975,19 @@ async function runQueueItem(item, questionInfo, timeout, controller) {
     item.status = "failed";
     item.error = j.error || "Run could not start.";
     item.current = item.error;
+    removeLiveBenchmarkRun(item.id);
     renderRunQueue(state.currentQueue || []);
     return null;
   }
-  if (item.status === "failed") return null;
+  if (item.status === "failed") {
+    removeLiveBenchmarkRun(item.id);
+    return null;
+  }
   if (!item.tests.length) {
     item.status = "failed";
     item.error = "No test results streamed.";
     item.current = item.error;
+    removeLiveBenchmarkRun(item.id);
     renderRunQueue(state.currentQueue || []);
     return null;
   }
@@ -1926,6 +2008,7 @@ async function runQueueItem(item, questionInfo, timeout, controller) {
   );
   summary.className = "result";
   summary.textContent = `Completed ${runLabel(run)}. Continuing queue.`;
+  removeLiveBenchmarkRun(item.id, false);
   renderRunQueue(state.currentQueue || []);
   return run;
 }
@@ -1993,11 +2076,13 @@ async function runBenchmark() {
       state.activeController = itemController;
       const run = await runQueueItem(item, questionInfo, timeout, itemController);
       state.activeController = null;
-      if (run) completed.push(run);
+      if (run) {
+        completed.push(run);
+        addBenchmarkRuns([run], true);
+      }
       index++;
     }
     if (completed.length) {
-      addBenchmarkRuns(completed, true);
       summary.className = "result ok";
       summary.textContent = `Completed ${completed.length}/${queue.length} benchmark run${queue.length === 1 ? "" : "s"}.`;
     } else {
@@ -2018,7 +2103,6 @@ async function runBenchmark() {
       summary.className = "result err";
       summary.textContent = `Benchmark queue failed: ${err.message}`;
     }
-    if (completed.length) addBenchmarkRuns(completed, true);
     renderRunQueue(queue);
   } finally {
     clearInterval(activeTimer);
@@ -2037,9 +2121,10 @@ async function runBenchmark() {
 // Tab 2 — Report cards: export + compare
 // ---------------------------------------------------------------------------
 function runsForDashboard() {
-  if (!state.selectedRunIds.length) return state.benchmarkRuns;
+  const runs = allBenchmarkRuns().filter((r) => (r.tests || []).length);
+  if (!state.selectedRunIds.length) return runs;
   const selected = new Set(state.selectedRunIds);
-  return state.benchmarkRuns.filter((r) => selected.has(r.id));
+  return runs.filter((r) => selected.has(r.id));
 }
 
 function renderWinners(runs) {
@@ -2069,7 +2154,7 @@ function renderWinners(runs) {
 function renderLeaderboard(runs) {
   const slot = $("#leaderboard-body");
   if (!runs.length) {
-    slot.innerHTML = "Run a benchmark suite to populate the leaderboard.";
+    slot.innerHTML = "Benchmark results appear here after the first streamed test result.";
     return;
   }
   const rows = [...runs]
@@ -2102,7 +2187,7 @@ function heatColor(acc) {
 function renderHeatmap(runs) {
   const slot = $("#heatmap-body");
   if (!runs.length) {
-    slot.innerHTML = "No runs yet.";
+    slot.innerHTML = "Run benchmarks to fill the category heatmap.";
     return;
   }
   const categories = Array.from(new Set(runs.flatMap((r) => (r.category_summary || categorySummary(r.tests)).map((c) => c.category)))).sort();
@@ -2126,7 +2211,7 @@ function renderScatter(runs) {
   const slot = $("#scatter-body");
   const points = runs.filter((r) => r.summary.avg_latency_s != null && r.summary.avg_accuracy != null);
   if (!points.length) {
-    slot.innerHTML = "No runs yet.";
+    slot.innerHTML = "Run at least one benchmark to plot speed and quality.";
     return;
   }
   if (points.length < 2) {
@@ -2162,7 +2247,7 @@ function renderScatter(runs) {
 function renderMatrix(runs) {
   const slot = $("#matrix-body");
   if (!runs.length) {
-    slot.innerHTML = "No runs yet.";
+    slot.innerHTML = "Run benchmarks to fill the pass/fail matrix.";
     return;
   }
   const tests = Array.from(new Set(runs.flatMap((r) => (r.tests || []).map((t) => t.name)))).sort();
@@ -2190,10 +2275,11 @@ function renderDetailedResults(runs = runsForDashboard()) {
   const resultFilter = $("#detail-filter-result")?.value || "";
   const selectedRun = runFilter?.value || "";
   const selectedCat = catFilter?.value || "";
-  const categories = Array.from(new Set(state.benchmarkRuns.flatMap((r) => (r.tests || []).map((t) => t.category || "?")))).sort();
+  const allRuns = allBenchmarkRuns();
+  const categories = Array.from(new Set(allRuns.flatMap((r) => (r.tests || []).map((t) => t.category || "?")))).sort();
   if (runFilter) {
     const current = runFilter.value;
-    runFilter.innerHTML = `<option value="">All runs</option>${state.benchmarkRuns.map((r) => `<option value="${esc(r.id)}">${esc(runLabel(r))}</option>`).join("")}`;
+    runFilter.innerHTML = `<option value="">All runs</option>${allRuns.map((r) => `<option value="${esc(r.id)}">${esc(runLabel(r))}</option>`).join("")}`;
     runFilter.value = current;
   }
   if (catFilter) {
@@ -2202,7 +2288,7 @@ function renderDetailedResults(runs = runsForDashboard()) {
     catFilter.value = current;
   }
   const rows = [];
-  for (const r of state.benchmarkRuns) {
+  for (const r of allRuns) {
     if (selectedRun && r.id !== selectedRun) continue;
     for (const t of r.tests || []) {
       if (selectedCat && t.category !== selectedCat) continue;
@@ -2221,20 +2307,29 @@ function renderDetailedResults(runs = runsForDashboard()) {
 function renderRunLibrary() {
   const body = $("#run-library");
   if (!body) return;
-  if (!state.benchmarkRuns.length) {
-    body.innerHTML = `<div class="muted small">No completed or imported runs yet.</div>`;
+  const runs = allBenchmarkRuns();
+  if (!runs.length) {
+    body.innerHTML = `<div class="muted small">No active, completed, or imported runs yet.</div>`;
     return;
   }
   const selected = new Set(state.selectedRunIds);
-  body.innerHTML = state.benchmarkRuns
-    .map((r) => `<div class="run-library-row${selected.has(r.id) ? " selected" : ""}">
+  body.innerHTML = runs
+    .map((r) => {
+      const live = r.source === "live-run";
+      const badgeClass = live ? "cpu" : r.source === "imported-card" ? "cpu" : "on";
+      const source = live ? `${r.status || "running"} · ${r.progress || 0}%` : `${r.source} · ${new Date(r.createdAt).toLocaleString()}`;
+      const action = live
+        ? `<span class="muted small">Active</span>`
+        : `<button class="btn compact danger run-delete" data-id="${esc(r.id)}" title="Remove this run from history" aria-label="Remove run">×</button>`;
+      return `<div class="run-library-row${selected.has(r.id) ? " selected" : ""}${live ? " live" : ""}">
       <label class="run-library-pick">
         <input type="checkbox" value="${esc(r.id)}"${selected.has(r.id) ? " checked" : ""} />
-        <span><b>${esc(runLabel(r))}</b><span class="muted small">${esc(r.source)} · ${esc(new Date(r.createdAt).toLocaleString())}</span></span>
-        <span class="badge ${r.source === "imported-card" ? "cpu" : "on"}">${esc(r.summary.passed)}/${esc(r.summary.tests)}</span>
+        <span><b>${esc(runLabel(r))}</b><span class="muted small">${esc(source)}</span></span>
+        <span class="badge ${badgeClass}">${esc(r.summary.passed)}/${esc(r.summary.tests)}</span>
       </label>
-      <button class="btn compact danger run-delete" data-id="${esc(r.id)}" title="Remove this run from history" aria-label="Remove run">×</button>
-    </div>`)
+      ${action}
+    </div>`;
+    })
     .join("");
   $$('input[type="checkbox"]', body).forEach((input) => {
     input.addEventListener("change", () => {
@@ -2266,10 +2361,12 @@ function deleteBenchmarkRun(id) {
 
 function renderCompareControls() {
   const baseline = $("#compare-baseline");
+  const runs = allBenchmarkRuns();
+  const selectedCompleted = state.selectedRunIds.filter((id) => state.benchmarkRuns.some((r) => r.id === id)).length;
   if (baseline) {
     baseline.innerHTML = state.selectedRunIds
       .map((id) => {
-        const r = state.benchmarkRuns.find((x) => x.id === id);
+        const r = runs.find((x) => x.id === id);
         return r ? `<option value="${esc(id)}">${esc(runLabel(r))}</option>` : "";
       })
       .join("");
@@ -2277,12 +2374,13 @@ function renderCompareControls() {
   }
   const status = $("#compare-status");
   if (status) status.textContent = `${state.selectedRunIds.length} selected. Select 2 or more runs to compare.`;
-  $("#btn-export-selected").disabled = state.selectedRunIds.length === 0;
-  $("#btn-export").disabled = !state.activeRunId && !state.lastRun;
+  $("#btn-export-selected").disabled = selectedCompleted === 0;
+  $("#btn-export").disabled = !(state.benchmarkRuns.find((r) => r.id === state.activeRunId) || state.lastRun);
 }
 
 function selectedComparisonRuns() {
-  return state.selectedRunIds.map((id) => state.benchmarkRuns.find((r) => r.id === id)).filter(Boolean);
+  const runs = allBenchmarkRuns();
+  return state.selectedRunIds.map((id) => runs.find((r) => r.id === id)).filter(Boolean);
 }
 
 function renderComparison(runs, baseline) {
@@ -2319,7 +2417,7 @@ function renderComparison(runs, baseline) {
 
 function renderAutoComparison() {
   const runs = selectedComparisonRuns();
-  const baseline = state.benchmarkRuns.find((r) => r.id === state.compareBaselineId) || runs[0];
+  const baseline = allBenchmarkRuns().find((r) => r.id === state.compareBaselineId) || runs[0];
   if (runs.length >= 2 && baseline) {
     renderComparison(runs, baseline);
   } else {
@@ -2330,7 +2428,7 @@ function renderAutoComparison() {
 
 function renderBenchmarkWorkspace() {
   const runs = runsForDashboard();
-  const hasRuns = state.benchmarkRuns.length > 0;
+  const hasRuns = runs.length > 0;
   $("#results-dashboard-card")?.classList.toggle("hidden", !hasRuns);
   $("#detailed-results-card")?.classList.toggle("hidden", !hasRuns);
   renderWinners(runs);
@@ -2384,7 +2482,7 @@ async function exportCard() {
 async function exportSelectedRuns() {
   const runs = state.selectedRunIds.map((id) => state.benchmarkRuns.find((r) => r.id === id)).filter(Boolean);
   if (!runs.length) {
-    toast("Select at least one run.", "error");
+    toast("Select at least one completed run to export.", "error");
     return;
   }
   const btn = $("#btn-export-selected");
@@ -2459,7 +2557,7 @@ function renderResponseDrawer(testName, runs) {
         const t = (r.tests || []).find((x) => x.name === testName);
         return `<div class="response-compare-card">
           <b>${esc(runLabel(r))}</b>
-          <div class="muted small">${t ? `${t.success ? "PASS" : "FAIL"} · acc ${t.accuracy} · ${t.elapsed_seconds}s` : "Not run"}</div>
+          <div class="muted small">${t ? `${t.success ? "PASS" : "FAIL"} · acc ${t.accuracy} · ${t.elapsed_seconds}s` : "No result for this run"}</div>
           <pre>${esc(t?.response_preview || t?.error || "(no response preview)")}</pre>
         </div>`;
       })
@@ -2468,7 +2566,7 @@ function renderResponseDrawer(testName, runs) {
 }
 
 // ---------------------------------------------------------------------------
-// Tab 1 — Tune for my GPU (Step 14)
+// Tab 1 — Auto-pick a profile (Step 14)
 // ---------------------------------------------------------------------------
 async function recommendTune() {
   const btn = $("#btn-recommend");
@@ -2591,6 +2689,7 @@ async function loadGraderTypes() {
 // ---------------------------------------------------------------------------
 // Wire up
 // ---------------------------------------------------------------------------
+$("#brand-home")?.addEventListener("click", () => activateTab("serve"));
 $("#btn-hardware").addEventListener("click", checkHardware);
 $("#btn-status").addEventListener("click", refreshStatus);
 $("#btn-serve").addEventListener("click", serveModel);
@@ -2612,7 +2711,7 @@ $("#btn-stop-active")?.addEventListener("click", () => {
   }
 });
 $("#btn-select-all-runs")?.addEventListener("click", () => {
-  state.selectedRunIds = state.benchmarkRuns.map((r) => r.id);
+  state.selectedRunIds = allBenchmarkRuns().map((r) => r.id);
   if (!state.selectedRunIds.includes(state.compareBaselineId)) {
     state.compareBaselineId = state.selectedRunIds[0] || null;
   }
@@ -2657,10 +2756,10 @@ $("#bench-profile-filter")?.addEventListener("input", renderBenchmarkProfileChip
 });
 
 $("#fit-filter")?.addEventListener("change", () => {
-  if (!$("#fit-finder-body").textContent.includes("Not scanned")) scanConfiguredFits();
+  if (!$("#fit-finder-body").textContent.includes("not been scanned")) scanConfiguredFits();
 });
 $("#hf-fit-filter")?.addEventListener("change", () => {
-  if (!$("#updates-body").textContent.includes("Not checked")) checkUpdates();
+  if (!$("#updates-body").textContent.includes("No Hugging Face search")) checkUpdates();
 });
 $("#vram-budget-gb")?.addEventListener("input", () => {
   const raw = $("#vram-budget-gb").value.trim();
@@ -2709,7 +2808,7 @@ $$(".btn.file").forEach((label) => {
 });
 
 // Initial load — populate the live sections so a newcomer sees real state
-// (hardware, what's running, what's installed) instead of "Not loaded yet."
+// for hardware, served models, and installed models.
 (async function init() {
   loadBenchmarkRuns();
   await loadProfiles();
