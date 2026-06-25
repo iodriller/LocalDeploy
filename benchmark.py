@@ -1263,8 +1263,8 @@ def iter_run(
     """Stream a benchmark run as a sequence of event dicts.
 
     Shares `execute_test` with the CLI so grading is identical. Emits:
-    run_start, profile_start, test_result(*), profile_aborted?, profile_end,
-    run_end. Used by the streaming /benchmark/run endpoint. No printing, no
+    run_start, profile_start, test_start/test_result(*), profile_aborted?,
+    profile_end, run_end. Used by the streaming /benchmark/run endpoint. No printing, no
     VRAM tracking — the caller decides how to present events. ``num_gpu`` pins
     the device on each inference call (0 = CPU) for forced CPU/GPU runs.
     """
@@ -1283,6 +1283,7 @@ def iter_run(
         consecutive_fail = 0
         prof: List[TestResult] = []
         for test in tests:
+            yield {"event": "test_start", "profile": name, "name": test.name, "category": test.category}
             item = execute_test(base_url, name, profile, test, timeout, num_gpu=num_gpu)
             prof.append(item)
             event = asdict(item)

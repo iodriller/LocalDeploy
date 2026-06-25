@@ -37,8 +37,23 @@ code { color: var(--accent); font-family: ui-monospace, "SF Mono", Menlo, Consol
   top: 0;
   z-index: 10;
 }
-.brand { display: flex; align-items: center; gap: 0.5rem; font-weight: 600; font-size: 1.05rem; }
-.logo { color: var(--accent); }
+.brand { display: flex; align-items: center; gap: 0.55rem; font-weight: 700; font-size: 1.05rem; }
+.brand-button {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+  border-radius: 8px;
+  padding: 0.25rem 0.35rem;
+}
+.brand-button:hover { background: var(--panel-2); border-color: var(--border); }
+.brand-icon {
+  width: 1.55rem;
+  height: 1.55rem;
+  border-radius: 6px;
+  box-shadow: 0 0 0 1px rgba(255,255,255,0.08);
+}
 .tabs { display: flex; gap: 0.25rem; }
 .tab {
   background: transparent;
@@ -115,6 +130,21 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--a
   font-size: 0.88rem;
   white-space: nowrap;
 }
+.btn[data-icon] {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.42rem;
+}
+.btn[data-icon]::before {
+  content: attr(data-icon);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1em;
+  color: currentColor;
+  font-weight: 800;
+  line-height: 1;
+}
 .btn { transition: border-color 0.12s ease, filter 0.12s ease, background 0.12s ease; }
 .btn:hover { border-color: var(--accent-strong); }
 .btn:disabled { opacity: 0.55; cursor: progress; }
@@ -127,6 +157,7 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--a
 
 /* loading spinner: hide label, show a spinner, keep the button width stable */
 .btn.loading { color: transparent !important; position: relative; pointer-events: none; }
+.btn.loading[data-icon]::before { opacity: 0; }
 .btn.loading::after {
   content: ""; position: absolute; inset: 0; margin: auto;
   width: 14px; height: 14px; border-radius: 50%;
@@ -470,7 +501,7 @@ table.results td.num, table.results th.num { text-align: right; font-variant-num
 .queue-list { display: grid; gap: 0.45rem; }
 .queue-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   gap: 0.75rem;
   align-items: center;
   border: 1px solid var(--border);
@@ -478,8 +509,62 @@ table.results td.num, table.results th.num { text-align: right; font-variant-num
   background: var(--panel-2);
   padding: 0.65rem 0.75rem;
 }
+.queue-row.queue-status-running,
+.queue-row.queue-status-deploying {
+  border-color: rgba(79, 134, 247, 0.55);
+  background: rgba(79, 134, 247, 0.11);
+}
+.queue-row.queue-status-complete {
+  border-color: rgba(52, 211, 153, 0.35);
+  background: rgba(52, 211, 153, 0.07);
+}
+.queue-row.queue-status-failed {
+  border-color: rgba(248, 113, 113, 0.42);
+  background: rgba(248, 113, 113, 0.08);
+}
+.queue-row.queue-status-stopped {
+  border-color: rgba(251, 191, 36, 0.35);
+  background: rgba(251, 191, 36, 0.06);
+}
+.queue-status-dot {
+  width: 0.78rem;
+  height: 0.78rem;
+  border-radius: 50%;
+  border: 2px solid var(--muted);
+  background: transparent;
+}
+.queue-status-running .queue-status-dot,
+.queue-status-deploying .queue-status-dot {
+  border-color: rgba(138, 180, 248, 0.25);
+  background: var(--accent-strong);
+  box-shadow: 0 0 0 4px rgba(79, 134, 247, 0.13);
+  animation: pulse-dot 1.4s ease-in-out infinite;
+}
+.queue-status-complete .queue-status-dot {
+  border-color: rgba(52, 211, 153, 0.3);
+  background: var(--good);
+}
+.queue-status-failed .queue-status-dot {
+  border-color: rgba(248, 113, 113, 0.3);
+  background: var(--bad);
+}
+.queue-status-stopped .queue-status-dot {
+  border-color: rgba(251, 191, 36, 0.35);
+  background: var(--warn);
+}
+@keyframes pulse-dot {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(0.82); opacity: 0.62; }
+}
 .queue-row-main { min-width: 0; }
 .queue-row-main b { display: block; overflow-wrap: anywhere; }
+.queue-row-progress {
+  max-width: 22rem;
+}
+.queue-row-progress .run-progress-track {
+  margin-top: 0.42rem;
+  background: rgba(11, 13, 18, 0.65);
+}
 .queue-row-side {
   display: flex;
   align-items: center;
@@ -780,6 +865,10 @@ table.results td.num, table.results th.num { text-align: right; font-variant-num
   cursor: pointer;
 }
 .run-library-row.selected { border-color: var(--accent-strong); background: rgba(79, 134, 247, 0.1); }
+.run-library-row.live {
+  border-color: rgba(79, 134, 247, 0.38);
+  background: rgba(79, 134, 247, 0.07);
+}
 .run-library-row b,
 .run-library-row span { min-width: 0; overflow-wrap: anywhere; }
 .compare-toolbar {
