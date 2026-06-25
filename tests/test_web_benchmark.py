@@ -64,6 +64,7 @@ def test_run_streams_results(monkeypatch) -> None:
     assert response.headers["content-type"].startswith("text/event-stream")
     text = response.text
     assert "run_start" in text
+    assert "test_start" in text
     assert "test_result" in text
     assert "run_end" in text
     assert "[DONE]" in text

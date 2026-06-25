@@ -104,9 +104,9 @@ def test_page_loads_and_tabs_switch(live_server, browser):
         assert "LocalDeploy" in page.title()
         # Tab 1 default content.
         assert page.get_by_role("heading", name="Hardware").is_visible()
-        # Switch to tab 2 and confirm the Run Builder renders.
+        # Switch to tab 2 and confirm the benchmark runner renders.
         page.get_by_role("tab", name="Benchmark & Compare").click()
-        assert page.get_by_role("heading", name="Run Builder").is_visible()
+        assert page.get_by_role("heading", name="Benchmark runner").is_visible()
         assert page.get_by_role("heading", name="Run queue").is_visible()
     finally:
         page.close()
