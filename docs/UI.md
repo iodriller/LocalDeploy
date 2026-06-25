@@ -12,11 +12,12 @@ before the UI existed).
 From a local checkout on Windows:
 
 ```powershell
-.\scripts\start.ps1 -Background -OpenUI
+.\scripts\start_ui.ps1
 ```
 
-That starts the API in the background, waits for `/health`, and opens `/ui`. It uses `API_HOST`
-and `API_PORT` from `.env`; if `API_HOST=0.0.0.0`, the browser URL uses `127.0.0.1`.
+That starts the API in the background, waits for `/health`, and opens `/ui`. You can also use
+`.\scripts\start.ps1 -Background -OpenUI`. Both launchers use `API_HOST` and `API_PORT` from
+`.env`; if `API_HOST=0.0.0.0`, the browser URL uses `127.0.0.1`.
 
 The UI does not require llama.cpp. During normal API/UI startup, incomplete optional llama.cpp
 configuration is skipped with a warning so Ollama-backed profiles and diagnostics remain usable.
@@ -27,18 +28,18 @@ and want missing server/model paths to fail fast.
 
 A newcomer can go end-to-end without reading anything else:
 
-1. **Check My Hardware** — detects your GPU and free VRAM (or reports CPU-only).
+1. **Check hardware** — detects your GPU and free VRAM (or reports CPU-only).
 2. **Manual pull by model name** — type an Ollama name (e.g. `gemma3:4b`) and pull it; progress
    streams live. The pull is **fit-checked** first and blocked only for hard "fits nowhere"
    warnings unless **Warn only; pull anyway** is checked.
-3. **Deploy** — load the model into memory with an Ollama keep-alive.
+3. **Deploy a profile** — load the model into memory with an Ollama keep-alive.
 4. **Benchmark & Compare tab** — load the example question set, **Validate**, then **Run**.
 
 ## Tab 1 — Setup & Deploy
 
 | Control | What it does | Endpoint |
 |---|---|---|
-| Check My Hardware | GPU name + VRAM (NVIDIA) or **Apple Silicon (Metal, unified memory)**, **CPU model, cores, and system RAM** | `GET /system/hardware` |
+| Check hardware | GPU name + VRAM (NVIDIA) or **Apple Silicon (Metal, unified memory)**, **CPU model, cores, and system RAM** | `GET /system/hardware` |
 | Refresh status | Loaded model(s), Ollama health, VRAM, **GPU/CPU placement** | `GET /system/status` |
 | Deploy to (Auto/GPU/CPU) | Force where the model runs (`num_gpu`: 0 = CPU, max = GPU) | `POST /models/serve` |
 | Deploy / unload / replace | Load / unload / replace the selected profile | `POST /models/{serve,stop,switch}` |
@@ -46,11 +47,12 @@ A newcomer can go end-to-end without reading anything else:
 | Fit check (per model) | Tiered estimate: green (comfortable), yellow (tight / CPU-only), red (won't fit) | `POST /system/fit-check` |
 | Delete | Remove a model from disk (frees space) | `POST /models/delete` |
 | Free memory | Unload all models from memory/VRAM | `POST /models/free` |
-| Check New Models | Newer matching models on Hugging Face | `POST /registry/check-updates` |
+| Search Hugging Face | Newer or matching GGUF models on Hugging Face | `POST /registry/check-updates` |
 | Refresh installed | Models already pulled locally | `GET /registry/installed` |
 
-The **Target free VRAM (MB)** field is auto-filled from the hardware probe and is used by both the
-fit check and the pull gate. You can override it to test against a different card.
+The **Model fit budget** is auto-filled from the hardware probe and is used by installed-model
+badges, saved-profile scans, Hugging Face search, fit checks, and the pull gate. You can override it
+to test against a different card or current free VRAM.
 
 ## Tab 2 — Benchmark & Compare
 
@@ -61,16 +63,16 @@ The benchmark tab is a local experiment workspace. It keeps run records in brows
   suite, or use **Use LocalDeploy test bench** to load the built-in JSON into the editor for
   inspection/editing. **Validate** checks custom JSON against the schema and grader registry
   (`POST /benchmark/validate`).
-- **Run Builder** replaces the old single-profile form. Select one or more saved profiles as
+- **Benchmark runner** replaces the old single-profile form. Select one or more saved profiles as
   chips, review the built-in/custom test-set summary, choose **Auto**, **CPU**, **GPU**, or
   **CPU + GPU**, then click **Run benchmark suite**.
 - **Run queue** creates one row per model/device variant and runs sequentially by default to avoid
-  VRAM contention. Each queued row shows waiting/deploying/running/complete/failed state, current
-  test progress, elapsed progress, and supports cancellation. Waiting rows can be moved up/down
-  or removed before they run; finished (complete/failed/stopped) rows can be dismissed individually
-  or all at once with **Clear finished**, and failed rows show their error reason inline. The active
-  run is shown only in the larger progress panel, with a **Stop** button that ends just that run and
-  continues the queue (vs. the global **Cancel** that stops the whole queue).
+  VRAM contention. Each row shows queued/deploying/running/finished/failed/stopped state, current
+  test progress, elapsed time, and a distinct visual treatment for active versus finished work.
+  Waiting rows can be moved up/down or removed before they run; finished rows can be dismissed
+  individually or all at once with **Clear finished**, and failed rows show their error reason
+  inline. The larger active-run panel mirrors the running item and includes a **Stop** button that
+  ends just that run and continues the queue (vs. the global **Cancel** that stops the whole queue).
 - **Benchmark device** controls placement for each queued run. **Auto** leaves the current/default
   Ollama placement alone. **CPU** and **GPU** reload the model on that device *and* pin the same
   `num_gpu` on every inference call, so the measured run stays on the requested device end-to-end
@@ -80,7 +82,7 @@ The benchmark tab is a local experiment workspace. It keeps run records in brows
   `/system/status` — so nothing is mislabeled and a reasonable device choice doesn't fail outright.
 - Benchmark deployments are temporary. After each benchmarked Ollama profile finishes, the server
   unloads the benchmark model so the benchmark tab does not become a permanent deployment action.
-- **Results Dashboard** is the main analysis surface after runs finish:
+- **Results Dashboard** is the main analysis surface as soon as results start streaming:
   - Leaderboard sorted by pass count, average accuracy, then average latency.
   - Winner badges for most accurate, fastest, and best tokens/second.
   - Category heatmap with accessible red/yellow/green accuracy cells.
@@ -136,11 +138,12 @@ Graders are selected by `type` from a fixed registry (uploads stay safe JSON —
   response detail drawer can show the same test's model outputs side by side. Fresh benchmark
   results are automatically added to the selected comparison set when there are prior runs.
 
-## Tune for my GPU (Tab 1)
+## Auto-pick a profile (Tab 1)
 
-**Recommended setup → Tune for my GPU** fit-checks your profiles, runs a short benchmark on the
-ones that fit, and ranks them by accuracy × speed × VRAM headroom, highlighting the winner
-(`POST /system/recommend`). Requires the API + Ollama running.
+**Auto-pick a profile → Find best fit** fit-checks enabled saved profiles, runs a short benchmark
+on candidates that can answer, and ranks them by accuracy, speed, and VRAM headroom. It recommends a
+saved profile but does not download models or search Hugging Face (`POST /system/recommend`).
+Requires the API + Ollama running.
 
 ## Optional token auth
 
@@ -151,7 +154,7 @@ request is rejected (401), the UI prompts you for the token and remembers it.
 ## Offline mode
 
 Set `OFFLINE=true` to block all outbound internet calls (the Hugging Face check is skipped). The
-UI surfaces this in the "Check New Models" result. Verify with `python scripts/egress_selftest.py`.
+UI surfaces this in the Hugging Face search result. Verify with `python scripts/egress_selftest.py`.
 
 ## Keyboard shortcuts
 

@@ -39,14 +39,15 @@ def test_no_smart_quotes_as_js_delimiters() -> None:
 
 def test_ui_assets_are_cache_busted_and_no_favicon_404() -> None:
     html = (WEB_DIR / "index.html").read_text(encoding="utf-8")
-    assert 'href="styles.css?v=20260624-ui15"' in html
-    assert 'src="app.js?v=20260624-ui15"' in html
-    assert 'rel="icon" href="data:,"' in html
+    assert 'href="styles.css?v=20260624-ui16"' in html
+    assert 'src="app.js?v=20260624-ui16"' in html
+    assert 'rel="icon" type="image/png" href="favicon.png?v=20260624-ui16"' in html
+    assert (WEB_DIR / "favicon.png").is_file()
 
 
 def test_benchmark_workspace_v2_labels_are_present() -> None:
     html = (WEB_DIR / "index.html").read_text(encoding="utf-8")
-    for label in ("Run Builder", "Leaderboard", "Category heatmap", "Compare selected"):
+    for label in ("Benchmark runner", "Leaderboard", "Category heatmap", "Compare selected"):
         assert label in html
 
 
@@ -63,14 +64,14 @@ def test_new_ui_controls_have_safe_bindings() -> None:
 def test_hardware_is_readonly_and_model_budget_lives_with_models() -> None:
     html = (WEB_DIR / "index.html").read_text(encoding="utf-8")
     hardware = html.split("<!-- Served model / status -->", 1)[0]
-    models = html.split("<!-- Models -->", 1)[1].split("<!-- Tune for my GPU -->", 1)[0]
+    models = html.split("<!-- Models -->", 1)[1].split("<!-- Auto-pick a profile -->", 1)[0]
     assert "Live VRAM" in hardware
     assert "Custom GB" not in hardware
     assert "Model fit budget" in models
     assert "Custom GB" in models
     assert 'id="keep-alive" value="60m"' in html
     assert 'id="btn-stop"' not in html
-    assert "Unload it from the Served model card" in html
+    assert "unload from the Served model card" in html
 
 
 def test_saved_profiles_and_benchmark_copy_are_clear() -> None:

@@ -4,15 +4,15 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>LocalDeploy</title>
-    <link rel="icon" href="data:," />
-    <link rel="stylesheet" href="styles.css?v=20260624-ui15" />
+    <link rel="icon" type="image/png" href="favicon.png?v=20260624-ui16" />
+    <link rel="stylesheet" href="styles.css?v=20260624-ui16" />
   </head>
   <body>
     <header class="topbar">
-      <div class="brand">
-        <span class="logo">◆</span>
+      <button class="brand brand-button" id="brand-home" type="button" title="Go to setup">
+        <img class="brand-icon" src="favicon.png?v=20260624-ui16" alt="" />
         <span>LocalDeploy</span>
-      </div>
+      </button>
       <nav class="tabs" role="tablist">
         <button class="tab active" data-tab="serve" role="tab" aria-selected="true">Setup &amp; Deploy</button>
         <button class="tab" data-tab="bench" role="tab" aria-selected="false">Benchmark &amp; Compare</button>
@@ -27,17 +27,17 @@
       <!-- ===================== TAB 1: Setup & Deploy ===================== -->
       <section id="tab-serve" class="tab-panel active">
         <div class="hint">
-          New here? <b>Check My Hardware</b> → pull a model → <b>Deploy</b> it → then open the
-          <b>Benchmark &amp; Compare</b> tab.
+          New here? Check hardware, review the model fit budget, pull a model if needed, then deploy a saved profile.
+          Use Benchmark &amp; Compare to measure profiles against the same question set.
         </div>
         <div class="grid">
           <!-- Hardware -->
           <div class="card">
             <div class="card-head">
               <h2>Hardware</h2>
-              <button class="btn" id="btn-hardware">Check My Hardware</button>
+              <button class="btn" id="btn-hardware" data-icon="◎">Check hardware</button>
             </div>
-            <div id="hardware-body" class="muted">Not checked yet.</div>
+            <div id="hardware-body" class="muted">Hardware has not been checked yet.</div>
             <div class="live-vram-panel" style="margin-top: 0.75rem">
               <div class="budget-head">
                 <div>
@@ -55,15 +55,15 @@
           <div class="card">
             <div class="card-head">
               <h2>Served model</h2>
-              <button class="btn" id="btn-status">Refresh status</button>
+              <button class="btn" id="btn-status" data-icon="↻">Refresh status</button>
             </div>
-            <div id="status-body" class="muted">Not loaded yet.</div>
+            <div id="status-body" class="muted">No served-model status has been loaded yet.</div>
           </div>
         </div>
 
         <!-- Serve controls -->
         <div class="card">
-          <div class="card-head"><h2>Deploy local model</h2></div>
+          <div class="card-head"><h2>Deploy a profile</h2></div>
           <div class="row gap wrap">
             <label class="field grow">
               <span>Profile</span>
@@ -82,11 +82,11 @@
               <input type="text" id="keep-alive" value="60m" />
             </label>
             <div class="row gap actions">
-              <button class="btn primary" id="btn-serve">Deploy model</button>
-              <button class="btn" id="btn-switch">Deploy and replace</button>
+              <button class="btn primary" id="btn-serve" data-icon="▶">Deploy profile</button>
+              <button class="btn" id="btn-switch" data-icon="⇄">Replace served model</button>
             </div>
           </div>
-          <p class="muted small">Loads the selected profile into Ollama using the keep-alive above. Unload it from the Served model card.</p>
+          <p class="muted small">Loads the selected saved profile into Ollama. Keep-alive controls how long the model stays warm after the last request; unload from the Served model card.</p>
           <div id="serve-result" class="result"></div>
         </div>
 
@@ -95,9 +95,9 @@
           <div class="card-head">
             <h2>Models</h2>
             <div class="row gap">
-              <button class="btn" id="btn-free" title="Unload all models from memory/VRAM">Free memory</button>
-              <button class="btn" id="btn-installed">Refresh installed</button>
-              <button class="btn" id="btn-updates" title="Search Hugging Face for newer versions of your installed models">Check for updates</button>
+              <button class="btn" id="btn-free" data-icon="⏏" title="Unload all models from memory/VRAM">Free memory</button>
+              <button class="btn" id="btn-installed" data-icon="↻">Refresh installed</button>
+              <button class="btn" id="btn-updates" data-icon="↗" title="Search Hugging Face for newer versions of your installed models">Check updates</button>
             </div>
           </div>
 
@@ -132,7 +132,7 @@
               <input type="checkbox" id="pull-override" />
               <span>Warn only; pull anyway</span>
             </label>
-            <button class="btn primary" id="btn-pull">Pull</button>
+            <button class="btn primary" id="btn-pull" data-icon="↓">Pull</button>
             <button class="btn danger" id="btn-pull-cancel" hidden>Cancel</button>
           </div>
           <pre id="pull-log" class="log hidden"></pre>
@@ -144,7 +144,7 @@
                 <p class="muted small">Models already pulled into Ollama. Their fit badges auto-update when the budget above changes.</p>
               </div>
             </div>
-            <div id="installed-body" class="muted">Not loaded yet.</div>
+            <div id="installed-body" class="muted">Installed models have not been loaded yet.</div>
           </div>
 
           <div class="model-section">
@@ -163,9 +163,9 @@
                   <option value="all">All saved profiles</option>
                 </select>
               </label>
-              <button class="btn primary" id="btn-fit-profiles">Scan saved profiles</button>
+              <button class="btn primary" id="btn-fit-profiles" data-icon="⌕">Scan saved profiles</button>
             </div>
-            <div id="fit-finder-body" class="muted">Not scanned yet.</div>
+            <div id="fit-finder-body" class="muted">Saved profiles have not been scanned against the model fit budget yet.</div>
           </div>
 
           <div class="model-section discover-section">
@@ -196,24 +196,24 @@
                 <input type="checkbox" id="hf-gguf-only" checked />
                 <span>GGUF only ⓘ</span>
               </label>
-              <button class="btn primary" id="btn-hf-search">Search Hugging Face</button>
+              <button class="btn primary" id="btn-hf-search" data-icon="⌕">Search Hugging Face</button>
             </div>
-            <div id="updates-body" class="muted">Not checked yet.</div>
+            <div id="updates-body" class="muted">No Hugging Face search has been run yet.</div>
           </div>
         </div>
 
-        <!-- Tune for my GPU -->
+        <!-- Auto-pick a profile -->
         <div class="card">
           <div class="card-head">
-            <h2>Recommended setup</h2>
-            <button class="btn primary" id="btn-recommend">Tune for my GPU</button>
+            <h2>Auto-pick a profile</h2>
+            <button class="btn primary" id="btn-recommend" data-icon="✓">Find best fit</button>
           </div>
           <p class="muted small">
-            Tests enabled saved run profiles from <code>config.json</code>. It does not search Hugging Face or create new profiles:
-            it fit-checks each profile's model against the budget above, skips GPU-mismatches, runs a short built-in benchmark on
-            candidates that can answer, then ranks accuracy first, speed second, and VRAM headroom third.
+            Use this when you are not sure which saved profile to deploy. LocalDeploy checks enabled profiles from
+            <code>config.json</code> against the GPU budget above, benchmarks the candidates that can answer, then recommends
+            the best balance of accuracy, speed, and memory headroom. It does not download models or search Hugging Face.
           </p>
-          <div id="recommend-body" class="muted">Not run yet.</div>
+          <div id="recommend-body" class="muted">Run this after hardware detection to get a recommended saved profile.</div>
         </div>
       </section>
 
@@ -247,7 +247,7 @@
 
         <div class="card">
           <div class="card-head">
-            <h2>Run Builder</h2>
+            <h2>Benchmark runner</h2>
             <div class="row gap">
               <button class="btn danger" id="btn-run-cancel" hidden>Cancel</button>
               <button class="btn" id="btn-export" disabled title="Select a completed run">Export run</button>
@@ -273,7 +273,7 @@
           <div class="bench-picker-head">
             <div>
               <h3 class="sub">Models</h3>
-              <span class="muted small">Select one or more saved profiles. Runs execute sequentially.</span>
+              <span class="muted small">Select one or more saved profiles. Runs execute sequentially and stream results after each test finishes.</span>
             </div>
             <label class="field compact-field">
               <span>Filter</span>
@@ -306,7 +306,12 @@
         </div>
 
         <div class="card">
-          <div class="card-head"><h2>Run queue</h2></div>
+          <div class="card-head">
+            <div>
+              <h2>Run queue</h2>
+              <p class="muted small">Waiting, active, and finished runs stay visible here. Results update as each test completes.</p>
+            </div>
+          </div>
           <div id="run-active" class="run-active hidden" aria-live="polite">
             <div class="run-active-top">
               <div>
@@ -331,29 +336,29 @@
         <div class="card" id="results-dashboard-card">
           <div class="card-head">
             <h2>Results</h2>
-            <span class="muted small">Selected benchmark runs</span>
+            <span class="muted small">Selected benchmark runs, including active runs with streamed test results</span>
           </div>
           <div id="winner-badges" class="dashboard-summary"></div>
           <div class="dashboard-grid">
             <section class="dashboard-panel">
               <h3 class="sub">Leaderboard</h3>
-              <div id="leaderboard-body" class="muted small">Run a benchmark suite to populate the leaderboard.</div>
+              <div id="leaderboard-body" class="muted small">Benchmark results appear here after the first streamed test result.</div>
             </section>
             <section class="dashboard-panel">
               <h3 class="sub">Speed vs quality</h3>
-              <div id="scatter-body" class="muted small">No runs yet.</div>
+              <div id="scatter-body" class="muted small">Run at least one benchmark to plot speed and quality.</div>
             </section>
           </div>
           <section class="dashboard-panel wide">
             <h3 class="sub">Category heatmap</h3>
-            <div id="heatmap-body" class="muted small">No runs yet.</div>
+            <div id="heatmap-body" class="muted small">Run benchmarks to fill the category heatmap.</div>
           </section>
           <details class="dashboard-panel wide advanced-panel">
             <summary>
               <span class="sub">Per-test matrix</span>
               <span class="muted small">Advanced pass/fail grid</span>
             </summary>
-            <div id="matrix-body" class="muted small">No runs yet.</div>
+            <div id="matrix-body" class="muted small">Run benchmarks to fill the pass/fail matrix.</div>
           </details>
         </div>
 
@@ -415,6 +420,6 @@
     </main>
 
     <div id="toasts" class="toasts" aria-live="polite"></div>
-    <script src="app.js?v=20260624-ui15"></script>
+    <script src="app.js?v=20260624-ui16"></script>
   </body>
 </html>
