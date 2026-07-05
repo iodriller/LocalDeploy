@@ -109,7 +109,7 @@ def send_chat(
         print(f"Request timed out after {timeout} seconds.")
         return 1
     except requests.ConnectionError:
-        print(f"LocalDeploy is not reachable at {base_url}. Start it with: python api_server.py")
+        print(f"LocalDeploy is not reachable at {base_url}. Start it with: .\\scripts\\start.ps1")
         return 1
 
     elapsed = time.perf_counter() - started

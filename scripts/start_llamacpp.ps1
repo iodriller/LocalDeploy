@@ -4,7 +4,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$ProjectRoot = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
+$ProjectRoot = Split-Path -Parent $PSScriptRoot
 Set-Location $ProjectRoot
 
 function Write-Step {
@@ -23,15 +23,10 @@ function Stop-LlamaStartup {
 
 function Read-DotEnv {
     $values = @{}
-    $path = Join-Path $ProjectRoot ".env"
-    if (-not (Test-Path -LiteralPath $path)) {
-        return $values
-    }
-    foreach ($line in Get-Content -LiteralPath $path) {
+    if (-not (Test-Path -LiteralPath ".\.env")) { return $values }
+    foreach ($line in Get-Content -LiteralPath ".\.env") {
         $trimmed = $line.Trim()
-        if (-not $trimmed -or $trimmed.StartsWith("#") -or -not $trimmed.Contains("=")) {
-            continue
-        }
+        if (-not $trimmed -or $trimmed.StartsWith("#") -or -not $trimmed.Contains("=")) { continue }
         $name, $value = $trimmed.Split("=", 2)
         $values[$name.Trim()] = $value.Trim().Trim('"').Trim("'")
     }
@@ -39,31 +34,17 @@ function Read-DotEnv {
 }
 
 function Env-Value {
-    param(
-        [hashtable]$EnvFile,
-        [string]$Name,
-        [string]$Default = $null
-    )
+    param([hashtable]$EnvFile, [string]$Name, [string]$Default = $null)
     $processValue = [Environment]::GetEnvironmentVariable($Name)
-    if ($processValue) {
-        return $processValue
-    }
-    if ($EnvFile.ContainsKey($Name)) {
-        return $EnvFile[$Name]
-    }
+    if ($processValue) { return $processValue }
+    if ($EnvFile.ContainsKey($Name)) { return $EnvFile[$Name] }
     return $Default
 }
 
 function Env-Bool {
-    param(
-        [hashtable]$EnvFile,
-        [string]$Name,
-        [bool]$Default = $false
-    )
+    param([hashtable]$EnvFile, [string]$Name, [bool]$Default = $false)
     $value = Env-Value -EnvFile $EnvFile -Name $Name -Default $null
-    if ($null -eq $value -or $value -eq "") {
-        return $Default
-    }
+    if ($null -eq $value -or $value -eq "") { return $Default }
     return @("1", "true", "yes", "on") -contains $value.ToString().ToLowerInvariant()
 }
 
@@ -79,17 +60,6 @@ function Assert-GpuOnlyProfile {
     $gpuLayers = if ($null -ne $Profile.gpu_layers) { $Profile.gpu_layers.ToString().ToLowerInvariant() } else { "" }
     if ($Profile.backend -ne "llamacpp" -or $gpuLayers -ne "all") {
         throw "GPU-only mode requires an enabled llama.cpp profile with gpu_layers=all. Selected profile '$($Profile.name)' has backend=$($Profile.backend), gpu_layers=$($Profile.gpu_layers)."
-    }
-}
-
-function Test-Http {
-    param([string]$Url)
-    try {
-        Invoke-RestMethod -Uri $Url -TimeoutSec 5 | Out-Null
-        return $true
-    }
-    catch {
-        return $false
     }
 }
 

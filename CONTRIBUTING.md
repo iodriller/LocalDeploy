@@ -7,12 +7,17 @@ This project is intentionally small and local-first. Keep changes focused on saf
 From the repository root:
 
 ```powershell
-python -m py_compile api_server.py test_models.py
-python -m json.tool config.example.json > $null
 .\scripts\smoke_test.ps1
+pytest -q
 ```
 
-If the API server is running, the smoke test also checks local HTTP routes. It does not require Ollama models to be pulled.
+The smoke test covers Python syntax, `config.example.json`, PowerShell parse checks, import-time API validation, and optional local HTTP routes if the API is already running. It does not require Ollama models to be pulled.
+
+For the offline-egress guarantee:
+
+```powershell
+python scripts\egress_selftest.py
+```
 
 ## Pull Request Expectations
 
