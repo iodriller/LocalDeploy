@@ -238,6 +238,12 @@ function esc(value) {
   );
 }
 
+// Shimmering placeholder rows shown while a card's first fetch is in flight,
+// so a slow local backend reads as "loading" instead of "frozen".
+function skeletonHtml(lines = 2) {
+  return `<div class="skeleton-block">${Array.from({ length: lines }, () => `<div class="skeleton-line"></div>`).join("")}</div>`;
+}
+
 function toast(message, kind = "info") {
   const node = document.createElement("div");
   node.className = `toast ${kind}`;
@@ -298,6 +304,33 @@ function authHeaders() {
   const t = getToken();
   return t ? { "X-API-Token": t } : {};
 }
+
+// ---- light/dark theme (persisted; defaults to OS preference) ----------------
+const THEME_KEY = "localdeploy_theme";
+function currentTheme() {
+  const explicit = document.documentElement.dataset.theme;
+  if (explicit === "light" || explicit === "dark") return explicit;
+  return window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+}
+function applyTheme(theme) {
+  document.documentElement.dataset.theme = theme;
+  const btn = $("#btn-theme");
+  if (btn) {
+    btn.textContent = theme === "light" ? "☀" : "☾";
+    btn.title = theme === "light" ? "Switch to dark theme" : "Switch to light theme";
+  }
+}
+function toggleTheme() {
+  const next = currentTheme() === "light" ? "dark" : "light";
+  try {
+    localStorage.setItem(THEME_KEY, next);
+  } catch {
+    /* theme still applies for this session */
+  }
+  applyTheme(next);
+}
+applyTheme(currentTheme());
+$("#btn-theme")?.addEventListener("click", toggleTheme);
 // If the server rejects us, prompt for the token once and let the user retry.
 function handle401(resp) {
   if (resp && resp.status === 401) {
@@ -470,6 +503,82 @@ function updateVramBudgetUI() {
   } else {
     help.textContent = "Set a GPU budget to filter models by fit.";
   }
+  updateProgressRail();
+}
+
+// ---------------------------------------------------------------------------
+// Setup progress rail + recommended next action
+// ---------------------------------------------------------------------------
+function progressRailSteps() {
+  return {
+    hardware: !!state.lastHardware,
+    budget: !!state.vramBudgetMb,
+    model: Object.keys(state.installedByName).length > 0,
+    deploy: (state.servedModels || []).length > 0,
+  };
+}
+
+function nextActionHtml(title, detail, targetSel) {
+  return `<div><strong>${esc(title)}</strong><div class="muted small">${esc(detail)}</div></div>
+    <button class="btn primary compact next-action-go" data-target="${esc(targetSel)}">Take me there</button>`;
+}
+
+function updateNextActionCard() {
+  const card = $("#next-action-card");
+  if (!card) return;
+  const steps = progressRailSteps();
+  let html = "";
+  if (!steps.hardware) {
+    html = nextActionHtml(
+      "Check hardware first",
+      "See your GPU, VRAM, CPU, and RAM before picking a model to pull.",
+      "#btn-hardware"
+    );
+  } else if (!steps.budget) {
+    html = nextActionHtml(
+      "Set a fit budget",
+      "Confirm the GPU budget used for fit checks, pulls, and Hugging Face search.",
+      "#vram-budget-gb"
+    );
+  } else if (!steps.model) {
+    html = nextActionHtml(
+      "Pull a starter model",
+      "No models installed yet — pull one to get going.",
+      "#pull-model"
+    );
+  } else if (!steps.deploy) {
+    html = nextActionHtml(
+      "Deploy a profile",
+      "A model is ready — deploy a saved profile to start serving it.",
+      "#btn-serve"
+    );
+  }
+  card.innerHTML = html;
+  card.classList.toggle("hidden", !html);
+  const goBtn = card.querySelector(".next-action-go");
+  if (goBtn) {
+    goBtn.addEventListener("click", () => {
+      const target = document.querySelector(goBtn.dataset.target);
+      if (!target) return;
+      target.scrollIntoView({ behavior: "smooth", block: "center" });
+      target.focus?.();
+    });
+  }
+}
+
+function updateProgressRail() {
+  const rail = $("#progress-rail");
+  if (!rail) return;
+  const steps = progressRailSteps();
+  let activeAssigned = false;
+  $$(".rail-step", rail).forEach((el) => {
+    const done = !!steps[el.dataset.step];
+    const active = !done && !activeAssigned;
+    el.classList.toggle("done", done);
+    el.classList.toggle("active", active);
+    if (active) activeAssigned = true;
+  });
+  updateNextActionCard();
 }
 
 function updateHardwareVramUI() {
@@ -742,6 +851,7 @@ function updateBenchmarkSummary() {
 async function checkHardware() {
   const btn = $("#btn-hardware");
   busy(btn, true);
+  $("#hardware-body").innerHTML = skeletonHtml(3);
   try {
     const hw = await getJSON("/system/hardware");
     updateHwChip(hw);
@@ -788,6 +898,7 @@ async function checkHardware() {
     toast(`Hardware check failed: ${err.message}`, "error");
   } finally {
     busy(btn, false);
+    updateProgressRail();
   }
 }
 
@@ -853,6 +964,7 @@ function formatExpires(expiresAt) {
 async function refreshStatus() {
   const btn = $("#btn-status");
   busy(btn, true);
+  $("#status-body").innerHTML = skeletonHtml(2);
   try {
     const s = await getJSON("/system/status");
     state.servedModels = s.served_models || [];
@@ -923,6 +1035,7 @@ async function refreshStatus() {
     toast(`Status failed: ${err.message}`, "error");
   } finally {
     busy(btn, false);
+    updateProgressRail();
   }
 }
 
@@ -1074,6 +1187,7 @@ async function refreshInstalled() {
   const btn = $("#btn-installed");
   busy(btn, true);
   const body = $("#installed-body");
+  body.innerHTML = skeletonHtml(3);
   try {
     const data = await getJSON("/registry/installed");
     if (!data.success) {
@@ -1134,6 +1248,7 @@ async function refreshInstalled() {
     toast(`Installed list failed: ${err.message}`, "error");
   } finally {
     busy(btn, false);
+    updateProgressRail();
   }
 }
 
@@ -2568,43 +2683,94 @@ function renderResponseDrawer(testName, runs) {
 // ---------------------------------------------------------------------------
 // Tab 1 — Auto-pick a profile (Step 14)
 // ---------------------------------------------------------------------------
-async function recommendTune() {
+function renderRecommendProgress(body, candidates, current) {
+  const rows = candidates
+    .map((c) => {
+      const cls = c.status === "done" ? "ok" : c.status === "running" ? "running" : "";
+      const detail =
+        c.status === "done"
+          ? `acc ${c.avg_accuracy} · ${c.avg_latency_s}s`
+          : c.status === "running"
+            ? `${esc(c.currentTest || "starting…")}`
+            : "queued";
+      return `<li class="tune-candidate-row ${cls}">
+        <span class="spin-inline ${c.status === "running" ? "" : "hidden"}"></span>
+        <b>${esc(c.profile)}</b><span class="muted small">${esc(detail)}</span>
+      </li>`;
+    })
+    .join("");
+  body.innerHTML = `
+    <div class="tune-progress">
+      <div class="running-top">
+        <div>
+          <div class="model-title">${esc(current)}</div>
+          <div class="muted small">Evaluating candidates against the ${esc(fmtMb(targetVram()))} GPU budget</div>
+        </div>
+        <span class="spin-inline"></span>
+      </div>
+      <div class="run-progress-track"><div class="run-progress-fill indeterminate" role="progressbar" aria-label="Tune progress"></div></div>
+      <ul class="tune-candidate-list">${rows || '<li class="muted small">Fit-checking saved profiles…</li>'}</ul>
+    </div>`;
+}
+
+// Named scoring tilts for the three preset buttons. Each reuses the same
+// /system/recommend/stream ranking — only the accuracy/speed/headroom weights
+// change — so presets stay valid for any user's config.json profiles instead
+// of hardcoding specific model names.
+const RECOMMEND_PRESETS = {
+  safe: { quality_weight: 0.4, speed_weight: 0.3, headroom_weight: 0.3 },
+  quality: { quality_weight: 0.8, speed_weight: 0.1, headroom_weight: 0.1 },
+  fast: { quality_weight: 0.15, speed_weight: 0.65, headroom_weight: 0.2 },
+};
+
+async function recommendTune(weights = null) {
   const btn = $("#btn-recommend");
   const body = $("#recommend-body");
   busy(btn, true);
-  const names = state.profiles.length ? state.profiles : ["saved profiles"];
-  let idx = 0;
-  const renderProgress = (stage) => {
-    const profile = names[idx % names.length];
-    const model = state.profileModels[profile] || profile;
-    body.innerHTML = `
-      <div class="tune-progress">
-        <div class="running-top">
-          <div>
-            <div class="model-title">${esc(stage)}</div>
-            <div class="muted small">Current saved profile: ${esc(profile)} · model ${esc(model)}</div>
-          </div>
-          <span class="spin-inline"></span>
-        </div>
-        <div class="run-progress-track"><div class="run-progress-fill indeterminate" role="progressbar" aria-label="Tune progress"></div></div>
-        <ol class="tune-steps">
-          <li>Read enabled saved profiles from config.json</li>
-          <li>Estimate each profile's model against the ${esc(fmtMb(targetVram()))} GPU budget</li>
-          <li>Skip profiles that do not fit that GPU budget</li>
-          <li>Run a short built-in benchmark on candidates that can answer</li>
-          <li>Rank accuracy first, speed second, VRAM headroom third</li>
-        </ol>
-      </div>`;
+  $$(".preset-btn").forEach((b) => (b.disabled = true));
+  const candidates = [];
+  const byProfile = {};
+  const addCandidate = (profile) => {
+    if (byProfile[profile]) return byProfile[profile];
+    const row = { profile, status: "queued" };
+    byProfile[profile] = row;
+    candidates.push(row);
+    return row;
   };
-  renderProgress("Preparing GPU tuning");
-  const timer = setInterval(() => {
-    idx += 1;
-    renderProgress(idx % 2 === 0 ? "Fit-checking profiles" : "Benchmarking candidates");
-  }, 1800);
+  renderRecommendProgress(body, candidates, "Fit-checking saved profiles…");
+  let finalResult = null;
   try {
-    const res = await postJSON("/system/recommend", { free_vram_mb: targetVram() });
-    clearInterval(timer);
-    if (!res.success) {
+    const result = await postMaybeStream(
+      "/system/recommend/stream",
+      { free_vram_mb: targetVram(), ...(weights || {}) },
+      (evt) => {
+        if (evt.event === "recommend_start") {
+          (evt.candidates || []).forEach(addCandidate);
+          renderRecommendProgress(body, candidates, "Benchmarking candidates…");
+        } else if (evt.event === "candidate_start") {
+          const row = addCandidate(evt.profile);
+          row.status = "running";
+          renderRecommendProgress(body, candidates, `Benchmarking ${evt.profile}…`);
+        } else if (evt.event === "test_start") {
+          const row = addCandidate(evt.profile);
+          row.currentTest = evt.name;
+          renderRecommendProgress(body, candidates, `Benchmarking ${evt.profile}…`);
+        } else if (evt.event === "candidate_end") {
+          const row = addCandidate(evt.profile);
+          row.status = "done";
+          row.avg_accuracy = evt.avg_accuracy;
+          row.avg_latency_s = evt.avg_latency_s;
+          renderRecommendProgress(body, candidates, `Benchmarking candidates…`);
+        } else if (evt.event === "error") {
+          finalResult = { success: false, error: evt.error };
+        } else if (evt.event === "recommend_end") {
+          finalResult = { success: true, ...evt };
+        }
+      }
+    );
+    const res = result.streamed ? finalResult : result.json;
+    if (!res) throw new Error("Stream ended without a result.");
+    if (!res.success && res.success !== undefined) {
       body.innerHTML = `<div class="muted">${esc(res.error || "Could not run.")}</div>`;
       return;
     }
@@ -2645,12 +2811,11 @@ async function recommendTune() {
     const sd = body.querySelector(".set-default-btn");
     if (sd) sd.addEventListener("click", () => setDefaultProfile(sd.dataset.profile, sd));
   } catch (err) {
-    clearInterval(timer);
     body.innerHTML = `<div class="muted">Tuning failed — ${esc(err.message)}</div>`;
     toast(`Tune failed: ${err.message}`, "error");
   } finally {
-    clearInterval(timer);
     busy(btn, false);
+    $$(".preset-btn").forEach((b) => (b.disabled = false));
   }
 }
 
@@ -2723,7 +2888,10 @@ $("#btn-deselect-all-runs")?.addEventListener("click", () => {
   renderBenchmarkWorkspace();
 });
 $("#upload-json").addEventListener("change", (e) => uploadFile(e.target));
-$("#btn-recommend").addEventListener("click", recommendTune);
+$("#btn-recommend").addEventListener("click", () => recommendTune());
+$$(".preset-btn").forEach((b) =>
+  b.addEventListener("click", () => recommendTune(RECOMMEND_PRESETS[b.dataset.preset]))
+);
 $("#btn-export").addEventListener("click", exportCard);
 $("#btn-export-selected").addEventListener("click", exportSelectedRuns);
 $("#btn-compare").addEventListener("click", compareSelectedRuns);
