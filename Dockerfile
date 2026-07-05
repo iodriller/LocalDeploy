@@ -1,6 +1,8 @@
 # LocalDeploy: Ollama + the API/UI in one image, talking over localhost so the
 # server's loopback-only backend guard is preserved. One container, one URL.
-FROM ollama/ollama:latest
+# Pinned (not :latest) so a fresh `docker compose build` is reproducible; bump
+# deliberately when picking up a newer Ollama release.
+FROM ollama/ollama:0.31.1
 
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update \

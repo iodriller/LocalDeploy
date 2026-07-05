@@ -39,9 +39,9 @@ def test_no_smart_quotes_as_js_delimiters() -> None:
 
 def test_ui_assets_are_cache_busted_and_no_favicon_404() -> None:
     html = (WEB_DIR / "index.html").read_text(encoding="utf-8")
-    assert 'href="styles.css?v=20260624-ui16"' in html
-    assert 'src="app.js?v=20260624-ui16"' in html
-    assert 'rel="icon" type="image/png" href="favicon.png?v=20260624-ui16"' in html
+    assert 'href="styles.css?v=20260705-ui17"' in html
+    assert 'src="app.js?v=20260705-ui17"' in html
+    assert 'rel="icon" type="image/png" href="favicon.png?v=20260705-ui17"' in html
     assert (WEB_DIR / "favicon.png").is_file()
 
 

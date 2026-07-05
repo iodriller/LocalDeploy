@@ -7,13 +7,22 @@ services:
     build: .
     image: localdeploy:latest
     ports:
+      # Bound to the host's loopback interface only, matching the loopback-only
+      # threat model in SECURITY.md: reachable from this machine, not the LAN.
       # Host port is overridable: API_PORT=8001 docker compose up
-      - "${API_PORT:-8000}:8000" # API + UI (http://localhost:8000/ui)
+      #
+      # LAN mode (opt-in): to reach this from other devices on your network,
+      # change this to "${API_PORT:-8000}:8000" (binds all host interfaces)
+      # AND set API_TOKEN below so the control-plane isn't wide open. See
+      # SECURITY.md for what that endpoint surface can do unauthenticated.
+      - "127.0.0.1:${API_PORT:-8000}:8000" # API + UI (http://localhost:8000/ui)
     volumes:
       - ollama-models:/root/.ollama # persist pulled models between runs
     environment:
       - API_HOST=0.0.0.0
       - ENABLE_WEB_UI=true
+      # Required if you switch the port mapping above to a LAN-reachable bind:
+      # - API_TOKEN=change-me
       # Pre-pull models on first boot (space-separated), e.g.:
       # - PULL_MODELS=gemma3:4b
     restart: unless-stopped

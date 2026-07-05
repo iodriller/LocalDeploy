@@ -4,13 +4,22 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>LocalDeploy</title>
-    <link rel="icon" type="image/png" href="favicon.png?v=20260624-ui16" />
-    <link rel="stylesheet" href="styles.css?v=20260624-ui16" />
+    <link rel="icon" type="image/png" href="favicon.png?v=20260705-ui17" />
+    <link rel="stylesheet" href="styles.css?v=20260705-ui17" />
+    <script>
+      // Applied synchronously, before CSS renders, so a saved preference never flashes the other theme.
+      try {
+        var savedTheme = localStorage.getItem("localdeploy_theme");
+        if (savedTheme === "light" || savedTheme === "dark") {
+          document.documentElement.dataset.theme = savedTheme;
+        }
+      } catch {}
+    </script>
   </head>
   <body>
     <header class="topbar">
       <button class="brand brand-button" id="brand-home" type="button" title="Go to setup">
-        <img class="brand-icon" src="favicon.png?v=20260624-ui16" alt="" />
+        <img class="brand-icon" src="favicon.png?v=20260705-ui17" alt="" />
         <span>LocalDeploy</span>
       </button>
       <nav class="tabs" role="tablist">
@@ -20,6 +29,7 @@
       <div class="topbar-right">
         <div id="hw-chip" class="chip hidden" title="Detected GPU / VRAM"></div>
         <div class="conn" id="conn-pill" title="API connection">API: …</div>
+        <button class="btn theme-toggle" id="btn-theme" type="button" title="Toggle light/dark theme" aria-label="Toggle light/dark theme">◐</button>
       </div>
     </header>
 
@@ -30,6 +40,16 @@
           New here? Check hardware, review the model fit budget, pull a model if needed, then deploy a saved profile.
           Use Benchmark &amp; Compare to measure profiles against the same question set.
         </div>
+        <div class="progress-rail" id="progress-rail">
+          <div class="rail-step" data-step="hardware"><span class="rail-dot"></span><span class="rail-label">Check hardware</span></div>
+          <div class="rail-connector"></div>
+          <div class="rail-step" data-step="budget"><span class="rail-dot"></span><span class="rail-label">Set fit budget</span></div>
+          <div class="rail-connector"></div>
+          <div class="rail-step" data-step="model"><span class="rail-dot"></span><span class="rail-label">Pull a model</span></div>
+          <div class="rail-connector"></div>
+          <div class="rail-step" data-step="deploy"><span class="rail-dot"></span><span class="rail-label">Deploy</span></div>
+        </div>
+        <div id="next-action-card" class="next-action hidden"></div>
         <div class="grid">
           <!-- Hardware -->
           <div class="card">
@@ -213,6 +233,11 @@
             <code>config.json</code> against the GPU budget above, benchmarks the candidates that can answer, then recommends
             the best balance of accuracy, speed, and memory headroom. It does not download models or search Hugging Face.
           </p>
+          <div class="row gap wrap preset-row">
+            <button class="btn compact preset-btn" data-preset="safe" title="Balances accuracy, speed, and VRAM headroom evenly — a dependable everyday pick.">Safe Starter</button>
+            <button class="btn compact preset-btn" data-preset="quality" title="Weights accuracy heavily; picks the strongest answer quality among profiles that fit.">Best Quality</button>
+            <button class="btn compact preset-btn" data-preset="fast" title="Weights speed heavily; picks the quickest profile that still fits your VRAM budget.">Fast / Low VRAM</button>
+          </div>
           <div id="recommend-body" class="muted">Run this after hardware detection to get a recommended saved profile.</div>
         </div>
       </section>
@@ -420,6 +445,6 @@
     </main>
 
     <div id="toasts" class="toasts" aria-live="polite"></div>
-    <script src="app.js?v=20260624-ui16"></script>
+    <script src="app.js?v=20260705-ui17"></script>
   </body>
 </html>

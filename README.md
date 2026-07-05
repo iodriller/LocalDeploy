@@ -5,7 +5,7 @@
 <h1 align="center">LocalDeploy</h1>
 
 <p align="center">
-  <strong>Run, manage, and benchmark local AI models from one browser UI.</strong>
+  <strong>Pick and run the best local AI model for your machine — no guessing required.</strong>
 </p>
 
 <p align="center">
@@ -14,16 +14,44 @@
 
 ---
 
+## The 3-Minute First Run
+
+1. **Install** — paste the one-line installer below; it starts the API and opens the UI.
+2. **Check hardware** — LocalDeploy reads your GPU, VRAM, CPU, and RAM, and shows a fit budget for pulls.
+3. **Pull a model** — pull the default profile's model (or any Ollama name); the pull is fit-checked first, so you don't download something too big.
+4. **Deploy, then benchmark** — deploy the profile and run it against the built-in test set to see real accuracy and speed.
+5. **Compare with a preset** — once you have a couple of models pulled, use **Auto-pick a profile** (Safe Starter / Best Quality / Fast &amp; Low VRAM) to rank your saved profiles instead of guessing which one to deploy next.
+
+No terminal flags, no VRAM math, no trial-and-error pulls of models that turn out too big.
+
 ## What It Does
 
 - **Deploy local models** through Ollama-backed saved profiles.
 - **Check hardware and fit** before pulling or deploying a model.
 - **Pull models safely** with VRAM-aware warnings and streamed download logs.
-- **Benchmark profiles live** with per-test results appearing as each test finishes.
+- **Auto-pick a profile** with three one-click presets — Safe Starter, Best Quality, Fast / Low VRAM — each a different accuracy/speed/VRAM-headroom weighting over the same benchmark, not hardcoded model names.
+- **Benchmark profiles live** with per-test results streaming in as each test finishes.
 - **Compare runs** with a leaderboard, heatmap, speed/quality view, detailed rows, and exportable report cards.
-- **Find a good default** by fit-checking saved profiles and benchmarking candidates against your GPU budget.
 
 Full UI guide: [docs/UI.md](docs/UI.md)
+
+---
+
+## Why Not Just Ollama?
+
+LocalDeploy runs *on* Ollama (and optionally llama.cpp) — it doesn't replace it. Ollama is the inference
+engine; LocalDeploy is the decision layer on top that Ollama alone doesn't give you:
+
+| Ollama alone | With LocalDeploy |
+|---|---|
+| You guess whether a model fits your VRAM | Fit-checked before you pull or deploy, with a clear fits / tight / won't-fit verdict |
+| `ollama run` in a terminal | A browser UI: deploy, unload, and switch profiles with one click |
+| No built-in way to compare models | Live benchmarking with a leaderboard, heatmap, and speed-vs-quality view |
+| Pick a model by name and hope | Auto-pick a profile — three presets rank your saved profiles by accuracy, speed, and headroom |
+| No record of what you tried | Exportable report cards (HTML/JSON) to compare runs later |
+
+If you already know exactly which model you want and just need it running, `ollama run` is enough.
+LocalDeploy is for the more common case: "I have this GPU — what should I actually run, and how well does it work?"
 
 ---
 
@@ -125,6 +153,10 @@ docker compose down
 docker compose pull && docker compose up --build -d
 ```
 
+By default the container's port is only bound to your machine's loopback interface (`127.0.0.1`), matching
+the local-only threat model. To reach it from other devices on your network, see the LAN-mode comments in
+`docker-compose.yml` and set `API_TOKEN` — see [SECURITY.md](SECURITY.md) for what's at risk without it.
+
 ---
 
 ## GPU Notes
@@ -166,6 +198,9 @@ OpenAI-compatible endpoints:
 
 - `/v1/chat/completions`
 - `/v1/models`
+
+`/v1/embeddings` is **not implemented** — it returns a clear `embeddings_not_implemented` error pointing
+you at Ollama's native `POST http://localhost:11434/api/embeddings` instead of failing silently.
 
 Point compatible clients at `http://127.0.0.1:8000` with any API key.
 
