@@ -84,21 +84,22 @@ ollama pull llama3.1:8b
 # ... etc
 
 # Edit config.json to enable the profiles
-# Start the API server on an unused port (port 8000 is the StockPredictor app on this machine)
-API_PORT=8011 python api_server.py
+# Start the API server on an unused port
+$env:API_PORT = "8011"
+.\scripts\start.ps1
 
 # Run the full battery
-API_PORT=8011 python benchmark.py --timeout 300
+python benchmark.py --timeout 300
 ```
 
 Targeted runs:
 
 ```powershell
 # Only the new YBM-style hard JSON tests on all enabled profiles
-API_PORT=8011 python benchmark.py --include-categories structured_hard
+python benchmark.py --include-categories structured_hard
 
 # Skip categories you don't care about
-API_PORT=8011 python benchmark.py --skip-categories math
+python benchmark.py --skip-categories math
 ```
 
 ### How to extend the benchmark

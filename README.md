@@ -16,7 +16,7 @@
 
 ## The 3-Minute First Run
 
-1. **Install** — paste the one-line installer below; it starts the API and opens the UI.
+1. **Start** — use the existing-clone command below, or the fresh-install bootstrap if you do not have the repo yet.
 2. **Check hardware** — LocalDeploy reads your GPU, VRAM, CPU, and RAM, and shows a fit budget for pulls.
 3. **Pull a model** — pull the default profile's model (or any Ollama name); the pull is fit-checked first, so you don't download something too big.
 4. **Deploy, then benchmark** — deploy the profile and run it against the built-in test set to see real accuracy and speed.
@@ -57,23 +57,57 @@ LocalDeploy is for the more common case: "I have this GPU — what should I actu
 
 ## Quick Start
 
-### Windows
+### Existing clone
 
-Paste this in PowerShell:
+From the repo root on Windows, start the app and open the UI:
+
+```powershell
+.\scripts\start_ui.ps1
+```
+
+Stop the app:
+
+```powershell
+.\scripts\stop.ps1
+```
+
+Start the API without opening a browser:
+
+```powershell
+.\scripts\start.ps1
+```
+
+For foreground logs while developing:
+
+```powershell
+.\scripts\start.ps1 -Foreground
+```
+
+The launcher creates `.env`, `config.json`, and `.venv` when missing, starts Ollama if it is installed, starts the API in the background by default, and honors `API_HOST` / `API_PORT` from `.env`.
+
+Default UI:
+
+```text
+http://localhost:8000/ui
+```
+
+### Fresh install bootstrap
+
+These are for a machine that does not already have a clone. They install or verify Git/Docker, clone the repo, and run the Docker stack.
+
+Windows PowerShell:
 
 ```powershell
 irm https://raw.githubusercontent.com/iodriller/localdeploy/main/run.ps1 | iex
 ```
 
-### macOS or Linux
-
-Paste this in a terminal:
+macOS or Linux:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/iodriller/localdeploy/main/run.sh | bash
 ```
 
-The installer prepares the app, starts the server, and opens the UI. If it does not open automatically, go to:
+If the browser does not open automatically, go to:
 
 ```text
 http://localhost:8000/ui
@@ -81,27 +115,16 @@ http://localhost:8000/ui
 
 ---
 
-## Existing Clone
+## Script Surface
 
-From the repo root, start the local API and browser UI:
-
-```powershell
-.\scripts\start_ui.ps1
-```
-
-Or start the API in the background and open the UI yourself:
-
-```powershell
-.\scripts\start.ps1 -Background -OpenUI
-```
-
-The default UI URL is:
-
-```text
-http://127.0.0.1:8000/ui
-```
-
-The launcher honors `API_HOST` and `API_PORT` from `.env`, so custom ports are reflected in the opened URL.
+- `scripts/start.ps1` — canonical local start command; background by default, `-Foreground` for live logs.
+- `scripts/start_ui.ps1` — convenience wrapper for `start.ps1 -OpenUI`.
+- `scripts/stop.ps1` — stops the background API and optional llama.cpp server; add `-StopOllama` to stop Ollama too.
+- `install.ps1` — prepares local config and Ollama models; useful before the first non-Docker run.
+- `scripts/chat.ps1` — terminal chat helper.
+- `scripts/start_llamacpp.ps1` — advanced llama.cpp backend launcher.
+- `run.ps1` / `run.sh` — fresh-install Docker bootstrappers, not the daily local launcher.
+- `scripts/smoke_test.ps1` and `scripts/egress_selftest.py` — validation helpers.
 
 ---
 
@@ -182,10 +205,10 @@ See [SECURITY.md](SECURITY.md) for the threat model.
 
 ## For Developers
 
-Manual launch without Docker:
+Local foreground launch without Docker:
 
 ```powershell
-.\scripts\start.ps1 -Background -OpenUI
+.\scripts\start.ps1 -Foreground
 ```
 
 OpenAPI docs:

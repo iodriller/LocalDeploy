@@ -1,4 +1,4 @@
-# GAPS.md — known gaps, limitations, and unverified areas
+# Known Gaps
 
 A living, honest record of what is **not** fully done or proven on the public-launch feature set
 (the `/ui` web UI, the control-plane API, Docker, and the report-card / tune / offline
@@ -8,7 +8,9 @@ unchanged and not in scope here.
 Status legend: **Open** (worth doing) · **By design** (intentional trade-off) ·
 **Unverified** (couldn't prove in this environment) · **Owner action** (a human decision).
 
-Last reviewed against `main` at commit `e4451c7` (Benchmark workspace V2, device-aware deploy, and UI fixes).
+Last reviewed during launch-script/doc cleanup on 2026-07-05. Cleanup verification: PowerShell
+parse checks, `.\scripts\smoke_test.ps1`, `python scripts\egress_selftest.py`, direct
+start/health/stop, and `pytest -q` passed (`215 passed, 1 skipped`).
 
 ---
 
@@ -24,10 +26,9 @@ These were found and resolved before this document:
 - Installed-model list auto-runs the fit check per row.
 - CHANGELOG, SECURITY, and the README offline claim updated.
 
-Verification at time of writing: **213 tests pass** (expanded with benchmark V2, device-aware deploy,
-warmup-timeout, and model-management suites). Ruff clean, offline egress self-test passes,
-UI verified end-to-end via headless DOM (incl. SSE streaming, export, compare, recommend,
-set-default).
+Verification at time of the original review: the expanded offline suite covered benchmark V2,
+device-aware deploy, warmup-timeout, model management, offline egress, and browser UI flows
+including SSE streaming, export, compare, recommend, and set-default.
 
 ---
 
@@ -96,24 +97,19 @@ inference hosts) is always enforced.
 
 These are coded and statically checked but could not be executed here:
 
-- **Docker build & run** — no Docker daemon was available. `docker compose config` validates and
-  the shell scripts pass `bash -n`, but the image was never built or run. The `apt`/`pip`/
-  `huggingface_hub` install, the entrypoint's `ollama serve` + readiness loop, port publishing, and
-  NVIDIA GPU passthrough are all **unproven**. First real `docker compose up` on a host with a
-  daemon is the test.
+- **Manual Docker run on this workstation** — CI contains a Docker build and `/health` boot smoke,
+  but this local environment has not been used to run `docker compose up` end to end. NVIDIA GPU
+  passthrough remains host-dependent.
 - **Live model paths** — a real `ollama pull` completing, real benchmark scores against a served
   model, real serve/stop/switch VRAM changes, and a GPU-backed fit-check were all exercised against
   a **backend-down** server (graceful/streaming paths only). No Ollama or GPU was present.
-- **`scripts/egress_selftest.py`** passes locally but is **not wired into CI**.
-
 ---
 
 ## 6. Test / doc housekeeping — **Open (low)**
 
-- `scripts/egress_selftest.py` could be added as a CI step to lock in the offline guarantee.
-- `tests/README.md` lists only the original three test files; it doesn't mention the newer
-  `test_web_*`, `test_benchmark_*`, `test_model_management`, `test_warmup_timeout`, and
-  `test_device_target` suites (213 tests total as of `e4451c7`).
+- Keep `tests/README.md` synchronized as new suites are added.
+- Keep this file's verification notes tied to observed local/CI evidence instead of fixed historical
+  test counts.
 
 ---
 

@@ -4,6 +4,11 @@ All notable changes to this project should be documented here.
 
 ## Unreleased
 
+- **Streamlined local launch scripts and docs.** `scripts/start.ps1` is now the canonical local
+  start command and starts the API in the background by default, `scripts/start_ui.ps1` is a thin
+  open-UI wrapper, and `scripts/stop.ps1` handles the matching shutdown path. README/docs now
+  separate daily local commands from the fresh-install Docker bootstrappers (`run.ps1` / `run.sh`).
+  The stale GitHub setup note was removed.
 - **Forced CPU/GPU benchmarks now measure the device they ask for.** Previously a
   `device=cpu` (or `gpu`) run only pinned the placement at warm-up; the benchmark's own
   `/chat` calls didn't pass `num_gpu`, so Ollama could silently re-place the model (a CPU

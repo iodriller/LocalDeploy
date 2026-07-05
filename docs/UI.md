@@ -15,9 +15,21 @@ From a local checkout on Windows:
 .\scripts\start_ui.ps1
 ```
 
-That starts the API in the background, waits for `/health`, and opens `/ui`. You can also use
-`.\scripts\start.ps1 -Background -OpenUI`. Both launchers use `API_HOST` and `API_PORT` from
-`.env`; if `API_HOST=0.0.0.0`, the browser URL uses `127.0.0.1`.
+That starts the API in the background if needed, waits for `/health`, and opens `/ui`.
+For API-only startup, run:
+
+```powershell
+.\scripts\start.ps1
+```
+
+For foreground logs while developing:
+
+```powershell
+.\scripts\start.ps1 -Foreground
+```
+
+Both launchers use `API_HOST` and `API_PORT` from `.env`; if `API_HOST=0.0.0.0`, the browser URL
+uses `127.0.0.1`.
 
 The UI does not require llama.cpp. During normal API/UI startup, incomplete optional llama.cpp
 configuration is skipped with a warning so Ollama-backed profiles and diagnostics remain usable.

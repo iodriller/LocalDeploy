@@ -1,7 +1,7 @@
 """Minimal Python client examples for LocalDeploy.
 
 Run the API first:
-    .\\scripts\\start.ps1 -Background
+    .\\scripts\\start.ps1
 
 Then:
     python examples/python_client.py
@@ -64,7 +64,7 @@ def main() -> int:
         profiles = list_profiles()
     except requests.RequestException as exc:
         print(f"Could not reach LocalDeploy at {BASE_URL}: {exc}")
-        print("Start it with: .\\scripts\\start.ps1 -Background")
+        print("Start it with: .\\scripts\\start.ps1")
         return 1
 
     print(f"Default profile: {profiles.get('default_profile')}")

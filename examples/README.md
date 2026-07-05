@@ -1,6 +1,6 @@
 # Examples
 
-Minimal samples for calling the LocalDeploy API. They assume the server is running at `http://127.0.0.1:8000` (start it with `.\scripts\start.ps1 -Background`).
+Minimal samples for calling the LocalDeploy API. They assume the server is running at `http://127.0.0.1:8000` (start it with `.\scripts\start.ps1`).
 
 | File | What it shows |
 |---|---|
