@@ -60,3 +60,44 @@ jobs:
           REQUIRE_GPU_ONLY: "false"
           ENABLE_LLAMA_CPP: "false"
           ENABLE_CORS: "false"
+
+      # Locks in the no-telemetry guarantee: every local action must stay on
+      # loopback with OFFLINE=true, and the one internet-egress action must
+      # report itself skipped rather than silently phoning home.
+      - name: Run offline egress self-test
+        run: python scripts/egress_selftest.py
+
+  docker-build:
+    name: Docker build + boot smoke test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Build image
+        run: docker build -t localdeploy:ci .
+
+      - name: Start container
+        run: docker run -d --name localdeploy-ci -p 8000:8000 localdeploy:ci
+
+      - name: Wait for /health
+        run: |
+          for i in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:8000/health; then
+              echo
+              echo "API is healthy."
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "API never became healthy within the timeout." >&2
+          exit 1
+
+      - name: Container logs
+        if: always()
+        run: docker logs localdeploy-ci || true
+
+      - name: Stop container
+        if: always()
+        run: docker rm -f localdeploy-ci || true
