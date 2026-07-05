@@ -4,9 +4,9 @@
 
 ## Validation
 
-- [ ] `python -m py_compile api_server.py test_models.py`
-- [ ] `python -m json.tool config.example.json`
 - [ ] `.\scripts\smoke_test.ps1`
+- [ ] `pytest -q`
+- [ ] `python scripts\egress_selftest.py`
 
 ## Local Safety
 

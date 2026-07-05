@@ -1693,7 +1693,7 @@ def main() -> int:
         health = requests.get(f"{base_url}/health", timeout=10).json()
     except Exception as exc:
         print(f"API server is not reachable at {base_url}: {exc}")
-        print("Start it with: .\\scripts\\start.ps1 -Background  (or API_PORT=8011 python api_server.py)")
+        print("Start it with: .\\scripts\\start.ps1  (or set $env:API_PORT='8011' first)")
         return 2
     if not health.get("server"):
         print(f"API server at {base_url} returned unexpected health: {health}")

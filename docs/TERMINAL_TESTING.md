@@ -12,10 +12,16 @@ cd path\to\LocalDeploy
 To launch the local API + web UI from an existing checkout:
 
 ```powershell
-.\scripts\start.ps1 -Background -OpenUI
+.\scripts\start_ui.ps1
 ```
 
 The launcher prints the UI, API, and docs URLs after `/health` responds.
+
+For API-only terminal work, use:
+
+```powershell
+.\scripts\start.ps1
+```
 
 Interactive chat:
 
