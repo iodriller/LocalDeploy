@@ -12,6 +12,16 @@
   LocalDeploy keeps model serving on your machine: no cloud inference, no subscriptions, and no telemetry.
 </p>
 
+<p align="center">
+  <a href="https://github.com/iodriller/LocalDeploy/actions/workflows/ci.yml"><img src="https://github.com/iodriller/LocalDeploy/actions/workflows/ci.yml/badge.svg" alt="CI status" /></a>
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/setup-deploy.png" alt="LocalDeploy Setup &amp; Deploy tab" width="800" />
+</p>
+
+More screenshots: [docs/SCREENSHOTS.md](docs/SCREENSHOTS.md)
+
 ---
 
 ## The 3-Minute First Run
@@ -232,3 +242,5 @@ More API options: [docs/API_OPTIONS.md](docs/API_OPTIONS.md)
 Model profiles live in `config.json`, copied from `config.example.json` on first setup. The example config includes Ollama profiles and optional llama.cpp GGUF profiles.
 
 Model catalog with VRAM recommendations: [docs/MODELS.md](docs/MODELS.md)
+
+What's actually been verified, on which platforms, and when: [docs/VERIFICATION.md](docs/VERIFICATION.md)

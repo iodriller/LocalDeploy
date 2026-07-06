@@ -86,9 +86,9 @@ def strip_trailing_slash(url: str) -> str:
 
 def get_backend_base_url(profile: Dict[str, Any], backend: str) -> str:
     if backend == "ollama":
-        base_url = profile.get("base_url") or os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+        base_url = profile.get("base_url") or os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
     elif backend == "llamacpp":
-        base_url = profile.get("base_url") or os.getenv("LLAMACPP_BASE_URL", "http://localhost:8080")
+        base_url = profile.get("base_url") or os.getenv("LLAMACPP_BASE_URL", "http://127.0.0.1:8080")
     else:
         raise BackendCallError(f"Unsupported backend '{backend}'.")
     base_url = strip_trailing_slash(str(base_url))

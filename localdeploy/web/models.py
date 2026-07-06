@@ -293,7 +293,7 @@ def _serve_ollama(model_id: str, keep_alive: str, num_gpu: Optional[int] = None)
 
 
 def _llamacpp_status_message() -> Dict[str, Any]:
-    health = llama_health(os.getenv("LLAMACPP_BASE_URL", "http://localhost:8080"))
+    health = llama_health(os.getenv("LLAMACPP_BASE_URL", "http://127.0.0.1:8080"))
     if health.get("reachable"):
         return {"success": True, "backend": "llamacpp", "message": "llama.cpp server is running and serving its GGUF model."}
     return {

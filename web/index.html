@@ -237,6 +237,10 @@
             <button class="btn compact preset-btn" data-preset="safe" title="Balances accuracy, speed, and VRAM headroom evenly — a dependable everyday pick.">Safe Starter</button>
             <button class="btn compact preset-btn" data-preset="quality" title="Weights accuracy heavily; picks the strongest answer quality among profiles that fit.">Best Quality</button>
             <button class="btn compact preset-btn" data-preset="fast" title="Weights speed heavily; picks the quickest profile that still fits your VRAM budget.">Fast / Low VRAM</button>
+            <label class="check" title="Quick uses a handful of fast tests per candidate. Full runs the entire test bench per candidate for a more thorough (slower) score.">
+              <input type="checkbox" id="recommend-full-bench" />
+              <span>Full benchmark (slower, more thorough) ⓘ</span>
+            </label>
           </div>
           <div id="recommend-body" class="muted">Run this after hardware detection to get a recommended saved profile.</div>
         </div>

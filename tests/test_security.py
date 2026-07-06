@@ -43,3 +43,51 @@ def test_ui_exemption_is_exact_prefix_not_substring(monkeypatch):
     monkeypatch.setenv("API_TOKEN", "secret")
     # A non-existent "/ui"-prefixed path must hit auth (401), not slip through.
     assert client.get("/uixyz").status_code == 401
+
+
+# The control-plane surface documented in SECURITY.md as dangerous without a
+# token: pulling/deleting/unloading models, changing the default profile, and
+# running benchmarks. Every one must 401 with no token once API_TOKEN is set,
+# regardless of request body validity — auth must run before body parsing.
+CONTROL_PLANE_ENDPOINTS = [
+    "/models/pull",
+    "/models/delete",
+    "/models/stop",
+    "/models/free",
+    "/models/switch",
+    "/system/set-default",
+    "/system/recommend",
+    "/benchmark/run",
+]
+
+
+def test_control_plane_endpoints_require_token_when_set(monkeypatch):
+    monkeypatch.setenv("API_TOKEN", "secret")
+    for path in CONTROL_PLANE_ENDPOINTS:
+        resp = client.post(path, json={})
+        assert resp.status_code == 401, f"{path} did not require auth: {resp.status_code} {resp.text}"
+
+
+def test_control_plane_endpoints_open_without_token(monkeypatch):
+    # Confirms the opt-in nature: with no API_TOKEN configured, these endpoints
+    # are reachable (they may still 4xx/5xx on an empty body, just not for auth).
+    monkeypatch.delenv("API_TOKEN", raising=False)
+    for path in CONTROL_PLANE_ENDPOINTS:
+        resp = client.post(path, json={})
+        assert resp.status_code != 401, f"{path} unexpectedly required auth with no token set"
+
+
+def test_openai_compatible_endpoints_require_same_token(monkeypatch):
+    # The token guard is one global middleware over every path except the /ui,
+    # /health, /favicon.ico exemptions — so /v1/* must be covered identically
+    # to the native API, with no separate auth path to fall out of sync.
+    monkeypatch.setenv("API_TOKEN", "secret")
+    assert client.get("/v1/models").status_code == 401
+    assert client.get("/v1/models", headers={"X-API-Token": "secret"}).status_code == 200
+    assert (
+        client.post(
+            "/v1/chat/completions",
+            json={"model": "x", "messages": [{"role": "user", "content": "hi"}]},
+        ).status_code
+        == 401
+    )

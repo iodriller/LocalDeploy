@@ -30,8 +30,17 @@ The server rejects non-local backend URLs in code (`localdeploy/utils.py::is_loo
 `API_HOST` defaults to `127.0.0.1` in `.env.example`. If you change it, document why and pair it with at least:
 
 - A firewall rule limiting access to known clients.
-- An auth header check (not currently provided — you must add it).
+- `API_TOKEN` set, so the control-plane isn't wide open (see below).
 - TLS termination in front of the API.
+
+**Runtime guard:** at startup, `api_server.py` checks whether `API_HOST` resolves to a
+non-loopback address with no `API_TOKEN` set. If so it prints a loud warning
+listing the exposed control-plane endpoints. Set `REQUIRE_TOKEN_ON_LAN=true` to
+turn that warning into a hard failure (the server refuses to start) instead of
+just logging it. Inside Docker the container always binds `0.0.0.0` internally
+by design — what actually controls exposure is the *host* port mapping in
+`docker-compose.yml` — so the warning there is informational unless you also
+opened that host port to your LAN.
 
 ## Sensitive Files
 
