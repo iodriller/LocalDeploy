@@ -2739,10 +2739,15 @@ async function recommendTune(weights = null) {
   };
   renderRecommendProgress(body, candidates, "Fit-checking saved profiles…");
   let finalResult = null;
+  // Quick (default) samples a handful of the fastest tests per candidate to
+  // keep tuning snappy; Full runs the entire test bench for a slower, more
+  // thorough score. sample_size is clamped server-side to the test count.
+  const fullBench = $("#recommend-full-bench")?.checked;
+  const sampleSize = fullBench ? 9999 : 3;
   try {
     const result = await postMaybeStream(
       "/system/recommend/stream",
-      { free_vram_mb: targetVram(), ...(weights || {}) },
+      { free_vram_mb: targetVram(), sample_size: sampleSize, ...(weights || {}) },
       (evt) => {
         if (evt.event === "recommend_start") {
           (evt.candidates || []).forEach(addCandidate);
@@ -2784,8 +2789,10 @@ async function recommendTune(weights = null) {
         const star = c.profile === rec.profile ? " ★" : "";
         const p = state.profileData[c.profile] || {};
         const model = p.model_id || state.profileModels[c.profile] || c.profile;
+        const installed = installedStatusForProfile(c.profile);
         return `<tr><td><b>${esc(c.profile)}${star}</b><div class="muted small">${esc(model)}</div></td>
           <td>${esc(p.backend || "ollama")}</td>
+          <td><span class="badge ${installed.cls}">${esc(installed.label)}</span></td>
           <td class="num">${esc(c.avg_accuracy)}</td>
           <td class="num">${esc(c.avg_latency_s)}s</td>
           <td class="num">${esc(c.margin_gb ?? "—")}</td>
@@ -2805,7 +2812,7 @@ async function recommendTune(weights = null) {
         <button class="btn set-default-btn" data-profile="${esc(rec.profile)}">Set as default</button>
       </div>
       <div class="table-wrap" style="margin-top:.5rem"><table class="results">
-        <thead><tr><th>Saved profile / model</th><th>Backend</th><th class="num">Accuracy</th><th class="num">Latency</th><th class="num">Headroom</th><th class="num">Score</th></tr></thead>
+        <thead><tr><th>Saved profile / model</th><th>Backend</th><th>Status</th><th class="num">Accuracy</th><th class="num">Latency</th><th class="num">Headroom</th><th class="num">Score</th></tr></thead>
         <tbody>${rows}</tbody></table></div>
       ${skipped ? `<h3 class="sub">Skipped (won’t fit)</h3><ul class="err-list">${skipped}</ul>` : ""}`;
     const sd = body.querySelector(".set-default-btn");

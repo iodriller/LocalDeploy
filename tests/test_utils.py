@@ -55,6 +55,16 @@ class TestGetBackendBaseUrl:
         url = get_backend_base_url({"base_url": "http://127.0.0.1:11434/"}, "ollama")
         assert url == "http://127.0.0.1:11434"
 
+    def test_defaults_use_ip_literal_not_localhost_hostname(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Resolving the "localhost" hostname can take seconds on some Windows
+        # configurations (IPv6 attempted first, then falls back to IPv4),
+        # while "127.0.0.1" is an IP literal with no resolution cost. Defaults
+        # must use the literal so every request doesn't pay that tax.
+        monkeypatch.delenv("OLLAMA_BASE_URL", raising=False)
+        monkeypatch.delenv("LLAMACPP_BASE_URL", raising=False)
+        assert get_backend_base_url({}, "ollama") == "http://127.0.0.1:11434"
+        assert get_backend_base_url({}, "llamacpp") == "http://127.0.0.1:8080"
+
 
 class TestEnvHelpers:
     def test_env_bool_parses_truthy(self, monkeypatch: pytest.MonkeyPatch) -> None:

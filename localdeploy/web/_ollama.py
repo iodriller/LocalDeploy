@@ -18,7 +18,7 @@ from ..utils import BackendCallError, is_loopback_url, strip_trailing_slash
 
 
 def base_url() -> str:
-    base = strip_trailing_slash(os.getenv("OLLAMA_BASE_URL", "http://localhost:11434"))
+    base = strip_trailing_slash(os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434"))
     if not is_loopback_url(base):
         raise BackendCallError(f"Refusing non-local Ollama URL: {base}")
     return base

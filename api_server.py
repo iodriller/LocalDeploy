@@ -6,6 +6,7 @@ import json
 import math
 import os
 import re
+import sys
 import time
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional, Tuple
@@ -259,9 +260,9 @@ def resolve_profile(
             return profile_name, profile, "backend must be 'ollama' or 'llamacpp'."
         profile["backend"] = backend
         if backend == "ollama":
-            profile["base_url"] = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+            profile["base_url"] = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
         else:
-            profile["base_url"] = os.getenv("LLAMACPP_BASE_URL", "http://localhost:8080")
+            profile["base_url"] = os.getenv("LLAMACPP_BASE_URL", "http://127.0.0.1:8080")
 
     requested_model = request_data.get("model")
     if requested_model:
@@ -937,6 +938,47 @@ def normalize_structured_content(content: str) -> str:
 
 app = FastAPI(title="Local LLM Server", version="1.0.0")
 
+
+def _host_is_loopback(host: str) -> bool:
+    return host.strip().lower() in {"127.0.0.1", "localhost", "::1"}
+
+
+def check_lan_exposure() -> None:
+    """Warn (or hard-fail under REQUIRE_TOKEN_ON_LAN) when API_HOST is bound to
+    a non-loopback address without an API_TOKEN set. Runs at import time so it
+    covers both `python api_server.py` and Docker's `uvicorn api_server:app`
+    entry points, neither of which share a single call site otherwise.
+    """
+    host = os.getenv("API_HOST", "127.0.0.1")
+    if _host_is_loopback(host) or api_token():
+        return
+    in_docker = os.path.exists("/.dockerenv")
+    lines = [
+        "=" * 70,
+        f"WARNING: API_HOST={host} is not loopback-only and no API_TOKEN is set.",
+    ]
+    if in_docker:
+        lines.append(
+            "Inside Docker this is expected (the container always binds 0.0.0.0 "
+            "internally) - what actually controls exposure is the *host* port "
+            "mapping in docker-compose.yml. If you changed it to reach this from "
+            "your LAN, set API_TOKEN too."
+        )
+    else:
+        lines.append(
+            "The control-plane (pull/delete/unload/set-default/benchmark) is "
+            "reachable by anyone who can reach this host, with no authentication."
+        )
+    lines.append("Set API_TOKEN to require a token, or bind API_HOST=127.0.0.1 to stay local-only.")
+    lines.append("=" * 70)
+    message = "\n".join(lines)
+    if env_bool("REQUIRE_TOKEN_ON_LAN", False):
+        raise SystemExit(message + "\nRefusing to start (REQUIRE_TOKEN_ON_LAN=true).")
+    print(message, file=sys.stderr)
+
+
+check_lan_exposure()
+
 if env_bool("ENABLE_CORS", False):
     app.add_middleware(
         CORSMiddleware,
@@ -987,14 +1029,14 @@ async def api_token_guard(request: Request, call_next):
 @app.get("/health")
 def health() -> Dict[str, Any]:
     config = load_config()
-    ollama_base = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+    ollama_base = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
     if require_gpu_only():
         models, ollama_error = [], "disabled by GPU-only mode"
         ollama_reachable = False
     else:
         models, ollama_error = ollama_models(ollama_base)
         ollama_reachable = ollama_error is None
-    llama_base = os.getenv("LLAMACPP_BASE_URL", "http://localhost:8080")
+    llama_base = os.getenv("LLAMACPP_BASE_URL", "http://127.0.0.1:8080")
     llama_status = llama_health(llama_base) if env_bool("ENABLE_LLAMA_CPP", False) else {"enabled": False}
     return {
         "success": True,
@@ -1016,7 +1058,7 @@ def health() -> Dict[str, Any]:
 @app.get("/models")
 def models() -> Dict[str, Any]:
     config = load_config()
-    ollama_base = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+    ollama_base = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
     if require_gpu_only():
         models_available, ollama_error = [], "disabled by GPU-only mode"
     else:
@@ -1107,7 +1149,7 @@ def openai_embeddings(_request: Request) -> JSONResponse:
             "error": {
                 "message": (
                     "LocalDeploy does not implement /v1/embeddings. "
-                    "Call Ollama directly at POST http://localhost:11434/api/embeddings, "
+                    "Call Ollama directly at POST http://127.0.0.1:11434/api/embeddings, "
                     "or run a dedicated embedding server."
                 ),
                 "type": "localdeploy_not_implemented",
