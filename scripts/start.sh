@@ -23,5 +23,27 @@ pip install --quiet -r requirements.txt
 
 HOST="${API_HOST:-127.0.0.1}"
 PORT="${API_PORT:-8000}"
-echo "[start] LocalDeploy UI:  http://${HOST}:${PORT}/ui"
+BROWSE_HOST="$HOST"
+case "$BROWSE_HOST" in 0.0.0.0|::) BROWSE_HOST="127.0.0.1" ;; esac
+UI_URL="http://${BROWSE_HOST}:${PORT}/ui"
+echo "[start] LocalDeploy UI:  $UI_URL"
+
+# Open the UI once the server answers (set NO_BROWSER=1 to skip).
+if [ -z "${NO_BROWSER:-}" ]; then
+  opener=""
+  command -v xdg-open >/dev/null 2>&1 && opener="xdg-open"
+  command -v open >/dev/null 2>&1 && opener="open"
+  if [ -n "$opener" ]; then
+    (
+      for _ in $(seq 1 60); do
+        if curl -fsS "http://${BROWSE_HOST}:${PORT}/health" >/dev/null 2>&1; then
+          "$opener" "$UI_URL" >/dev/null 2>&1 || true
+          break
+        fi
+        sleep 1
+      done
+    ) &
+  fi
+fi
+
 exec uvicorn api_server:app --host "$HOST" --port "$PORT"

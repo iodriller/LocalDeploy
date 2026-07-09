@@ -65,4 +65,4 @@ pytest tests/test_guardrails.py -v
 - `test_phase5_phase6.py` — Phase 5 (HF discovery) and Phase 6 (device-tagged benchmark cards).
 - `test_phase_b_report.py` — tok/s in summary, per-category rollup, tok/s in compare.
 
-These exercise the safety and control-plane layers. They are not a substitute for end-to-end testing against a real backend; for that, run `test_models.py` with a live Ollama or llama.cpp server.
+These exercise the safety and control-plane layers. They are not a substitute for end-to-end testing against a real backend; for that, run `compare_models.py` with a live Ollama or llama.cpp server.

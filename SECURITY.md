@@ -71,4 +71,4 @@ These are deliberate trade-offs for the single-user, local-only design. They bec
 
 ## Reporting
 
-If this repository is published, report security issues through the private security channel for that repository. Do not include private prompts, images, tokens, or model files in public issues.
+Report security issues privately via GitHub's **Security → Report a vulnerability** on this repository rather than a public issue. Do not include private prompts, images, tokens, or model files in reports or public issues.
