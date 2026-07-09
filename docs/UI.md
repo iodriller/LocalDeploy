@@ -12,14 +12,14 @@ before the UI existed).
 From a local checkout on Windows:
 
 ```powershell
-.\scripts\start_ui.ps1
+.\scripts\start.ps1
 ```
 
 That starts the API in the background if needed, waits for `/health`, and opens `/ui`.
-For API-only startup, run:
+For API-only startup without a browser, run:
 
 ```powershell
-.\scripts\start.ps1
+.\scripts\start.ps1 -NoBrowser
 ```
 
 For foreground logs while developing:
@@ -28,7 +28,7 @@ For foreground logs while developing:
 .\scripts\start.ps1 -Foreground
 ```
 
-Both launchers use `API_HOST` and `API_PORT` from `.env`; if `API_HOST=0.0.0.0`, the browser URL
+The launcher uses `API_HOST` and `API_PORT` from `.env`; if `API_HOST=0.0.0.0`, the browser URL
 uses `127.0.0.1`.
 
 The UI does not require llama.cpp. During normal API/UI startup, incomplete optional llama.cpp

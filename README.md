@@ -9,11 +9,12 @@
 </p>
 
 <p align="center">
-  LocalDeploy keeps model serving on your machine: no cloud inference, no subscriptions, and no telemetry.
+  Everything stays on your machine: no cloud inference, no subscriptions, no telemetry.
 </p>
 
 <p align="center">
   <a href="https://github.com/iodriller/LocalDeploy/actions/workflows/ci.yml"><img src="https://github.com/iodriller/LocalDeploy/actions/workflows/ci.yml/badge.svg" alt="CI status" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT license" /></a>
 </p>
 
 <p align="center">
@@ -24,148 +25,47 @@ More screenshots: [docs/SCREENSHOTS.md](docs/SCREENSHOTS.md)
 
 ---
 
-## The 3-Minute First Run
+## Why?
 
-1. **Start** — use the existing-clone command below, or the fresh-install bootstrap if you do not have the repo yet.
-2. **Check hardware** — LocalDeploy reads your GPU, VRAM, CPU, and RAM, and shows a fit budget for pulls.
-3. **Pull a model** — pull the default profile's model (or any Ollama name); the pull is fit-checked first, so you don't download something too big.
-4. **Deploy, then benchmark** — deploy the profile and run it against the built-in test set to see real accuracy and speed.
-5. **Compare with a preset** — once you have a couple of models pulled, use **Auto-pick a profile** (Safe Starter / Best Quality / Fast &amp; Low VRAM) to rank your saved profiles instead of guessing which one to deploy next.
-
-No terminal flags, no VRAM math, no trial-and-error pulls of models that turn out too big.
-
-## What It Does
-
-- **Deploy local models** through Ollama-backed saved profiles.
-- **Check hardware and fit** before pulling or deploying a model.
-- **Pull models safely** with VRAM-aware warnings and streamed download logs.
-- **Auto-pick a profile** with three one-click presets — Safe Starter, Best Quality, Fast / Low VRAM — each a different accuracy/speed/VRAM-headroom weighting over the same benchmark, not hardcoded model names.
-- **Benchmark profiles live** with per-test results streaming in as each test finishes.
-- **Compare runs** with a leaderboard, heatmap, speed/quality view, detailed rows, and exportable report cards.
-
-Full UI guide: [docs/UI.md](docs/UI.md)
-
----
-
-## Why Not Just Ollama?
-
-LocalDeploy runs *on* Ollama (and optionally llama.cpp) — it doesn't replace it. Ollama is the inference
-engine; LocalDeploy is the decision layer on top that Ollama alone doesn't give you:
+Running a local model with [Ollama](https://ollama.com) is easy. Knowing **which** model to run is not:
 
 | Ollama alone | With LocalDeploy |
 |---|---|
-| You guess whether a model fits your VRAM | Fit-checked before you pull or deploy, with a clear fits / tight / won't-fit verdict |
-| `ollama run` in a terminal | A browser UI: deploy, unload, and switch profiles with one click |
+| You guess whether a model fits your VRAM | Fit-checked before you pull or deploy: fits / tight / won't fit |
+| `ollama run` in a terminal | A browser UI: pull, deploy, unload, and switch models with one click |
 | No built-in way to compare models | Live benchmarking with a leaderboard, heatmap, and speed-vs-quality view |
-| Pick a model by name and hope | Auto-pick a profile — three presets rank your saved profiles by accuracy, speed, and headroom |
+| Pick a model by name and hope | Auto-pick ranks your models by accuracy, speed, and VRAM headroom |
 | No record of what you tried | Exportable report cards (HTML/JSON) to compare runs later |
 
-If you already know exactly which model you want and just need it running, `ollama run` is enough.
-LocalDeploy is for the more common case: "I have this GPU — what should I actually run, and how well does it work?"
-
----
+LocalDeploy runs *on* Ollama (and optionally llama.cpp) — it doesn't replace it. If you already know exactly which model you want, `ollama run` is enough. LocalDeploy is for the more common case: *"I have this GPU — what should I actually run, and how well does it work?"*
 
 ## Quick Start
 
-### Existing clone
+### Windows
 
-From the repo root on Windows, start the app and open the UI:
-
-```powershell
-.\scripts\start_ui.ps1
-```
-
-Stop the app:
+Prerequisites: [Python 3.10+](https://www.python.org/downloads/) and [Ollama](https://ollama.com/download).
 
 ```powershell
-.\scripts\stop.ps1
-```
-
-Start the API without opening a browser:
-
-```powershell
+git clone https://github.com/iodriller/localdeploy.git
+cd localdeploy
 .\scripts\start.ps1
 ```
 
-For foreground logs while developing:
+That creates `.env`, `config.json`, and a `.venv` on first run, starts Ollama if it's installed, launches the API in the background, and opens the UI at `http://localhost:8000/ui`. Stop with `.\scripts\stop.ps1`.
 
-```powershell
-.\scripts\start.ps1 -Foreground
-```
+### macOS / Linux
 
-The launcher creates `.env`, `config.json`, and `.venv` when missing, starts Ollama if it is installed, starts the API in the background by default, and honors `API_HOST` / `API_PORT` from `.env`.
-
-Default UI:
-
-```text
-http://localhost:8000/ui
-```
-
-### Fresh install bootstrap
-
-These are for a machine that does not already have a clone. They install or verify Git/Docker, clone the repo, and run the Docker stack.
-
-Windows PowerShell:
-
-```powershell
-irm https://raw.githubusercontent.com/iodriller/localdeploy/main/run.ps1 | iex
-```
-
-macOS or Linux:
+Prerequisites: Python 3.10+ and [Ollama](https://ollama.com/download) running.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/iodriller/localdeploy/main/run.sh | bash
+git clone https://github.com/iodriller/localdeploy.git
+cd localdeploy
+./scripts/start.sh
 ```
 
-If the browser does not open automatically, go to:
+Runs in the foreground and opens `http://localhost:8000/ui` when ready. Stop with Ctrl+C.
 
-```text
-http://localhost:8000/ui
-```
-
----
-
-## Script Surface
-
-- `scripts/start.ps1` — canonical local start command; background by default, `-Foreground` for live logs.
-- `scripts/start_ui.ps1` — convenience wrapper for `start.ps1 -OpenUI`.
-- `scripts/stop.ps1` — stops the background API and optional llama.cpp server; add `-StopOllama` to stop Ollama too.
-- `install.ps1` — prepares local config and Ollama models; useful before the first non-Docker run.
-- `scripts/chat.ps1` — terminal chat helper.
-- `scripts/start_llamacpp.ps1` — advanced llama.cpp backend launcher.
-- `run.ps1` / `run.sh` — fresh-install Docker bootstrappers, not the daily local launcher.
-- `scripts/smoke_test.ps1` and `scripts/egress_selftest.py` — validation helpers.
-
----
-
-## UI Workflow
-
-1. **Check hardware** to detect GPU, VRAM, CPU, RAM, and live memory state.
-2. **Review the model fit budget** so scans and pulls use the right GPU target.
-3. **Pull a model** by name, or scan saved profiles and Hugging Face GGUF results.
-4. **Deploy a saved profile** and keep it warm with a configurable keep-alive.
-5. **Run benchmarks** across one or more profiles and devices.
-6. **Watch streamed results** update the queue, leaderboard, detailed table, and comparison views as each test completes.
-7. **Export report cards** or compare selected runs locally in the browser.
-
----
-
-## Benchmarking
-
-The benchmark workspace is built for local model decisions:
-
-- Runs execute sequentially to avoid VRAM contention.
-- The queue clearly separates queued, deploying, running, finished, failed, and stopped runs.
-- Active runs stream test results immediately into the dashboard and detailed table.
-- CPU, GPU, Auto, and CPU + GPU modes are supported for Ollama profiles.
-- Completed runs are saved in browser `localStorage`; no backend database is required.
-- Report cards can be exported as HTML or bundled as JSON for later comparison.
-
----
-
-## Docker
-
-Already have Docker?
+### Docker (bundles Ollama, no Python needed)
 
 ```bash
 git clone https://github.com/iodriller/localdeploy.git
@@ -173,74 +73,48 @@ cd localdeploy
 docker compose up --build -d
 ```
 
-Then open:
+Then open `http://localhost:8000/ui`. Stop with `docker compose down`. The container binds to `127.0.0.1` only; to reach it from other devices see the LAN-mode comments in `docker-compose.yml` and [SECURITY.md](SECURITY.md). For NVIDIA GPU passthrough, uncomment the `deploy.resources` block in `docker-compose.yml` (requires the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html)).
 
-```text
-http://localhost:8000/ui
-```
+## Your First 3 Minutes
 
-To stop or update:
+1. **Check hardware** — LocalDeploy reads your GPU, VRAM, CPU, and RAM, and shows a fit budget.
+2. **Pull a model** — any Ollama name (e.g. `gemma3:4b`); the pull is fit-checked first, so you don't download something too big.
+3. **Deploy it** — one click, choosing Auto / GPU / CPU placement.
+4. **Benchmark it** — run it against the built-in test set to see real accuracy and speed.
+5. **Auto-pick** — once a couple of models are pulled, let a preset (Safe Starter / Best Quality / Fast & Low VRAM) rank them for you.
 
-```bash
-docker compose down
-docker compose pull && docker compose up --build -d
-```
+No terminal flags, no VRAM math, no trial-and-error pulls. Full UI guide: [docs/UI.md](docs/UI.md)
 
-By default the container's port is only bound to your machine's loopback interface (`127.0.0.1`), matching
-the local-only threat model. To reach it from other devices on your network, see the LAN-mode comments in
-`docker-compose.yml` and set `API_TOKEN` — see [SECURITY.md](SECURITY.md) for what's at risk without it.
+## Benchmarking
 
----
+The benchmark tab is a local experiment workspace:
 
-## GPU Notes
+- Runs execute sequentially to avoid VRAM contention, with per-test results streaming in live.
+- CPU, GPU, Auto, and CPU + GPU comparison modes for Ollama profiles.
+- Leaderboard, category heatmap, speed/quality scatter, and detailed per-test rows.
+- Completed runs live in browser `localStorage` — no database — and export as self-contained HTML/JSON report cards you can re-import and compare later.
+- Bring your own question set (safe JSON graders, no code execution) or use the built-in suite.
 
-For NVIDIA GPU passthrough in Docker, uncomment the `deploy.resources` block in `docker-compose.yml`.
-This requires the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html).
+## Privacy & Security
 
-llama.cpp is optional. If `ENABLE_LLAMA_CPP=true` but no enabled llama.cpp profile or GGUF file is configured, the local launcher skips that backend and still starts the API/UI. Start llama.cpp directly when you want that backend to be fatal on misconfiguration:
-
-```powershell
-.\scripts\start_llamacpp.ps1
-```
-
----
-
-## Privacy
-
-LocalDeploy has no telemetry. The server only talks to local inference backends unless you manually run the Hugging Face model lookup. Set `OFFLINE=true` to block outbound lookup calls too.
-
-See [SECURITY.md](SECURITY.md) for the threat model.
-
----
+- **No telemetry.** The server only talks to local inference backends; backend URLs are enforced loopback-only in code.
+- The one internet-touching feature (Hugging Face model search) runs only when you click it. Set `OFFLINE=true` to block it too, and verify with `python scripts/egress_selftest.py`.
+- The API binds to `127.0.0.1` by default. Before any LAN exposure, set `API_TOKEN` — see [SECURITY.md](SECURITY.md) for the threat model.
 
 ## For Developers
 
-Local foreground launch without Docker:
-
 ```powershell
-.\scripts\start.ps1 -Foreground
+.\scripts\start.ps1 -Foreground   # live logs in the terminal
 ```
 
-OpenAPI docs:
+- OpenAPI docs at `http://127.0.0.1:8000/docs`.
+- **OpenAI-compatible endpoints**: `/v1/chat/completions` (with streaming) and `/v1/models` — point compatible clients at `http://127.0.0.1:8000/v1` with any API key. `/v1/embeddings` is not implemented and returns a clear error pointing at Ollama's native embeddings API.
+- Model profiles live in `config.json` (created from `config.example.json` on first start).
+- Terminal chat and model comparison: [docs/CLI.md](docs/CLI.md)
+- Full API request schema and limits: [docs/API_OPTIONS.md](docs/API_OPTIONS.md)
+- Model catalog with VRAM guidance: [docs/MODELS.md](docs/MODELS.md)
+- Tests and local checks: [tests/README.md](tests/README.md) and [CONTRIBUTING.md](CONTRIBUTING.md)
 
-```text
-http://127.0.0.1:8000/docs
-```
+## License
 
-OpenAI-compatible endpoints:
-
-- `/v1/chat/completions`
-- `/v1/models`
-
-`/v1/embeddings` is **not implemented** — it returns a clear `embeddings_not_implemented` error pointing
-you at Ollama's native `POST http://localhost:11434/api/embeddings` instead of failing silently.
-
-Point compatible clients at `http://127.0.0.1:8000` with any API key.
-
-More API options: [docs/API_OPTIONS.md](docs/API_OPTIONS.md)
-
-Model profiles live in `config.json`, copied from `config.example.json` on first setup. The example config includes Ollama profiles and optional llama.cpp GGUF profiles.
-
-Model catalog with VRAM recommendations: [docs/MODELS.md](docs/MODELS.md)
-
-What's actually been verified, on which platforms, and when: [docs/VERIFICATION.md](docs/VERIFICATION.md)
+[MIT](LICENSE)

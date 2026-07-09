@@ -74,7 +74,7 @@ Streaming is token-by-token for Ollama profiles. For llama.cpp profiles the full
 
 ## Context Testing
 
-The API defaults are intentionally conservative. Use `test_models.py` for normal comparisons. For probing larger contexts, increase limits in your local `config.json` or test directly against Ollama with `num_ctx` before changing API defaults.
+The API defaults are intentionally conservative. Use `compare_models.py` for normal comparisons. For probing larger contexts, increase limits in your local `config.json` or test directly against Ollama with `num_ctx` before changing API defaults.
 
 ## Limits Resolution Order
 
