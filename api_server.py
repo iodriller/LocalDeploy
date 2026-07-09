@@ -440,7 +440,10 @@ def prepare_request(
     profile_context_limit = int(profile.get("context_limit") or 2048)
     profile_safe_context_limit = int(profile.get("safe_context_limit") or profile_context_limit)
     allowed_context = min(profile_context_limit, profile_safe_context_limit) if safe_mode else profile_context_limit
-    requested_context = int(data.get("context_limit") or allowed_context)
+    # `or` would silently replace an explicit 0 with the default instead of
+    # letting the "must be greater than zero" validation below catch it.
+    requested_context_raw = data.get("context_limit")
+    requested_context = int(requested_context_raw if requested_context_raw is not None else allowed_context)
     context_limit_used = clamp_or_error(
         requested_context,
         allowed_context,
@@ -451,7 +454,8 @@ def prepare_request(
 
     profile_output_limit = int(profile.get("max_output_tokens") or limits["max_output_tokens"])
     allowed_output = min(profile_output_limit, int(limits["max_output_tokens"]))
-    requested_output = int(data.get("max_output_tokens") or allowed_output)
+    requested_output_raw = data.get("max_output_tokens")
+    requested_output = int(requested_output_raw if requested_output_raw is not None else allowed_output)
     max_output_tokens_used = clamp_or_error(
         requested_output,
         allowed_output,
@@ -482,7 +486,9 @@ def prepare_request(
             cleaned_images.append(clean_base64_image(image))
         data["images_base64"] = cleaned_images
 
-    timeout_seconds = int(data.get("timeout_seconds") or profile.get("timeout_seconds") or limits["request_timeout_seconds"])
+    requested_timeout_raw = data.get("timeout_seconds")
+    default_timeout = profile.get("timeout_seconds") or limits["request_timeout_seconds"]
+    timeout_seconds = int(requested_timeout_raw if requested_timeout_raw is not None else default_timeout)
     if timeout_seconds <= 0:
         errors.append("timeout_seconds must be greater than zero.")
 
@@ -739,7 +745,10 @@ def run_benchmark(request_data: Dict[str, Any]) -> Dict[str, Any]:
         "profiles_tested": profile_names,
         "results": results,
     }
-    top_backend = "mixed" if len(profile_names) > 1 else None
+    if len(profile_names) > 1:
+        top_backend = "mixed"
+    else:
+        top_backend = (config.get("profiles", {}).get(profile_names[0]) or {}).get("backend")
     return model_dump_compat(
         LocalLLMResponse(
             success=any(item["successes"] > 0 for item in results),
@@ -854,6 +863,10 @@ def openai_stream_response(request_model: OpenAIChatCompletionRequest) -> Stream
                 yield openai_sse_error(completion_id, model_name, str(exc))
                 yield "data: [DONE]\n\n"
                 return
+            except Exception as exc:
+                yield openai_sse_error(completion_id, model_name, f"Unexpected error: {exc}")
+                yield "data: [DONE]\n\n"
+                return
             yield openai_sse_chunk(completion_id, model_name, {"role": "assistant"}, None)
             if content:
                 yield openai_sse_chunk(completion_id, model_name, {"content": content}, None)
@@ -868,6 +881,13 @@ def openai_stream_response(request_model: OpenAIChatCompletionRequest) -> Stream
                     yield openai_sse_chunk(completion_id, model_name, {"content": chunk}, None)
         except BackendCallError as exc:
             yield openai_sse_error(completion_id, model_name, str(exc))
+            yield "data: [DONE]\n\n"
+            return
+        except Exception as exc:
+            # Last-resort safety net: any unexpected mid-stream failure (a dropped
+            # connection, a malformed chunk) must still end the SSE stream cleanly
+            # instead of crashing the generator and leaving the client hanging.
+            yield openai_sse_error(completion_id, model_name, f"Unexpected error: {exc}")
             yield "data: [DONE]\n\n"
             return
         yield openai_sse_chunk(completion_id, model_name, {}, "stop")
@@ -1211,7 +1231,7 @@ def benchmark(request: BenchmarkRequest) -> Dict[str, Any]:
 # Web UI and control-plane endpoints are additive and opt-out via ENABLE_WEB_UI.
 # When disabled, the server behaves exactly as it did before this package existed.
 if enable_web_ui():
-    from localdeploy.web import router as web_router
+    from localdeploy.control import router as web_router
 
     app.include_router(web_router)
     app.mount("/ui", StaticFiles(directory=str(APP_DIR / "web"), html=True), name="ui")

@@ -12,8 +12,8 @@ except ImportError:  # pragma: no cover
 
 import benchmark
 from api_server import app
-from localdeploy.web import fit as fitmod
-from localdeploy.web import recommend as recmod
+from localdeploy.control import fit as fitmod
+from localdeploy.control import recommend as recmod
 
 client = TestClient(app)
 
@@ -71,9 +71,9 @@ def test_recommend_ranks_fitting_profiles(monkeypatch):
     # Two profiles fit, one won't. The faster/more-accurate one should win.
     def fake_fit(req):
         if req.profile == "qwen3vl_8b_ollama":
-            return {"verdict": "WONT_FIT", "estimate_gb": {"required": 99}}
+            return {"success": True, "verdict": "WONT_FIT", "severity": "hard", "estimate_gb": {"required": 99}}
         margin = 4.0 if req.profile == "gemma3_4b_ollama_safe" else 1.0
-        return {"verdict": "FITS", "margin_gb": margin}
+        return {"success": True, "verdict": "FITS", "severity": "ok", "margin_gb": margin}
 
     def fake_execute(base_url, name, profile, test, timeout, num_gpu=None):
         fast = name == "gemma3_4b_ollama_safe"

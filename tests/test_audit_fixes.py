@@ -9,8 +9,8 @@ except ImportError:
     pytest.skip("FastAPI TestClient requires httpx", allow_module_level=True)
 
 from api_server import app
-from localdeploy.web import hardware
-from localdeploy.web import models
+from localdeploy.control import hardware
+from localdeploy.control import models
 
 client = TestClient(app)
 

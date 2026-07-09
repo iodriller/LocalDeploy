@@ -8,9 +8,33 @@ try:
 except ImportError:  # pragma: no cover
     pytest.skip("FastAPI TestClient requires httpx", allow_module_level=True)
 
+import api_server
 from api_server import app
 
 client = TestClient(app)
+
+
+def test_run_benchmark_reports_backend_for_single_profile(monkeypatch) -> None:
+    # A single-profile run must report that profile's real backend, not null
+    # (null was previously reserved for "unknown", but every single-profile
+    # run has a known backend from its config entry).
+    monkeypatch.setattr(
+        api_server,
+        "run_local_request",
+        lambda kind, call_data: {"success": True, "elapsed_seconds": 0.1, "response": "ok"},
+    )
+    result = api_server.run_benchmark({"profile": "gemma3_4b_ollama_safe", "prompt": "hi"})
+    assert result["backend"] == "ollama"
+
+
+def test_run_benchmark_reports_mixed_for_multiple_profiles(monkeypatch) -> None:
+    monkeypatch.setattr(
+        api_server,
+        "run_local_request",
+        lambda kind, call_data: {"success": True, "elapsed_seconds": 0.1, "response": "ok"},
+    )
+    result = api_server.run_benchmark({"all_profiles": True, "prompt": "hi"})
+    assert result["backend"] == "mixed"
 
 
 def test_embeddings_returns_501() -> None:

@@ -9,7 +9,7 @@ except ImportError:  # pragma: no cover
     pytest.skip("FastAPI TestClient requires httpx", allow_module_level=True)
 
 from api_server import app
-from localdeploy.web import models as models_mod
+from localdeploy.control import models as models_mod
 
 client = TestClient(app)
 

@@ -2215,6 +2215,16 @@ async function runBenchmark() {
       summary.textContent = "Benchmark queue cancelled.";
       toast("Benchmark queue cancelled.", "info");
     } else {
+      // A mid-stream failure (dropped connection, server crash) must not leave
+      // the active row stuck "running"/"deploying" forever — removeQueuedRun
+      // refuses to remove rows in those states, and the dashboard would keep
+      // showing it as an active run indefinitely otherwise.
+      queue.filter((q) => ["waiting", "deploying", "running"].includes(q.status)).forEach((q) => {
+        q.status = "failed";
+        q.error = q.error || err.message || "Unexpected error";
+        q.current = q.error;
+        removeLiveBenchmarkRun(q.id, false);
+      });
       summary.className = "result err";
       summary.textContent = `Benchmark queue failed: ${err.message}`;
     }

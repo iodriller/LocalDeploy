@@ -10,7 +10,7 @@ except ImportError:  # pragma: no cover
 
 import benchmark
 from api_server import app
-from localdeploy.web import models as models_mod
+from localdeploy.control import models as models_mod
 
 client = TestClient(app)
 
@@ -101,11 +101,67 @@ def test_run_with_device_deploys_before_benchmark(monkeypatch) -> None:
     text = response.text
     assert response.status_code == 200
     assert deploys == [{"model_id": "gemma3:4b", "keep_alive": "60m", "num_gpu": 0}]
-    assert text.index("deploy_start") < text.index("run_start")
-    assert "deploy_end" in text
+    # Deploy happens just-in-time for each profile (right after its profile_start,
+    # before its first test) rather than for every selected profile up front —
+    # this keeps a multi-profile forced-device run from stacking several models
+    # in VRAM/RAM at once. What must hold is: deploy completes before any test runs.
+    assert text.index("deploy_start") < text.index("test_start")
+    assert text.index("deploy_end") < text.index("test_start")
     assert "benchmark_unload_end" in text
     assert "test_result" in text
     assert unloaded == ["gemma3:4b"]
+
+
+def test_forced_device_multi_profile_never_stacks_deploys(monkeypatch) -> None:
+    # Regression test: a forced-device run across N profiles must deploy/run/
+    # unload one profile at a time, never loading a second profile's model
+    # while the first is still resident (VRAM/RAM stacking risk).
+    events: list[str] = []
+
+    def fake_serve(model_id, keep_alive, num_gpu=None):
+        events.append(f"deploy:{model_id}")
+        return {"success": True}
+
+    def fake_unload(model_id):
+        events.append(f"unload:{model_id}")
+        return {}
+
+    def fake_execute(base_url, name, profile, test, timeout, num_gpu=None):
+        events.append(f"test:{name}")
+        return benchmark.TestResult(
+            name=test.name,
+            category=test.category,
+            success=True,
+            elapsed_seconds=0.1,
+            response_length=4,
+            response_preview="ok",
+            accuracy=1.0,
+        )
+
+    monkeypatch.setattr(models_mod, "_serve_ollama", fake_serve)
+    monkeypatch.setattr(models_mod._ollama, "list_running", lambda: ([], None))
+    monkeypatch.setattr(models_mod._ollama, "unload_model", fake_unload)
+    monkeypatch.setattr(benchmark, "execute_test", fake_execute)
+    example = client.get("/benchmark/example").json()
+    response = client.post(
+        "/benchmark/run",
+        json={
+            "profiles": ["gemma3_4b_ollama_safe", "gemma3_12b_ollama_safe"],
+            "questions": example,
+            "device": "cpu",
+        },
+    )
+    assert response.status_code == 200
+    assert events == [
+        "deploy:gemma3:4b",
+        "test:gemma3_4b_ollama_safe",
+        "test:gemma3_4b_ollama_safe",
+        "unload:gemma3:4b",
+        "deploy:gemma3:12b",
+        "test:gemma3_12b_ollama_safe",
+        "test:gemma3_12b_ollama_safe",
+        "unload:gemma3:12b",
+    ]
 
 
 def test_forced_device_pins_num_gpu_on_each_inference(monkeypatch) -> None:
