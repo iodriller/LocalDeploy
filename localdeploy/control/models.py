@@ -162,9 +162,11 @@ def models_pull(req: PullRequest):
     # Hard-block only when the model fits *nowhere* (not GPU VRAM, not system RAM).
     # A model that won't fit VRAM but runs on CPU (tier "cpu_only", severity "soft")
     # is allowed through with a note — blocking it would contradict the tiered fit
-    # warnings. Fall back to the coarse verdict when severity is absent.
+    # warnings. When fit-check couldn't even determine the model's size (severity
+    # absent, e.g. an unparseable tag like "llama3:latest"), that's neither a hard
+    # nor soft verdict — never block on it, but the pull must not go through silently.
     severity = fit.get("severity")
-    hard_block = severity == "hard" if severity is not None else fit.get("verdict") == "WONT_FIT"
+    hard_block = severity == "hard"
     if hard_block and not req.allow_override:
         return {
             "success": False,
@@ -179,6 +181,8 @@ def models_pull(req: PullRequest):
         # Surface the soft "won't fit GPU but runs on CPU" case so the pull isn't silent about it.
         if severity == "soft" and fit.get("cpu_deployable"):
             start["note"] = fit.get("headline") or "Won't fit GPU VRAM — will run on CPU (slower)."
+        elif severity in (None, "unknown"):
+            start["note"] = fit.get("message") or fit.get("headline") or "Could not verify VRAM fit for this model before pulling."
         yield _sse(start)
         try:
             for event in _ollama.pull_stream(model_id):

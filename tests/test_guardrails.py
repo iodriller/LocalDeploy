@@ -48,6 +48,33 @@ class TestOutputTokenClamping:
         assert prepared["max_output_tokens_used"] <= 2048  # global cap from .env.example
 
 
+class TestExplicitZeroGuardrails:
+    # An explicit 0 must be validated like any other bad value (e.g. -5), not
+    # silently replaced by the default because `0 or default` is falsy.
+    def test_explicit_zero_context_limit_rejected(self) -> None:
+        _, error = prepare_request("chat", _baseline_request(context_limit=0))
+        assert error is not None
+        assert "context_limit" in (error["error"] or "")
+
+    def test_explicit_zero_max_output_tokens_rejected(self) -> None:
+        _, error = prepare_request("chat", _baseline_request(max_output_tokens=0))
+        assert error is not None
+        assert "max_output_tokens" in (error["error"] or "")
+
+    def test_explicit_zero_timeout_rejected(self) -> None:
+        _, error = prepare_request("chat", _baseline_request(timeout_seconds=0))
+        assert error is not None
+        assert "timeout_seconds" in (error["error"] or "")
+
+    def test_omitted_fields_still_use_defaults(self) -> None:
+        # Sanity check the fix didn't break the "omitted -> default" path.
+        prepared, error = prepare_request("chat", _baseline_request())
+        assert error is None
+        assert prepared is not None
+        assert prepared["context_limit_used"] > 0
+        assert prepared["max_output_tokens_used"] > 0
+
+
 class TestProfileSelection:
     def test_unknown_profile_rejected(self) -> None:
         _, error = prepare_request("chat", _baseline_request(profile="does-not-exist"))

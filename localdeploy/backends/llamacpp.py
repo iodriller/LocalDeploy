@@ -81,7 +81,10 @@ def call_llamacpp(prepared: Dict[str, Any]) -> str:
     if response.status_code != 404:
         if not response.ok:
             raise BackendCallError(llama_cpp_error_message(response))
-        data = response.json()
+        try:
+            data = response.json()
+        except Exception as exc:
+            raise BackendCallError(f"llama.cpp returned invalid JSON: {response.text[:500]}") from exc
         try:
             return str(data["choices"][0]["message"]["content"])
         except Exception:
@@ -111,7 +114,10 @@ def call_llamacpp(prepared: Dict[str, Any]) -> str:
     if not response.ok:
         raise BackendCallError(llama_cpp_error_message(response))
 
-    data = response.json()
+    try:
+        data = response.json()
+    except Exception as exc:
+        raise BackendCallError(f"llama.cpp returned invalid JSON: {response.text[:500]}") from exc
     if "content" in data:
         return str(data.get("content", ""))
     if "response" in data:

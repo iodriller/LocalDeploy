@@ -9,7 +9,7 @@ except ImportError:
     pytest.skip("FastAPI TestClient requires httpx", allow_module_level=True)
 
 from api_server import app
-from localdeploy.web.report import _category_summary, _summary, build_card, render_html, render_md
+from localdeploy.control.report import _category_summary, _summary, build_card, render_html, render_md
 
 client = TestClient(app)
 
@@ -58,6 +58,28 @@ def test_build_card_embeds_category_summary() -> None:
     card = build_card({"profile": "p", "model_id": "m", "tests": _tests()})
     assert "category_summary" in card
     assert {c["category"] for c in card["category_summary"]} == {"planning", "code"}
+
+
+def test_build_card_id_is_stable_for_same_content() -> None:
+    # Re-exporting (or re-importing) the same completed run must yield the same
+    # id both times, or the client's history dedup (which matches on id) can
+    # never catch a duplicate import.
+    payload = {"profile": "p", "model_id": "m", "device": "gpu", "tests": _tests()}
+    card1 = build_card(payload)
+    card2 = build_card(dict(payload))
+    assert card1["id"]
+    assert card1["id"] == card2["id"]
+
+
+def test_build_card_id_differs_for_different_content() -> None:
+    card_a = build_card({"profile": "p", "model_id": "m", "tests": _tests()})
+    card_b = build_card({"profile": "p", "model_id": "m", "tests": _tests()[:1]})
+    assert card_a["id"] != card_b["id"]
+
+
+def test_build_card_id_passthrough_when_provided() -> None:
+    card = build_card({"profile": "p", "model_id": "m", "tests": _tests(), "id": "run-explicit-123"})
+    assert card["id"] == "run-explicit-123"
 
 
 # ---- rendering --------------------------------------------------------------

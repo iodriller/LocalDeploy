@@ -15,8 +15,8 @@ except ImportError:  # pragma: no cover
     pytest.skip("FastAPI TestClient requires httpx", allow_module_level=True)
 
 from api_server import app
-from localdeploy.web import models as models_mod
-from localdeploy.web import registry
+from localdeploy.control import models as models_mod
+from localdeploy.control import registry
 
 client = TestClient(app)
 
@@ -158,6 +158,19 @@ def test_pull_streams_and_terminates() -> None:
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/event-stream")
     assert "[DONE]" in response.text
+
+
+def test_pull_of_unparseable_model_name_is_not_silent() -> None:
+    # "llama3:latest" encodes no parameter count, so fit-check can't estimate
+    # size at all. That must not be a silent, unwarned pass-through — it must
+    # neither hard-block (we don't know it won't fit) nor proceed with zero
+    # signal that fit couldn't be verified.
+    response = client.post("/models/pull", json={"model": "llama3:latest", "free_vram_mb": 8192})
+    assert response.status_code == 200
+    text = response.text
+    assert "[DONE]" in text
+    assert '"note"' in text
+    assert "Could not verify VRAM fit" in text or "Could not determine parameter count" in text
 
 
 def test_pull_requires_a_target() -> None:

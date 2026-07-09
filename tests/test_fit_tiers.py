@@ -1,7 +1,7 @@
 """Phase 3 — tiered soft/hard deployability warnings."""
 from __future__ import annotations
 
-from localdeploy.web.fit import _classify
+from localdeploy.control.fit import _classify
 
 
 def test_comfortable_is_ok_and_fits():
@@ -57,7 +57,7 @@ def test_nothing_known_is_unknown():
 
 def test_fit_check_response_carries_new_fields(monkeypatch):
     # Full endpoint returns the enriched fields alongside the legacy verdict.
-    from localdeploy.web import fit as fit_mod
+    from localdeploy.control import fit as fit_mod
 
     monkeypatch.setattr(
         fit_mod,

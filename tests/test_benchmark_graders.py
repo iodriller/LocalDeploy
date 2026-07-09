@@ -47,6 +47,8 @@ class TestNumberGraders:
         assert _grade_time_953("9:53 AM") == 1.0
         assert _grade_time_953("9:54 AM") == 1.0  # within tolerance
         assert _grade_time_953("10:00 AM") == 0.0
+        assert _grade_time_953("9:53") == 1.0  # no meridiem marker: still accepted
+        assert _grade_time_953("9:53 PM") == 0.0  # wrong half of day must be rejected
 
 
 class TestCodeGraders:

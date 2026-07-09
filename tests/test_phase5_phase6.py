@@ -9,7 +9,7 @@ except ImportError:
     pytest.skip("FastAPI TestClient requires httpx", allow_module_level=True)
 
 from api_server import app
-from localdeploy.web.report import build_card, render_html, render_md
+from localdeploy.control.report import build_card, render_html, render_md
 
 client = TestClient(app)
 
@@ -20,7 +20,7 @@ client = TestClient(app)
 
 def test_check_updates_accepts_explicit_queries(monkeypatch) -> None:
     """Explicit queries are forwarded to the HF search (offline path)."""
-    from localdeploy.web import registry as reg
+    from localdeploy.control import registry as reg
 
     called_with: list = []
 
@@ -30,7 +30,7 @@ def test_check_updates_accepts_explicit_queries(monkeypatch) -> None:
 
     monkeypatch.setattr(reg, "_list_hf", fake_list_hf)
     monkeypatch.setattr(reg, "offline_mode", lambda: False)
-    from localdeploy.web import _ollama
+    from localdeploy.control import _ollama
 
     monkeypatch.setattr(_ollama, "list_installed", lambda: ([], None))
 
@@ -48,7 +48,7 @@ def test_check_updates_accepts_explicit_queries(monkeypatch) -> None:
 
 def test_check_updates_gguf_only_default(monkeypatch) -> None:
     """gguf_only defaults to True when omitted."""
-    from localdeploy.web import registry as reg
+    from localdeploy.control import registry as reg
 
     captured: list = []
 
@@ -58,7 +58,7 @@ def test_check_updates_gguf_only_default(monkeypatch) -> None:
 
     monkeypatch.setattr(reg, "_list_hf", fake_list_hf)
     monkeypatch.setattr(reg, "offline_mode", lambda: False)
-    from localdeploy.web import _ollama
+    from localdeploy.control import _ollama
 
     monkeypatch.setattr(_ollama, "list_installed", lambda: ([], None))
 
@@ -68,7 +68,7 @@ def test_check_updates_gguf_only_default(monkeypatch) -> None:
 
 def test_check_updates_hf_response_shape(monkeypatch) -> None:
     """Candidates include downloads/likes so the UI can render them."""
-    from localdeploy.web import registry as reg
+    from localdeploy.control import registry as reg
 
     candidate = {
         "id": "unsloth/gemma-3-4b-it-GGUF",
@@ -82,7 +82,7 @@ def test_check_updates_hf_response_shape(monkeypatch) -> None:
 
     monkeypatch.setattr(reg, "_list_hf", lambda q, limit, gguf_only=True: ([candidate], None))
     monkeypatch.setattr(reg, "offline_mode", lambda: False)
-    from localdeploy.web import _ollama
+    from localdeploy.control import _ollama
 
     monkeypatch.setattr(_ollama, "list_installed", lambda: ([], None))
 
@@ -95,7 +95,7 @@ def test_check_updates_hf_response_shape(monkeypatch) -> None:
 
 
 def test_check_updates_adds_fit_and_filters_gpu_matches(monkeypatch) -> None:
-    from localdeploy.web import registry as reg
+    from localdeploy.control import registry as reg
 
     candidates = [
         {"id": "org/qwen-4b-q4_k_m-GGUF", "pullable": True, "pull_name": "hf.co/org/qwen-4b-q4_k_m-GGUF"},
@@ -104,7 +104,7 @@ def test_check_updates_adds_fit_and_filters_gpu_matches(monkeypatch) -> None:
 
     monkeypatch.setattr(reg, "_list_hf", lambda q, limit, gguf_only=True: (list(candidates), None))
     monkeypatch.setattr(reg, "offline_mode", lambda: False)
-    from localdeploy.web import _ollama
+    from localdeploy.control import _ollama
 
     monkeypatch.setattr(_ollama, "list_installed", lambda: ([], None))
 
@@ -118,7 +118,7 @@ def test_check_updates_adds_fit_and_filters_gpu_matches(monkeypatch) -> None:
 
 
 def test_check_updates_installed_match_requires_family_and_size(monkeypatch) -> None:
-    from localdeploy.web import registry as reg
+    from localdeploy.control import registry as reg
 
     candidates = [
         {"id": "org/qwen3-8b-GGUF"},
@@ -127,7 +127,7 @@ def test_check_updates_installed_match_requires_family_and_size(monkeypatch) -> 
 
     monkeypatch.setattr(reg, "_list_hf", lambda q, limit, gguf_only=True: (list(candidates), None))
     monkeypatch.setattr(reg, "offline_mode", lambda: False)
-    from localdeploy.web import _ollama
+    from localdeploy.control import _ollama
 
     monkeypatch.setattr(_ollama, "list_installed", lambda: ([{"name": "qwen3:8b"}], None))
 
@@ -139,7 +139,7 @@ def test_check_updates_installed_match_requires_family_and_size(monkeypatch) -> 
 
 def test_installed_list_includes_details(monkeypatch) -> None:
     """Installed endpoint returns details (quant, param size) for UI rendering."""
-    from localdeploy.web import _ollama
+    from localdeploy.control import _ollama
 
     fake_models = [
         {

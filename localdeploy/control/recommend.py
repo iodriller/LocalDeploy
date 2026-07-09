@@ -114,11 +114,18 @@ def _fit_candidates(
     skipped: List[Dict[str, Any]] = []
     for name in names:
         fit = fit_check(FitRequest(profile=name, free_vram_mb=free_vram_mb))
-        if fit.get("verdict") == "WONT_FIT":
-            # This is GPU tuning, so anything that won't fit the GPU is skipped —
-            # but distinguish "CPU-capable" from "too big for anything" so the
-            # reason isn't misleading.
-            reason = "CPU-only (skipped for GPU tuning)" if fit.get("cpu_deployable") else "won't fit VRAM"
+        # This is GPU tuning, so anything that isn't a known GPU fit is skipped:
+        # verdict WONT_FIT (GPU known, too small) or severity "hard" (e.g. the
+        # no-GPU "too big for system RAM either" case, which has verdict UNKNOWN
+        # and was previously missed here) or a fit-check that couldn't determine
+        # the model's size at all (success: False).
+        if not fit.get("success") or fit.get("verdict") == "WONT_FIT" or fit.get("severity") == "hard":
+            if not fit.get("success"):
+                reason = fit.get("message") or "could not determine size"
+            else:
+                # Distinguish "CPU-capable" from "too big for anything" so the
+                # reason isn't misleading.
+                reason = "CPU-only (skipped for GPU tuning)" if fit.get("cpu_deployable") else "won't fit VRAM"
             skipped.append(
                 {"profile": name, "reason": reason, "required_gb": (fit.get("estimate_gb") or {}).get("required")}
             )

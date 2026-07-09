@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from localdeploy.backends.ollama import options_payload
-from localdeploy.web.models import _placement, _resolve_num_gpu
+from localdeploy.control.models import _placement, _resolve_num_gpu
 
 
 def _prepared(**extra):
