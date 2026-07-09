@@ -2,13 +2,26 @@
 
 All notable changes to this project should be documented here.
 
-## Unreleased
+## 0.3.0 - 2026-07-08
 
-- **Streamlined local launch scripts and docs.** `scripts/start.ps1` is now the canonical local
-  start command and starts the API in the background by default, `scripts/start_ui.ps1` is a thin
-  open-UI wrapper, and `scripts/stop.ps1` handles the matching shutdown path. README/docs now
-  separate daily local commands from the fresh-install Docker bootstrappers (`run.ps1` / `run.sh`).
-  The stale GitHub setup note was removed.
+First public release.
+
+### Repo cleanup for public release
+
+- **One start command per platform.** `scripts/start.ps1` (Windows) now opens the UI by default
+  (`-NoBrowser` to skip, `-Foreground` for live logs) and `scripts/start.sh` (macOS/Linux) opens
+  the UI once the server is healthy. Removed the redundant launchers: `run.ps1` / `run.sh`
+  (curl-pipe bootstrappers that auto-installed Docker), `install.ps1` (start.ps1 already creates
+  config/venv; model pulls belong in the fit-checked UI), and `scripts/start_ui.ps1` (now the
+  default behavior).
+- **Renamed** the root model-comparison CLI `test_models.py` → `compare_models.py` (it was never a
+  pytest suite; the old name needed a pytest.ini workaround).
+- **Docs**: `docs/TERMINAL_TESTING.md` → `docs/CLI.md`; removed the internal `GAPS.md` and
+  `docs/VERIFICATION.md` trackers; rewrote the README around a per-platform quick start.
+- **License** switched from "all rights reserved" placeholder to MIT.
+
+### Features and fixes
+
 - **Forced CPU/GPU benchmarks now measure the device they ask for.** Previously a
   `device=cpu` (or `gpu`) run only pinned the placement at warm-up; the benchmark's own
   `/chat` calls didn't pass `num_gpu`, so Ollama could silently re-place the model (a CPU
@@ -93,10 +106,6 @@ All notable changes to this project should be documented here.
 - **Choose CPU vs GPU at deploy time**: the Serve panel has a *Deploy to* selector (Auto / GPU /
   CPU). Forces Ollama `num_gpu` (0 = CPU, max = GPU); Auto is unchanged from before. `/system/status`
   now labels each running model's placement (GPU / CPU / Split N%). Additive and backwards-compatible.
-- Added `run.sh` (macOS/Linux) and `run.ps1` (Windows) one-command launchers: detect and install
-  Docker if absent (via `get.docker.com` on Linux, Homebrew cask on macOS, winget on Windows),
-  clone or update the repo, and start `docker compose up` — no prerequisites needed.
-
 - Added **opt-in token auth**: set `API_TOKEN` to require it (`X-API-Token` /
   `Authorization: Bearer` / `?token=`); no auth and zero overhead when unset.
 - "Check New Models" now filters to GGUF repos and offers a one-click **Pull** via Ollama's

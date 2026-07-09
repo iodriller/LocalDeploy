@@ -1,9 +1,10 @@
+# Starts LocalDeploy: creates .env/config.json/.venv when missing, starts
+# Ollama if installed, launches the API in the background, and opens the UI.
+#   -Foreground   run the API in this terminal with live logs (no browser)
+#   -NoBrowser    start in the background without opening the UI
 param(
-    # Kept for compatibility. Background startup is now the default.
-    [switch]$Background,
     [switch]$Foreground,
-    [switch]$OpenUI,
-    [switch]$OpenDocs,
+    [switch]$NoBrowser,
     [switch]$SkipInstall,
     [switch]$SkipLlamaCpp
 )
@@ -11,10 +12,6 @@ param(
 $ErrorActionPreference = "Stop"
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
 Set-Location $ProjectRoot
-
-if ($Background -and $Foreground) {
-    throw "Use either -Foreground or -Background, not both."
-}
 
 function Write-Step {
     param([string]$Message)
@@ -111,7 +108,7 @@ if (-not (Test-Path -LiteralPath $python)) {
 
 $ollama = Find-Ollama
 if (-not $ollama) {
-    Write-Warning "Ollama was not found. Run .\install.ps1 first or install Ollama manually."
+    Write-Warning "Ollama was not found. Install it from https://ollama.com/download (or: winget install Ollama.Ollama), then re-run this script."
 }
 elseif (-not (Test-Http "http://localhost:11434/api/tags" -Timeout 5)) {
     Write-Step "Starting Ollama"
@@ -175,10 +172,6 @@ Write-Host "  Stop:    .\scripts\stop.ps1"
 Write-Host "  Chat:    .\scripts\chat.ps1 -Prompt `"How are you?`""
 Write-Host "  Logs:    Get-Content .\logs\api_server.err.log -Wait"
 
-if ($OpenUI) {
+if (-not $NoBrowser) {
     Start-Process $uiUrl
-}
-
-if ($OpenDocs) {
-    Start-Process $docsUrl
 }

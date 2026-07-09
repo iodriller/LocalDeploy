@@ -13,7 +13,7 @@ $env:REQUIRE_GPU_ONLY = "false"
 $env:ENABLE_LLAMA_CPP = "false"
 
 Write-Host "Checking Python syntax"
-python -m py_compile api_server.py test_models.py chat_cli.py
+python -m py_compile api_server.py compare_models.py chat_cli.py
 
 Write-Host "Checking JSON examples"
 python -m json.tool config.example.json > $null
@@ -21,7 +21,7 @@ python -m json.tool config.example.json > $null
 Write-Host "Checking PowerShell script parse"
 $tokens = $null
 $errors = $null
-foreach ($script in @(".\install.ps1") + (Get-ChildItem -LiteralPath ".\scripts" -Filter "*.ps1" | ForEach-Object { $_.FullName })) {
+foreach ($script in (Get-ChildItem -LiteralPath ".\scripts" -Filter "*.ps1" | ForEach-Object { $_.FullName })) {
     $tokens = $null
     $errors = $null
     [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $script), [ref]$tokens, [ref]$errors) | Out-Null

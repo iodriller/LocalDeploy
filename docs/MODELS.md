@@ -1,12 +1,12 @@
 # Model Catalog
 
-Reference for picking and configuring profiles. The target hardware throughout is a single NVIDIA RTX 3080 with 8 GB VRAM. All numbers below are rough estimates from public benchmarks and community testing; verify with `test_models.py --all` on your machine before relying on them.
+Reference for picking and configuring profiles. The target hardware throughout is a single NVIDIA RTX 3080 with 8 GB VRAM. All numbers below are rough estimates from public benchmarks and community testing; verify with `compare_models.py --all` on your machine before relying on them.
 
 VRAM figures include weights plus KV cache at the listed context. Token-per-second figures are for generation (decode) on a 3080-class card with the weights fully GPU-resident; values drop sharply once partial CPU offload kicks in.
 
 ## Measured results on this hardware (v2)
 
-These numbers come from running `benchmark.py` against the local API on an **RTX 3080 Laptop (8 GB)** via Ollama on **17 profiles × 25 tests** spanning planning, classification, code, math, structured (basic JSON), and structured_hard (YBM-style pydantic schemas: classification, plan orchestration, approval gate, multi-task extraction). Peak VRAM includes ~1.8 GB baseline for the Windows desktop. Reports: `reports/benchmark_2026-05-27T012222Z.md` (base), `…T014432Z.md` (reasoning-fix), `…T020524Z.md` (hard JSON).
+These numbers come from running `benchmark.py` against the local API on an **RTX 3080 Laptop (8 GB)** via Ollama on **17 profiles × 25 tests** spanning planning, classification, code, math, structured (basic JSON), and structured_hard (YBM-style pydantic schemas: classification, plan orchestration, approval gate, multi-task extraction). Peak VRAM includes ~1.8 GB baseline for the Windows desktop.
 
 ### Leaderboard
 
@@ -142,7 +142,6 @@ All new profiles ship **disabled**. To use one: edit `config.json`, flip `enable
 | `deepseek_r1_distill_qwen_7b_ollama` | ollama | `deepseek-r1:7b` | `ollama pull deepseek-r1:7b` |
 | `mistral_7b_ollama` | ollama | `mistral:7b` | `ollama pull mistral:7b` |
 | `qwen3_8b_gguf_q4km_kvq8` | llamacpp | GGUF file | Download bartowski Q4_K_M, set `model_id` path |
-| `gemma3_4b_gguf_q4_gpu` | llamacpp | GGUF file | Download Gemma 3 4B Q4_K_M, set `model_id` path |
 | `gemma3_12b_gguf_q4_safe` | llamacpp | GGUF file | Download Gemma 3 12B Q4_K_M, set `model_id` path |
 
 ### Vision profiles
@@ -155,7 +154,7 @@ All new profiles ship **disabled**. To use one: edit `config.json`, flip `enable
 
 ### Llama.cpp GGUF tuning
 
-All `llamacpp` profiles ship with `flash_attention: true` and `kv_cache_type_k/v: q8_0` so KV cache memory is roughly halved with negligible quality loss. The `gemma3_12b_gguf_q4_longer_context` profile keeps `q8_0` and pushes context to 8K; experimental.
+All `llamacpp` profiles ship with `flash_attention: true` and `kv_cache_type_k/v: q8_0` so KV cache memory is roughly halved with negligible quality loss.
 
 ## How to read this table
 
