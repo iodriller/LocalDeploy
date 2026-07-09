@@ -7,6 +7,7 @@ POST /benchmark/compare -> diff two cards (e.g. old model vs new, quant A vs B).
 """
 from __future__ import annotations
 
+import hashlib
 import html as _html
 import json
 from datetime import datetime, timezone
@@ -56,11 +57,29 @@ def _category_summary(tests: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return out
 
 
+def _card_id(payload: Dict[str, Any], tests: List[Dict[str, Any]]) -> str:
+    """Deterministic id from the run's content (not generated_at), so exporting
+    — or re-importing — the same completed run twice produces the same id and
+    the client's existing history dedup (matching on id) actually catches it."""
+    basis = json.dumps(
+        {
+            "profile": payload.get("profile"),
+            "model_id": payload.get("model_id"),
+            "device": payload.get("device"),
+            "tests": tests,
+        },
+        sort_keys=True,
+        default=str,
+    )
+    return "card-" + hashlib.sha256(basis.encode("utf-8")).hexdigest()[:16]
+
+
 def build_card(payload: Dict[str, Any]) -> Dict[str, Any]:
     tests = payload.get("tests") or []
     return {
         "kind": "localdeploy.report_card",
         "version": 1,
+        "id": payload.get("id") or _card_id(payload, tests),
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "profile": payload.get("profile"),
         "model_id": payload.get("model_id"),

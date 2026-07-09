@@ -1,7 +1,7 @@
 """Phase 1 — hardware probe now reports CPU model, cores, and RAM."""
 from __future__ import annotations
 
-from localdeploy.web.hardware import _cpu_and_memory, detect_hardware
+from localdeploy.control.hardware import _cpu_and_memory, detect_hardware
 
 
 def test_system_block_has_cpu_and_ram_keys():

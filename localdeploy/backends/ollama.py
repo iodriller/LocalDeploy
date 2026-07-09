@@ -134,22 +134,25 @@ def stream_ollama(prepared: Dict[str, Any]) -> Iterator[str]:
         if not response.ok:
             raise BackendCallError(ollama_error_message(response, prepared["model"]))
 
-        for line in response.iter_lines():
-            if not line:
-                continue
-            try:
-                data = json.loads(line)
-            except Exception:
-                continue
-            chunk = ""
-            if isinstance(data.get("message"), dict):
-                chunk = str(data["message"].get("content", ""))
-            elif "response" in data:
-                chunk = str(data.get("response", ""))
-            if chunk:
-                yield chunk
-            if data.get("done"):
-                break
+        try:
+            for line in response.iter_lines():
+                if not line:
+                    continue
+                try:
+                    data = json.loads(line)
+                except Exception:
+                    continue
+                chunk = ""
+                if isinstance(data.get("message"), dict):
+                    chunk = str(data["message"].get("content", ""))
+                elif "response" in data:
+                    chunk = str(data.get("response", ""))
+                if chunk:
+                    yield chunk
+                if data.get("done"):
+                    break
+        except requests.exceptions.RequestException as exc:
+            raise BackendCallError(f"Ollama connection was lost mid-response: {exc}") from exc
 
 
 def ollama_models(base_url: str) -> Tuple[List[str], Optional[str]]:

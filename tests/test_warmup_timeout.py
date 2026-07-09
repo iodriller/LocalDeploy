@@ -4,8 +4,8 @@ from __future__ import annotations
 import pytest
 import requests
 
-from localdeploy.web import _ollama
-from localdeploy.web import models
+from localdeploy.control import _ollama
+from localdeploy.control import models
 
 
 # ---- _load_timeout: scales with device, env-overridable -------------------

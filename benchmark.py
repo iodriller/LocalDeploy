@@ -293,8 +293,13 @@ def _grade_number(expected: float, tolerance: float = 0.5) -> Callable[[str], fl
 
 
 def _grade_time_953(text: str) -> float:
-    # Accept 9:52, 9:53, 9:54 AM
-    for hr, mn in re.findall(r"(\d{1,2}):(\d{2})", text):
+    # Accept 9:52, 9:53, 9:54 AM. The correct answer is unambiguously AM (both
+    # trains depart in the morning), so a matching "9:53 PM" must be rejected —
+    # an explicit PM marker on the match disqualifies it; no marker or an
+    # explicit AM marker is accepted.
+    for hr, mn, meridiem in re.findall(r"(\d{1,2}):(\d{2})\s*([AaPp]\.?[Mm]\.?)?", text):
+        if meridiem and meridiem.strip().lower().startswith("p"):
+            continue
         try:
             h = int(hr)
             m = int(mn)
@@ -1366,6 +1371,8 @@ def write_reports(results: List[ProfileResult], run_meta: Dict[str, Any]) -> Tup
         "- **code** — non-trivial Python + SQL, graded by AST + unit tests (4 tests)",
         "- **math** — multi-step arithmetic, algebra, probability, matrices (5 tests)",
         "- **structured** — JSON-schema-shaped output, field-level grading (4 tests)",
+        "- **structured_hard** — pydantic-schema output: classification, plan orchestration, "
+        "approval gate, multi-task extraction (4 tests)",
         "",
         "## Overall scoreboard",
         "",
@@ -1398,12 +1405,23 @@ def write_reports(results: List[ProfileResult], run_meta: Dict[str, Any]) -> Tup
             f"{avg_acc:.2f} | {avg_lat:.2f}s | {peak} MB | {verdict} |"
         )
 
-    # Category-by-model breakdown
-    lines.extend(["", "## Per-category accuracy (avg, per profile)", "", "| Profile | planning | classification | code | math | structured |", "|---|---:|---:|---:|---:|---:|"])
+    # Category-by-model breakdown. Categories are derived from TEST_CASES (not
+    # hardcoded) so a newly added category always shows up here instead of
+    # silently being dropped from the scoreboard while still scored elsewhere.
+    category_order = list(dict.fromkeys(t.category for t in TEST_CASES))
+    lines.extend(
+        [
+            "",
+            "## Per-category accuracy (avg, per profile)",
+            "",
+            "| Profile | " + " | ".join(category_order) + " |",
+            "|---|" + "---:|" * len(category_order),
+        ]
+    )
     for p in results:
         cs = category_summary(p.tests)
         cells = [f"`{p.profile}`"]
-        for cat in ("planning", "classification", "code", "math", "structured"):
+        for cat in category_order:
             s = cs.get(cat, {"avg_accuracy": 0.0, "n": 0})
             cells.append(f"{s['avg_accuracy']:.2f}" if s.get("n", 0) else "-")
         lines.append("| " + " | ".join(cells) + " |")

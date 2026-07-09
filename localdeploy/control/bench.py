@@ -200,13 +200,14 @@ def benchmark_run(req: RunRequest):
             # call (not just the warm-up) so the benchmark measures the requested
             # device end-to-end instead of whatever Ollama re-places it onto.
             forced_num_gpu: Optional[int] = None
-            if requested_device in {"cpu", "gpu"}:
+            force_deploy = requested_device in {"cpu", "gpu"}
+            if force_deploy:
                 routes = ensure_model_routes()
                 forced_num_gpu = routes._resolve_num_gpu(requested_device, None)
-
+                # Fail fast, before deploying anything, if any selected profile
+                # can't be device-forced.
                 for profile_name in selected:
-                    profile = profiles_map[profile_name]
-                    backend = str(profile.get("backend", "ollama")).lower()
+                    backend = str(profiles_map[profile_name].get("backend", "ollama")).lower()
                     if backend != "ollama":
                         yield sse(
                             {
@@ -218,7 +219,15 @@ def benchmark_run(req: RunRequest):
                             }
                         )
                         return
-                    model_id = str(profile.get("model_id") or profile_name)
+
+            for event in bench.iter_run(base_url, profiles_map, selected, tests, req.timeout, num_gpu=forced_num_gpu):
+                if force_deploy and event.get("event") == "profile_start":
+                    # Deploy just this profile's model right before its tests run
+                    # (instead of deploying every selected profile up front) so a
+                    # multi-profile forced-device comparison never stacks more
+                    # than one model in VRAM/RAM at a time.
+                    profile_name = str(event.get("profile") or "")
+                    model_id = str(event.get("model_id") or profile_name)
                     yield sse(
                         {
                             "event": "deploy_start",
@@ -227,11 +236,7 @@ def benchmark_run(req: RunRequest):
                             "device": requested_device,
                         }
                     )
-                    served = model_routes._serve_ollama(
-                        model_id,
-                        "60m",
-                        model_routes._resolve_num_gpu(requested_device, None),
-                    )
+                    served = model_routes._serve_ollama(model_id, "60m", forced_num_gpu)
                     if not served.get("success"):
                         yield sse(
                             {
@@ -244,7 +249,7 @@ def benchmark_run(req: RunRequest):
                         unload_event = unload_profile(profile_name)
                         if unload_event:
                             yield sse(unload_event)
-                        return
+                        break
                     deploy_end = {
                         "event": "deploy_end",
                         "profile": profile_name,
@@ -254,7 +259,7 @@ def benchmark_run(req: RunRequest):
                     if served.get("warning"):
                         deploy_end["warning"] = served["warning"]
                     yield sse(deploy_end)
-            for event in bench.iter_run(base_url, profiles_map, selected, tests, req.timeout, num_gpu=forced_num_gpu):
+
                 if event.get("event") == "profile_end":
                     actual = current_placement(str(event.get("profile") or ""))
                     if actual:

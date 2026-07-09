@@ -39,9 +39,9 @@ socket.socket.connect = _guarded_connect  # type: ignore[assignment]
 
 def main() -> int:
     # Import after the guard is installed.
-    from localdeploy.web import fit, hardware, registry
-    from localdeploy.web.fit import FitRequest
-    from localdeploy.web.registry import CheckUpdatesRequest
+    from localdeploy.control import fit, hardware, registry
+    from localdeploy.control.fit import FitRequest
+    from localdeploy.control.registry import CheckUpdatesRequest
 
     # Local-only actions: must not touch the internet.
     hardware.detect_hardware()
