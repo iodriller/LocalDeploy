@@ -8,13 +8,13 @@ benchmark engine (Step 8) - this is orchestration only, no new scoring engine.
 from __future__ import annotations
 
 import json
-import os
-import tempfile
 from typing import Any, Dict, Iterator, List, Optional, Tuple
 
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+
+from ._config import refuse_example, write_config_atomic
 
 router = APIRouter()
 
@@ -36,28 +36,45 @@ def set_default(req: SetDefaultRequest) -> Dict[str, Any]:
     if req.profile not in config.get("profiles", {}):
         return {"success": False, "error": f"Unknown profile '{req.profile}'."}
     path = get_config_path()
-    if path.name == "config.example.json":
-        return {
-            "success": False,
-            "error": "Refusing to overwrite config.example.json. Point CONFIG_PATH at a real "
-            "config.json (the app seeds from the example when it is missing).",
-        }
+    refusal = refuse_example(path)
+    if refusal:
+        return {"success": False, "error": refusal}
     config["default_profile"] = req.profile
-    try:
-        # Atomic write: a concurrent load_config() reader must never observe a
-        # half-written file (which would raise JSONDecodeError -> 500).
-        path.parent.mkdir(parents=True, exist_ok=True)
-        fd, tmp_path = tempfile.mkstemp(dir=str(path.parent), prefix=".config.", suffix=".tmp")
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8") as fh:
-                fh.write(json.dumps(config, indent=2))
-            os.replace(tmp_path, path)
-        finally:
-            if os.path.exists(tmp_path):
-                os.remove(tmp_path)
-    except OSError as exc:
-        return {"success": False, "error": f"Could not write {path}: {exc}"}
+    err = write_config_atomic(config, path)
+    if err:
+        return {"success": False, "error": err}
     return {"success": True, "default_profile": req.profile, "path": str(path)}
+
+
+class SetEnabledRequest(BaseModel):
+    profile: str
+    enabled: bool
+
+
+@router.post("/system/set-enabled")
+def set_enabled(req: SetEnabledRequest) -> Dict[str, Any]:
+    """Flip a saved profile's enabled flag so Auto-pick can consider it.
+
+    Auto-pick (/system/recommend) only ever compares profiles with
+    ``enabled: true``, and the shipped config.json enables just two small
+    profiles — there was previously no UI path to turn on any of the others
+    (or turn off ones that don't fit) without hand-editing config.json.
+    """
+    from api_server import get_config_path, load_config
+
+    config = load_config()
+    profiles = config.get("profiles", {})
+    if req.profile not in profiles:
+        return {"success": False, "error": f"Unknown profile '{req.profile}'."}
+    path = get_config_path()
+    refusal = refuse_example(path)
+    if refusal:
+        return {"success": False, "error": refusal}
+    profiles[req.profile]["enabled"] = req.enabled
+    err = write_config_atomic(config, path)
+    if err:
+        return {"success": False, "error": err}
+    return {"success": True, "profile": req.profile, "enabled": req.enabled, "path": str(path)}
 
 
 class RecommendRequest(BaseModel):

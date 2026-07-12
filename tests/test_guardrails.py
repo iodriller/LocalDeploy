@@ -2,8 +2,9 @@
 from __future__ import annotations
 
 from typing import Any, Dict
+import copy
 
-
+import api_server
 from api_server import prepare_request
 
 
@@ -115,3 +116,35 @@ class TestVisionGuardrails:
         )
         assert error is not None
         assert "base64" in (error["error"] or "").lower()
+
+    def test_profile_can_opt_into_multiple_images_without_changing_legacy_default(self, monkeypatch) -> None:
+        config = copy.deepcopy(api_server.load_config())
+        config["profiles"]["gemma3_4b_ollama_safe"]["max_images"] = 4
+        monkeypatch.setattr(api_server, "load_config", lambda: config)
+        prepared, error = prepare_request(
+            "vision",
+            _baseline_request(images_base64=["eA==", "eQ=="]),
+        )
+        assert error is None
+        assert prepared is not None
+        assert len(prepared["images_base64"]) == 2
+
+
+class TestStructuredFormat:
+    def test_response_format_is_preserved_for_backend_enforcement(self) -> None:
+        response_format = {
+            "type": "json_schema",
+            "json_schema": {
+                "name": "answer",
+                "strict": True,
+                "schema": {
+                    "type": "object",
+                    "properties": {"answer": {"type": "string"}},
+                    "required": ["answer"],
+                },
+            },
+        }
+        prepared, error = prepare_request("chat", _baseline_request(response_format=response_format))
+        assert error is None
+        assert prepared is not None
+        assert prepared["response_format"] == response_format

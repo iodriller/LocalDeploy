@@ -41,3 +41,11 @@ router.include_router(report.router)
 from . import recommend  # noqa: E402
 
 router.include_router(recommend.router)
+
+from . import starter  # noqa: E402
+
+router.include_router(starter.router)
+
+from . import profiles  # noqa: E402
+
+router.include_router(profiles.router)

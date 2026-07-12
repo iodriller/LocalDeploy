@@ -13,6 +13,11 @@ from __future__ import annotations
 
 import json
 import os
+import platform
+import shutil
+import subprocess
+import time
+from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
 import requests
@@ -23,10 +28,125 @@ from pydantic import BaseModel
 from ..backends.llamacpp import llama_health
 from ..utils import BackendCallError, require_gpu_only
 from . import _ollama
+from ._config import ensure_profile_for_model
 from .fit import FitRequest, fit_check
 from .hardware import detect_hardware
 
 router = APIRouter()
+
+
+def _ollama_binary_installed() -> bool:
+    """Best-effort check that the ollama CLI/binary exists on this machine.
+
+    A missing binary is a different problem than "installed but not running" —
+    the pull-blocked message needs to tell those apart so the UI can offer
+    "install" vs. "just start it" instead of one generic error.
+    """
+    if shutil.which("ollama"):
+        return True
+    candidate = Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "Ollama" / "ollama.exe"
+    return candidate.exists()
+
+
+@router.get("/system/ollama-status")
+def ollama_status() -> Dict[str, Any]:
+    installed = _ollama_binary_installed()
+    reachable = False
+    if installed:
+        _, err = _ollama.list_installed()
+        reachable = err is None
+    return {"success": True, "installed": installed, "reachable": reachable}
+
+
+def _resolve_ollama_exe() -> Optional[str]:
+    exe = shutil.which("ollama")
+    if exe:
+        return exe
+    candidate = Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "Ollama" / "ollama.exe"
+    return str(candidate) if candidate.exists() else None
+
+
+def _try_start_ollama() -> bool:
+    """Launch `ollama serve` detached and poll briefly for it to come up."""
+    exe = _resolve_ollama_exe()
+    if not exe:
+        return False
+    creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    try:
+        subprocess.Popen(
+            [exe, "serve"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=creationflags
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    for _ in range(10):
+        time.sleep(0.5)
+        _, err = _ollama.list_installed()
+        if err is None:
+            return True
+    return False
+
+
+@router.post("/system/install-ollama")
+def install_ollama() -> Dict[str, Any]:
+    """Best-effort automatic install via winget, plus a start attempt either way.
+
+    Mirrors /system/install-psutil's shape (success/already_installed/error) so
+    the frontend can reuse the same result-handling pattern. Handles both
+    "not installed at all" and "installed but not running" — the two cases the
+    pull flow's generic "Ollama is not reachable" error used to lump together.
+    """
+    if _ollama_binary_installed():
+        _, err = _ollama.list_installed()
+        if err is None:
+            return {"success": True, "already_installed": True, "message": "Ollama is already installed and running."}
+        if _try_start_ollama():
+            return {
+                "success": True,
+                "already_installed": True,
+                "message": "Ollama was installed but not running — started it. Retry the pull shortly.",
+            }
+        return {
+            "success": False,
+            "already_installed": True,
+            "error": "Ollama is installed but not reachable, and it could not be started automatically. "
+            "Start it manually (run 'ollama serve' or launch the Ollama app), then retry.",
+        }
+
+    if platform.system() != "Windows":
+        return {
+            "success": False,
+            "error": "Automatic install is only wired up for Windows (winget) here. "
+            "Install Ollama from https://ollama.com/download.",
+        }
+    if not shutil.which("winget"):
+        return {
+            "success": False,
+            "error": "winget is not available on this system. Install Ollama manually from "
+            "https://ollama.com/download.",
+        }
+
+    cmd = ["winget", "install", "-e", "--id", "Ollama.Ollama", "--accept-source-agreements", "--accept-package-agreements"]
+    try:
+        completed = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+    except (OSError, subprocess.SubprocessError) as exc:
+        return {"success": False, "error": f"Could not run winget: {exc}"}
+
+    if completed.returncode != 0:
+        stderr = (completed.stderr or completed.stdout or "").strip()
+        return {"success": False, "error": stderr[-1000:] or "winget install failed."}
+
+    if not _ollama_binary_installed():
+        return {
+            "success": False,
+            "error": "winget reported success but the ollama binary was not found yet. "
+            "It may need a new terminal/PATH refresh — restart the LocalDeploy API and try again.",
+        }
+    _try_start_ollama()
+    return {
+        "success": True,
+        "already_installed": False,
+        "message": "Installed Ollama. It may take a moment to start serving — retry the pull shortly.",
+    }
 
 
 def _sse(obj: Dict[str, Any]) -> str:
@@ -165,7 +285,10 @@ def models_pull(req: PullRequest):
     # warnings. When fit-check couldn't even determine the model's size (severity
     # absent, e.g. an unparseable tag like "llama3:latest"), that's neither a hard
     # nor soft verdict — never block on it, but the pull must not go through silently.
-    severity = fit.get("severity")
+    # Backward compatibility: older fit responses had only WONT_FIT. Treat that
+    # explicit verdict as a hard block; genuinely unknown/unparseable responses
+    # use UNKNOWN and remain advisory.
+    severity = fit.get("severity") or ("hard" if fit.get("verdict") == "WONT_FIT" else "unknown")
     hard_block = severity == "hard"
     if hard_block and not req.allow_override:
         return {
@@ -176,8 +299,20 @@ def models_pull(req: PullRequest):
             or "Model is unlikely to fit available VRAM or system RAM. Re-run with allow_override=true to pull anyway.",
         }
 
+    try:
+        destination = _ollama.base_url()
+    except BackendCallError:
+        destination = None
+
     def event_stream():
-        start: Dict[str, Any] = {"status": f"starting pull for {model_id}", "fit_verdict": fit.get("verdict")}
+        start: Dict[str, Any] = {
+            "status": f"starting pull for {model_id}",
+            "fit_verdict": fit.get("verdict"),
+            "model": model_id,
+            # Where the model is being pulled to, so the UI can say so explicitly.
+            "destination": destination,
+            "destination_label": f"Ollama · {destination}" if destination else "Ollama",
+        }
         # Surface the soft "won't fit GPU but runs on CPU" case so the pull isn't silent about it.
         if severity == "soft" and fit.get("cpu_deployable"):
             start["note"] = fit.get("headline") or "Won't fit GPU VRAM — will run on CPU (slower)."
@@ -187,7 +322,18 @@ def models_pull(req: PullRequest):
         try:
             for event in _ollama.pull_stream(model_id):
                 yield _sse(event)
-            yield _sse({"status": "success", "done": True})
+            # Pull succeeded: keep config.json in sync by ensuring a profile exists
+            # for this model. Best-effort — never turn a good pull into a failure.
+            profile_name, created, _err = ensure_profile_for_model(model_id)
+            yield _sse(
+                {
+                    "status": "success",
+                    "done": True,
+                    "model": model_id,
+                    "profile": profile_name,
+                    "profile_created": created,
+                }
+            )
         except BackendCallError as exc:
             yield _sse({"error": str(exc)})
         except requests.ConnectionError:

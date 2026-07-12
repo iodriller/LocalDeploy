@@ -33,6 +33,7 @@ Important fields:
 - `allow_clamp`: when false, oversized requests return a clear error; when true, the server clamps to the configured maximum.
 - `temperature`, `top_p`, `repeat_penalty`: sampling controls.
 - `timeout_seconds`: per-request timeout.
+- `response_format`: optional `json_object` or `json_schema` constraint. LocalDeploy forwards it to Ollama/llama.cpp native constrained generation when supported.
 
 Request options cannot bypass server safety limits. To allow larger context, edit `config.json` first and raise the selected profile's `context_limit`, `safe_context_limit`, and `max_prompt_chars` deliberately.
 
@@ -72,6 +73,13 @@ data: [DONE]
 
 Streaming is token-by-token for Ollama profiles. For llama.cpp profiles the full response is emitted as a single content delta — same wire format, but no progressive output.
 
+### Structured output
+
+Pass OpenAI-style `response_format` to request JSON or schema-constrained output. LocalDeploy keeps a short schema
+instruction in the prompt and also forwards the constraint to the backend: Ollama receives its native `format` value,
+while llama.cpp receives `response_format` on `/v1/chat/completions`. Clients must still parse and validate the result;
+application-level retry or rejection remains necessary if a backend/model returns semantically invalid data.
+
 ## Context Testing
 
 The API defaults are intentionally conservative. Use `compare_models.py` for normal comparisons. For probing larger contexts, increase limits in your local `config.json` or test directly against Ollama with `num_ctx` before changing API defaults.
@@ -83,13 +91,13 @@ For every request the server computes effective limits by combining three source
 1. **Global caps** from environment variables (read into `get_global_limits` in `api_server.py`):
    - `GLOBAL_MAX_PROMPT_CHARS` (default 20000)
    - `GLOBAL_MAX_OUTPUT_TOKENS` (default 2048)
-   - `GLOBAL_MAX_IMAGES` (default 1)
+   - `GLOBAL_MAX_IMAGES` (default 8; hard server ceiling)
    - `GLOBAL_MAX_IMAGE_MB` (default 10)
    - `REQUEST_TIMEOUT_SECONDS` (default 180)
    - `SLOW_RESPONSE_SECONDS` (default 60)
 
 2. **Profile limits** from `config.json` for the selected profile:
-   - `max_prompt_chars`, `max_output_tokens`, `context_limit`, `safe_context_limit`, `timeout_seconds`, `slow_response_seconds`.
+   - `max_prompt_chars`, `max_output_tokens`, `max_images`, `context_limit`, `safe_context_limit`, `timeout_seconds`, `slow_response_seconds`.
 
 3. **Request fields** supplied by the caller:
    - `context_limit`, `max_output_tokens`, `timeout_seconds`, `safe_mode`, `allow_clamp`.
@@ -102,7 +110,7 @@ For every request the server computes effective limits by combining three source
 | `context_limit` | `safe_mode=true`: `min(profile.context_limit, profile.safe_context_limit, request.context_limit)`. `safe_mode=false`: `min(profile.context_limit, request.context_limit)`. |
 | `max_output_tokens` | `min(profile.max_output_tokens, GLOBAL_MAX_OUTPUT_TOKENS, request.max_output_tokens)`. |
 | `timeout_seconds` | `request.timeout_seconds` if set, else `profile.timeout_seconds`, else `REQUEST_TIMEOUT_SECONDS`. |
-| `images` | `len(images) > GLOBAL_MAX_IMAGES` → reject. Each image: size ≤ `GLOBAL_MAX_IMAGE_MB`. |
+| `images` | `len(images) > min(profile.max_images, GLOBAL_MAX_IMAGES)` → reject. Profiles without `max_images` retain the legacy limit of 1. Each image: size ≤ `GLOBAL_MAX_IMAGE_MB`. |
 | sampling params (`temperature`, `top_p`, `repeat_penalty`) | `request` value if provided, else profile default. No global cap. |
 
 When the request exceeds a cap and `allow_clamp` is `false` (default), the server returns an error rather than silently shrinking. With `allow_clamp=true` the server clamps down to the allowed value and proceeds.
