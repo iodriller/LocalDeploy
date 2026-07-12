@@ -39,9 +39,9 @@ def test_no_smart_quotes_as_js_delimiters() -> None:
 
 def test_ui_assets_are_cache_busted_and_no_favicon_404() -> None:
     html = (WEB_DIR / "index.html").read_text(encoding="utf-8")
-    assert 'href="styles.css?v=20260705-ui17"' in html
-    assert 'src="app.js?v=20260705-ui17"' in html
-    assert 'rel="icon" type="image/png" href="favicon.png?v=20260705-ui17"' in html
+    assert 'href="styles.css?v=20260711-ui18"' in html
+    assert 'src="app.js?v=20260711-ui18"' in html
+    assert 'rel="icon" type="image/png" href="favicon.png?v=20260711-ui18"' in html
     assert (WEB_DIR / "favicon.png").is_file()
 
 
@@ -61,23 +61,25 @@ def test_new_ui_controls_have_safe_bindings() -> None:
     assert '$("#vram-budget-gb")?.addEventListener("input", () => {' in js
 
 
-def test_hardware_is_readonly_and_model_budget_lives_with_models() -> None:
+def test_system_card_holds_hardware_and_fit_budget() -> None:
+    """New IA: hardware, live VRAM, and the model fit budget all live together in
+    the top 'System' card; deploy options moved to 'Your models'."""
     html = (WEB_DIR / "index.html").read_text(encoding="utf-8")
-    hardware = html.split("<!-- Served model / status -->", 1)[0]
-    models = html.split("<!-- Models -->", 1)[1].split("<!-- Auto-pick a profile -->", 1)[0]
-    assert "Live VRAM" in hardware
-    assert "Custom GB" not in hardware
-    assert "Model fit budget" in models
-    assert "Custom GB" in models
+    system = html.split("1. SYSTEM", 1)[1].split("2. GET A MODEL", 1)[0]
+    assert "Live VRAM" in system
+    assert "Model fit budget" in system
+    assert "Custom GB" in system
+    # Deploy options live with Your models, not a top-of-page deploy card.
     assert 'id="keep-alive" value="60m"' in html
     assert 'id="btn-stop"' not in html
-    assert "unload from the Served model card" in html
+    assert "<h2>Deploy a profile</h2>" not in html  # old top card is gone
 
 
-def test_saved_profiles_and_benchmark_copy_are_clear() -> None:
+def test_profiles_and_benchmark_copy_are_clear() -> None:
     html = (WEB_DIR / "index.html").read_text(encoding="utf-8")
-    assert "Saved run profiles" in html
-    assert "Profiles are recipes from <code>config.json</code>" in html
+    # Profiles now live in the Advanced zone as "All run profiles".
+    assert "All run profiles" in html
+    assert "<code>config.json</code> recipes" in html
     assert "Scan saved profiles" in html
     assert "Use LocalDeploy test bench" in html
     assert "Load JSON sample" in html

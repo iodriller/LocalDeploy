@@ -14,6 +14,20 @@ from ..utils import (
 )
 
 
+def ollama_format(response_format: Any) -> Any:
+    """Translate OpenAI response_format into Ollama's native `format` value."""
+    if not isinstance(response_format, dict):
+        return None
+    format_type = response_format.get("type")
+    if format_type == "json_object":
+        return "json"
+    if format_type == "json_schema":
+        wrapper = response_format.get("json_schema")
+        if isinstance(wrapper, dict) and isinstance(wrapper.get("schema"), dict):
+            return wrapper["schema"]
+    return None
+
+
 def options_payload(prepared: Dict[str, Any]) -> Dict[str, Any]:
     options: Dict[str, Any] = {
         "num_ctx": prepared["context_limit_used"],
@@ -63,6 +77,9 @@ def call_ollama(prepared: Dict[str, Any]) -> str:
         "stream": False,
         "options": options_payload(prepared),
     }
+    native_format = ollama_format(prepared.get("response_format"))
+    if native_format is not None:
+        payload["format"] = native_format
     # Thinking models (Qwen3, DeepSeek-R1) put reasoning into a separate `thinking`
     # field; `content` is empty until the model finishes. `think: false` disables
     # the reasoning pass entirely for cases where we only want the final answer.
@@ -112,6 +129,9 @@ def stream_ollama(prepared: Dict[str, Any]) -> Iterator[str]:
         "stream": True,
         "options": options_payload(prepared),
     }
+    native_format = ollama_format(prepared.get("response_format"))
+    if native_format is not None:
+        payload["format"] = native_format
     if profile.get("think") is not None:
         payload["think"] = bool(profile["think"])
     try:

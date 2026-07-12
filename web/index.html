@@ -4,8 +4,8 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>LocalDeploy</title>
-    <link rel="icon" type="image/png" href="favicon.png?v=20260705-ui17" />
-    <link rel="stylesheet" href="styles.css?v=20260705-ui17" />
+    <link rel="icon" type="image/png" href="favicon.png?v=20260711-ui18" />
+    <link rel="stylesheet" href="styles.css?v=20260711-ui18" />
     <script>
       // Applied synchronously, before CSS renders, so a saved preference never flashes the other theme.
       try {
@@ -19,7 +19,7 @@
   <body>
     <header class="topbar">
       <button class="brand brand-button" id="brand-home" type="button" title="Go to setup">
-        <img class="brand-icon" src="favicon.png?v=20260705-ui17" alt="" />
+        <img class="brand-icon" src="favicon.png?v=20260711-ui18" alt="" />
         <span>LocalDeploy</span>
       </button>
       <nav class="tabs" role="tablist">
@@ -37,8 +37,8 @@
       <!-- ===================== TAB 1: Setup & Deploy ===================== -->
       <section id="tab-serve" class="tab-panel active">
         <div class="hint">
-          New here? Check hardware, review the model fit budget, pull a model if needed, then deploy a saved profile.
-          Use Benchmark &amp; Compare to measure profiles against the same question set.
+          Flow: check your <b>system</b>, <b>get a model</b> that fits, then <b>deploy</b> it from Your models.
+          Profiles &amp; GPU auto-pick live under Advanced. Use Benchmark &amp; Compare to measure models against a question set.
         </div>
         <div class="progress-rail" id="progress-rail">
           <div class="rail-step" data-step="hardware"><span class="rail-dot"></span><span class="rail-label">Check hardware</span></div>
@@ -50,78 +50,31 @@
           <div class="rail-step" data-step="deploy"><span class="rail-dot"></span><span class="rail-label">Deploy</span></div>
         </div>
         <div id="next-action-card" class="next-action hidden"></div>
-        <div class="grid">
-          <!-- Hardware -->
-          <div class="card">
-            <div class="card-head">
-              <h2>Hardware</h2>
+        <!-- ============ 1. SYSTEM (hardware + memory + fit budget) ============ -->
+        <div class="card" id="system-card">
+          <div class="card-head">
+            <div>
+              <h2>System</h2>
+              <p class="muted small">Your GPU, memory, and the budget used for model fit checks.</p>
+            </div>
+            <div class="row gap" style="align-items: center">
+              <span id="ollama-status-pill" class="chip hidden" title="Ollama runtime status"></span>
               <button class="btn" id="btn-hardware" data-icon="◎">Check hardware</button>
             </div>
-            <div id="hardware-body" class="muted">Hardware has not been checked yet.</div>
-            <div class="live-vram-panel" style="margin-top: 0.75rem">
-              <div class="budget-head">
-                <div>
-                  <span class="eyebrow">Live VRAM</span>
-                  <strong id="hardware-vram-label">Detect hardware first</strong>
-                </div>
-                <span id="hardware-vram-live-label" class="muted small"></span>
+          </div>
+          <div id="hardware-body" class="muted">Hardware has not been checked yet.</div>
+          <div class="live-vram-panel" style="margin-top: 0.75rem">
+            <div class="budget-head">
+              <div>
+                <span class="eyebrow">Live VRAM</span>
+                <strong id="hardware-vram-label">Detect hardware first</strong>
               </div>
-              <div id="hardware-vram-meter" class="capacity-meter" aria-label="Live VRAM usage"></div>
-              <div id="hardware-vram-help" class="muted small" style="margin-top: 0.5rem"></div>
+              <span id="hardware-vram-live-label" class="muted small"></span>
             </div>
+            <div id="hardware-vram-meter" class="capacity-meter" aria-label="Live VRAM usage"></div>
+            <div id="hardware-vram-help" class="muted small" style="margin-top: 0.5rem"></div>
           </div>
-
-          <!-- Served model / status -->
-          <div class="card">
-            <div class="card-head">
-              <h2>Served model</h2>
-              <button class="btn" id="btn-status" data-icon="↻">Refresh status</button>
-            </div>
-            <div id="status-body" class="muted">No served-model status has been loaded yet.</div>
-          </div>
-        </div>
-
-        <!-- Serve controls -->
-        <div class="card">
-          <div class="card-head"><h2>Deploy a profile</h2></div>
-          <div class="row gap wrap">
-            <label class="field grow">
-              <span>Profile</span>
-              <select id="profile-select"></select>
-            </label>
-            <label class="field" title="Where to run the model. Auto lets Ollama use the GPU if it fits; CPU forces system-RAM only (slower, but works without a GPU); GPU forces full GPU offload.">
-              <span>Deploy to ⓘ</span>
-              <select id="serve-device">
-                <option value="auto" selected>Auto</option>
-                <option value="gpu">GPU</option>
-                <option value="cpu">CPU</option>
-              </select>
-            </label>
-            <label class="field" title="How long to keep the model warm in memory after a request (e.g. 60m, 1h, or 0 to unload immediately).">
-              <span>Keep-alive ⓘ</span>
-              <input type="text" id="keep-alive" value="60m" />
-            </label>
-            <div class="row gap actions">
-              <button class="btn primary" id="btn-serve" data-icon="▶">Deploy profile</button>
-              <button class="btn" id="btn-switch" data-icon="⇄">Replace served model</button>
-            </div>
-          </div>
-          <p class="muted small">Loads the selected saved profile into Ollama. Keep-alive controls how long the model stays warm after the last request; unload from the Served model card.</p>
-          <div id="serve-result" class="result"></div>
-        </div>
-
-        <!-- Models -->
-        <div class="card">
-          <div class="card-head">
-            <h2>Models</h2>
-            <div class="row gap">
-              <button class="btn" id="btn-free" data-icon="⏏" title="Unload all models from memory/VRAM">Free memory</button>
-              <button class="btn" id="btn-installed" data-icon="↻">Refresh installed</button>
-              <button class="btn" id="btn-updates" data-icon="↗" title="Search Hugging Face for newer versions of your installed models">Check updates</button>
-            </div>
-          </div>
-
-          <div class="budget-panel model-budget">
+          <div class="budget-panel model-budget" style="margin-top: 0.75rem">
             <div class="budget-head">
               <div>
                 <span class="eyebrow">Model fit budget</span>
@@ -140,61 +93,33 @@
                 <input type="number" id="vram-budget-gb" min="0" step="0.1" placeholder="8.0" />
               </label>
             </div>
-            <div id="vram-budget-help" class="muted small" style="margin-top: 0.5rem"></div>
+            <div id="vram-budget-help" class="muted small" style="margin-top: 0.5rem">Fit badges on models and search results all use this budget.</div>
+          </div>
+        </div>
+
+        <!-- ============ 2. GET A MODEL (recommended / HF search / manual) ============ -->
+        <div class="card" id="get-model-card">
+          <div class="card-head">
+            <div>
+              <h2>Get a model</h2>
+              <p class="muted small">Pick a model that fits your budget, then pull it. New profiles are created automatically as you pull.</p>
+            </div>
+          </div>
+          <div class="segmented" role="tablist" aria-label="How to find a model">
+            <button class="seg-btn active" data-seg="recommended" role="tab" aria-selected="true">★ Recommended</button>
+            <button class="seg-btn" data-seg="hf" role="tab" aria-selected="false">⌕ Search Hugging Face</button>
+            <button class="seg-btn" data-seg="manual" role="tab" aria-selected="false">↓ Pull by name</button>
           </div>
 
-          <div class="row gap wrap" style="margin-bottom: 0.75rem">
-            <label class="field grow">
-              <span>Manual pull by model name</span>
-              <input type="text" id="pull-model" placeholder="gemma3:4b or hf.co/org/model-GGUF" />
-            </label>
-            <label class="check" title="Keep the warning, but do not block the pull when the fit check says the model is risky.">
-              <input type="checkbox" id="pull-override" />
-              <span>Warn only; pull anyway</span>
-            </label>
-            <button class="btn primary" id="btn-pull" data-icon="↓">Pull</button>
-            <button class="btn danger" id="btn-pull-cancel" hidden>Cancel</button>
-          </div>
-          <pre id="pull-log" class="log hidden"></pre>
-
-          <div class="model-section">
+          <div class="seg-panel" data-seg-panel="recommended">
             <div class="section-title">
-              <div>
-                <h3>Installed local models</h3>
-                <p class="muted small">Models already pulled into Ollama. Their fit badges auto-update when the budget above changes.</p>
-              </div>
+              <p class="muted small">Top models from a curated catalog that fit your detected GPU (or system RAM), with a safety margin so they don't just barely fit. Good first pull if you're not sure where to start.</p>
+              <button class="btn primary" id="btn-starter-pack" data-icon="★">Recommend models for my hardware</button>
             </div>
-            <div id="installed-body" class="muted">Installed models have not been loaded yet.</div>
+            <div id="starter-pack-body" class="muted">Detect hardware first, then run this to see curated picks for your budget.</div>
           </div>
 
-          <div class="model-section">
-            <div class="section-title">
-              <div>
-                <h3>Saved run profiles</h3>
-                <p class="muted small">Profiles are recipes from <code>config.json</code>: model id, backend, context limit, output limit, and safety settings. Scan them to see what is already pulled, what fits the budget above, and what can be deployed or pulled next.</p>
-              </div>
-            </div>
-            <div class="row gap wrap" style="margin-bottom: 0.75rem">
-              <label class="field">
-                <span>Show</span>
-                <select id="fit-filter">
-                  <option value="gpu">Fits GPU budget</option>
-                  <option value="runnable">Runnable on GPU or CPU</option>
-                  <option value="all">All saved profiles</option>
-                </select>
-              </label>
-              <button class="btn primary" id="btn-fit-profiles" data-icon="⌕">Scan saved profiles</button>
-            </div>
-            <div id="fit-finder-body" class="muted">Saved profiles have not been scanned against the model fit budget yet.</div>
-          </div>
-
-          <div class="model-section discover-section">
-            <div class="section-title">
-              <div>
-                <h3>Discover on Hugging Face</h3>
-                <p class="muted small">Search remote GGUF repos and filter them against the model fit budget above.</p>
-              </div>
-            </div>
+          <div class="seg-panel hidden" data-seg-panel="hf">
             <div class="row gap wrap" style="margin-bottom: 0.5rem">
               <label class="field grow">
                 <span>Search (blank = auto-detect from installed)</span>
@@ -220,30 +145,158 @@
             </div>
             <div id="updates-body" class="muted">No Hugging Face search has been run yet.</div>
           </div>
+
+          <div class="seg-panel hidden" data-seg-panel="manual">
+            <div class="row gap wrap" style="margin-bottom: 0.5rem">
+              <label class="field grow">
+                <span>Ollama tag or Hugging Face GGUF repo</span>
+                <input type="text" id="pull-model" placeholder="gemma3:4b or hf.co/org/model-GGUF" />
+              </label>
+              <label class="check" title="Keep the warning, but do not block the pull when the fit check says the model is risky.">
+                <input type="checkbox" id="pull-override" />
+                <span>Warn only; pull anyway</span>
+              </label>
+              <button class="btn primary" id="btn-pull" data-icon="↓">Pull</button>
+            </div>
+            <p class="muted small">Advanced: pull any Ollama tag, or a Hugging Face GGUF repo via the <code>hf.co/&lt;id&gt;</code> shortcut.</p>
+          </div>
+
+          <div id="ollama-help" class="next-action warn hidden"></div>
+        </div>
+
+        <!-- ============ 3. PULL PROGRESS (live) ============ -->
+        <div class="card pull-progress hidden" id="pull-progress">
+          <div class="pull-progress-head">
+            <div>
+              <span class="eyebrow">Pulling model</span>
+              <strong id="pull-progress-title">—</strong>
+              <div class="muted small" id="pull-progress-dest"></div>
+            </div>
+            <div class="row gap" style="align-items: center">
+              <span id="pull-progress-percent" class="run-percent">0%</span>
+              <button class="btn danger compact" id="btn-pull-cancel" hidden>Cancel</button>
+            </div>
+          </div>
+          <div class="run-progress-track large"><div id="pull-progress-bar" class="run-progress-fill" style="width:0%" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-label="Pull progress"></div></div>
+          <div class="pull-progress-meta">
+            <span id="pull-progress-status">Starting…</span>
+            <span id="pull-progress-stats" class="muted small"></span>
+          </div>
+          <div id="pull-progress-done" class="pull-progress-done hidden"></div>
+          <details class="pull-log-details">
+            <summary>Raw log</summary>
+            <pre id="pull-log" class="log"></pre>
+          </details>
+        </div>
+
+        <!-- ============ 4. YOUR MODELS (installed — primary deploy surface) ============ -->
+        <div class="card" id="your-models-card">
+          <div class="card-head">
+            <div>
+              <h2>Your models</h2>
+              <p class="muted small">Models you've pulled into Ollama. Deploy one to start serving it; fit badges use the budget above.</p>
+            </div>
+            <div class="row gap">
+              <button class="btn" id="btn-free" data-icon="⏏" title="Unload all models from memory/VRAM">Free memory</button>
+              <button class="btn" id="btn-installed" data-icon="↻">Refresh</button>
+            </div>
+          </div>
+          <div class="row gap wrap deploy-opts">
+            <label class="field" title="Where to run the model. Auto lets Ollama use the GPU if it fits; CPU forces system-RAM only (slower, but works without a GPU); GPU forces full GPU offload.">
+              <span>Deploy to ⓘ</span>
+              <select id="serve-device">
+                <option value="auto" selected>Auto</option>
+                <option value="gpu">GPU</option>
+                <option value="cpu">CPU</option>
+              </select>
+            </label>
+            <label class="field" title="How long to keep the model warm in memory after a request (e.g. 60m, 1h, or 0 to unload immediately).">
+              <span>Keep-alive ⓘ</span>
+              <input type="text" id="keep-alive" value="60m" />
+            </label>
+            <span class="muted small" style="align-self: center">These apply when you Deploy a model below.</span>
+          </div>
+          <div id="installed-body" class="muted">Installed models have not been loaded yet.</div>
+        </div>
+
+        <!-- ============ 5. CURRENTLY SERVING ============ -->
+        <div class="card">
+          <div class="card-head">
+            <h2>Currently serving</h2>
+            <button class="btn" id="btn-status" data-icon="↻">Refresh status</button>
+          </div>
+          <div id="status-body" class="muted">No served-model status has been loaded yet.</div>
+          <div id="serve-result" class="result"></div>
         </div>
 
         <!-- Auto-pick a profile -->
-        <div class="card">
-          <div class="card-head">
-            <h2>Auto-pick a profile</h2>
-            <button class="btn primary" id="btn-recommend" data-icon="✓">Find best fit</button>
+        <!-- ============ 6. ADVANCED (tuning, saved profiles, GPU auto-pick) ============ -->
+        <details class="card advanced-zone" id="advanced-zone">
+          <summary class="advanced-summary">
+            <span class="sub">Advanced</span>
+            <span class="muted small">GPU auto-pick, deploy by saved profile, and all run profiles &amp; tuning</span>
+          </summary>
+
+          <!-- Tune for my GPU -->
+          <div class="advanced-block">
+            <div class="card-head">
+              <h3 class="sub">Tune for my GPU</h3>
+              <button class="btn primary" id="btn-recommend" data-icon="✓">Find best fit</button>
+            </div>
+            <p class="muted small">
+              Benchmarks the profiles that are both <b>enabled</b> and already <b>pulled</b>, then ranks them by
+              accuracy, speed, and memory headroom. It compares what you have — it does not download models.
+            </p>
+            <div class="row gap wrap preset-row">
+              <button class="btn compact preset-btn" data-preset="safe" title="Balances accuracy, speed, and VRAM headroom evenly — a dependable everyday pick.">Safe Starter</button>
+              <button class="btn compact preset-btn" data-preset="quality" title="Weights accuracy heavily; picks the strongest answer quality among profiles that fit.">Best Quality</button>
+              <button class="btn compact preset-btn" data-preset="fast" title="Weights speed heavily; picks the quickest profile that still fits your VRAM budget.">Fast / Low VRAM</button>
+              <label class="check" title="Quick uses a handful of fast tests per candidate. Full runs the entire test bench per candidate for a more thorough (slower) score.">
+                <input type="checkbox" id="recommend-full-bench" />
+                <span>Full benchmark (slower, more thorough) ⓘ</span>
+              </label>
+            </div>
+            <div id="recommend-body" class="muted">Run this after hardware detection to get a recommended saved profile.</div>
           </div>
-          <p class="muted small">
-            Use this when you are not sure which saved profile to deploy. LocalDeploy checks enabled profiles from
-            <code>config.json</code> against the GPU budget above, benchmarks the candidates that can answer, then recommends
-            the best balance of accuracy, speed, and memory headroom. It does not download models or search Hugging Face.
-          </p>
-          <div class="row gap wrap preset-row">
-            <button class="btn compact preset-btn" data-preset="safe" title="Balances accuracy, speed, and VRAM headroom evenly — a dependable everyday pick.">Safe Starter</button>
-            <button class="btn compact preset-btn" data-preset="quality" title="Weights accuracy heavily; picks the strongest answer quality among profiles that fit.">Best Quality</button>
-            <button class="btn compact preset-btn" data-preset="fast" title="Weights speed heavily; picks the quickest profile that still fits your VRAM budget.">Fast / Low VRAM</button>
-            <label class="check" title="Quick uses a handful of fast tests per candidate. Full runs the entire test bench per candidate for a more thorough (slower) score.">
-              <input type="checkbox" id="recommend-full-bench" />
-              <span>Full benchmark (slower, more thorough) ⓘ</span>
-            </label>
+
+          <!-- Deploy by saved profile -->
+          <div class="advanced-block">
+            <div class="card-head"><h3 class="sub">Deploy by saved profile</h3></div>
+            <p class="muted small">Deploy a tuned recipe directly. For most cases, deploy from <b>Your models</b> above instead. Uses the Deploy-to / Keep-alive options set there.</p>
+            <div class="row gap wrap">
+              <label class="field grow">
+                <span>Profile</span>
+                <select id="profile-select"></select>
+              </label>
+              <div class="row gap actions">
+                <button class="btn primary" id="btn-serve" data-icon="▶">Deploy profile</button>
+                <button class="btn" id="btn-switch" data-icon="⇄">Replace served model</button>
+              </div>
+            </div>
           </div>
-          <div id="recommend-body" class="muted">Run this after hardware detection to get a recommended saved profile.</div>
-        </div>
+
+          <!-- All run profiles -->
+          <div class="advanced-block">
+            <div class="card-head">
+              <div>
+                <h3 class="sub">All run profiles</h3>
+                <p class="muted small"><code>config.json</code> recipes: model id, backend, context/output limits, KV-cache and llama.cpp tuning. Enable/disable for auto-pick, deploy, edit tuning, or remove orphans (profiles whose model isn't pulled).</p>
+              </div>
+            </div>
+            <div class="row gap wrap" style="margin-bottom: 0.75rem">
+              <label class="field">
+                <span>Show</span>
+                <select id="fit-filter">
+                  <option value="gpu">Fits GPU budget</option>
+                  <option value="runnable">Runnable on GPU or CPU</option>
+                  <option value="all">All saved profiles</option>
+                </select>
+              </label>
+              <button class="btn primary" id="btn-fit-profiles" data-icon="⌕">Scan saved profiles</button>
+            </div>
+            <div id="fit-finder-body" class="muted">Saved profiles have not been scanned against the model fit budget yet.</div>
+          </div>
+        </details>
       </section>
 
       <!-- ===================== TAB 2: Benchmark & Compare ===================== -->
@@ -449,6 +502,6 @@
     </main>
 
     <div id="toasts" class="toasts" aria-live="polite"></div>
-    <script src="app.js?v=20260705-ui17"></script>
+    <script src="app.js?v=20260711-ui18"></script>
   </body>
 </html>

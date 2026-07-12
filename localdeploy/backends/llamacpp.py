@@ -64,6 +64,8 @@ def call_llamacpp(prepared: Dict[str, Any]) -> str:
     }
     if prepared.get("repeat_penalty") is not None:
         openai_payload["repeat_penalty"] = prepared["repeat_penalty"]
+    if prepared.get("response_format"):
+        openai_payload["response_format"] = prepared["response_format"]
 
     try:
         response = requests.post(
