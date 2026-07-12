@@ -66,6 +66,144 @@ function Find-Ollama {
     return $null
 }
 
+function Find-Python {
+    foreach ($cmd in @("python", "python3", "py")) {
+        $found = Get-Command $cmd -ErrorAction SilentlyContinue
+        if ($found) {
+            try {
+                # Run in a child process so the Windows Store stub's stderr
+                # does not trigger $ErrorActionPreference = "Stop"
+                $ver = & $cmd --version 2>&1
+                if ("$ver" -match "Python \d") {
+                    return $cmd
+                }
+            }
+            catch {
+                # Store stub or broken install - skip this candidate
+            }
+        }
+    }
+    return $null
+}
+
+function Install-PythonGuide {
+    Write-Host ""
+    Write-Host "Python is required but was not found on this system." -ForegroundColor Yellow
+    Write-Host ""
+
+    $hasWinget = Get-Command winget -ErrorAction SilentlyContinue
+    if ($hasWinget) {
+        Write-Host "Choose an installation method:" -ForegroundColor Cyan
+        Write-Host "  [1] Install automatically via winget (recommended)"
+        Write-Host "  [2] Open python.org download page"
+        Write-Host "  [Q] Quit and install manually"
+        Write-Host ""
+        $choice = Read-Host "Your choice"
+    }
+    else {
+        Write-Host "winget not available. Choose how to install Python:" -ForegroundColor Cyan
+        Write-Host "  [1] Open python.org download page"
+        Write-Host "  [Q] Quit"
+        Write-Host ""
+        $choice = Read-Host "Your choice"
+        # remap so option 1 opens the browser
+        if ($choice.Trim() -eq "1") { $choice = "2" }
+    }
+
+    switch ($choice.Trim().ToUpper()) {
+        "1" {
+            Write-Step "Installing Python 3.12 via winget..."
+            # Pipe to Out-Host so winget output goes to the console only and does
+            # not get captured as part of this function's return value.
+            winget install -e --id Python.Python.3.12 --accept-source-agreements --accept-package-agreements | Out-Host
+            if ($LASTEXITCODE -ne 0) {
+                Write-Warning "winget exited with code $LASTEXITCODE. Python may not have installed correctly."
+            }
+            # Refresh PATH so the new Python binary is visible in this session
+            $env:PATH = [System.Environment]::GetEnvironmentVariable("PATH", "Machine") + ";" +
+                        [System.Environment]::GetEnvironmentVariable("PATH", "User")
+            $pyCmd = Find-Python
+            if (-not $pyCmd) {
+                Write-Host ""
+                Write-Host "Python was installed but is not yet visible in PATH." -ForegroundColor Yellow
+                Write-Host "Please close this terminal and re-run start.ps1." -ForegroundColor Yellow
+                exit 0
+            }
+            return $pyCmd
+        }
+        "2" {
+            Start-Process "https://www.python.org/downloads/"
+            Write-Host ""
+            Write-Host "Opening python.org in your browser." -ForegroundColor Cyan
+            Write-Host "After installing Python, re-run this script." -ForegroundColor Yellow
+            exit 0
+        }
+        default {
+            Write-Host ""
+            Write-Host "Exiting. Install Python from https://www.python.org/downloads/ then re-run this script." -ForegroundColor Yellow
+            exit 0
+        }
+    }
+}
+
+function Install-OllamaGuide {
+    Write-Host ""
+    Write-Host "Ollama is required to pull and serve models, but was not found on this system." -ForegroundColor Yellow
+    Write-Host ""
+
+    $hasWinget = Get-Command winget -ErrorAction SilentlyContinue
+    if ($hasWinget) {
+        Write-Host "Choose an installation method:" -ForegroundColor Cyan
+        Write-Host "  [1] Install automatically via winget (recommended)"
+        Write-Host "  [2] Open ollama.com download page"
+        Write-Host "  [Q] Skip for now (you won't be able to pull or serve models)"
+        Write-Host ""
+        $choice = Read-Host "Your choice"
+    }
+    else {
+        Write-Host "winget not available. Choose how to install Ollama:" -ForegroundColor Cyan
+        Write-Host "  [1] Open ollama.com download page"
+        Write-Host "  [Q] Skip for now"
+        Write-Host ""
+        $choice = Read-Host "Your choice"
+        # remap so option 1 opens the browser
+        if ($choice.Trim() -eq "1") { $choice = "2" }
+    }
+
+    switch ($choice.Trim().ToUpper()) {
+        "1" {
+            Write-Step "Installing Ollama via winget..."
+            winget install -e --id Ollama.Ollama --accept-source-agreements --accept-package-agreements | Out-Host
+            if ($LASTEXITCODE -ne 0) {
+                Write-Warning "winget exited with code $LASTEXITCODE. Ollama may not have installed correctly."
+            }
+            # Refresh PATH so the new ollama binary is visible in this session
+            $env:PATH = [System.Environment]::GetEnvironmentVariable("PATH", "Machine") + ";" +
+                        [System.Environment]::GetEnvironmentVariable("PATH", "User")
+            $found = Find-Ollama
+            if (-not $found) {
+                Write-Host ""
+                Write-Host "Ollama was installed but is not yet visible in PATH." -ForegroundColor Yellow
+                Write-Host "Close this terminal and re-run start.ps1 to pick it up." -ForegroundColor Yellow
+                return $null
+            }
+            return $found
+        }
+        "2" {
+            Start-Process "https://ollama.com/download"
+            Write-Host ""
+            Write-Host "Opening ollama.com in your browser." -ForegroundColor Cyan
+            Write-Host "After installing Ollama, re-run this script." -ForegroundColor Yellow
+            return $null
+        }
+        default {
+            Write-Host ""
+            Write-Host "Skipping Ollama install. Pulling and serving models will fail until it's installed." -ForegroundColor Yellow
+            return $null
+        }
+    }
+}
+
 function Clear-ZombieOnPort {
     param([string]$Url)
     if (-not (Get-Command Get-NetTCPConnection -ErrorAction SilentlyContinue)) { return }
@@ -83,8 +221,24 @@ if (-not (Test-Path -LiteralPath ".\.env")) {
 }
 
 if (-not (Test-Path -LiteralPath ".\config.json")) {
-    Copy-Item -LiteralPath ".\config.example.json" -Destination ".\config.json"
-    Write-Step "Created config.json"
+    # Seed a MINIMAL config.json rather than copying the example's dozen sample
+    # profiles. config.json is a live mirror of what the user actually pulls:
+    # pulling a model auto-creates its profile, so a fresh install should start
+    # empty instead of listing models the user hasn't downloaded.
+    $minimalConfig = @'
+{
+  "version": 1,
+  "default_profile": null,
+  "global_defaults": {
+    "safe_mode": true,
+    "stream": false,
+    "require_gpu_only": false
+  },
+  "profiles": {}
+}
+'@
+    Set-Content -LiteralPath ".\config.json" -Value $minimalConfig -Encoding utf8
+    Write-Step "Created config.json (empty - profiles are created as you pull models)"
 }
 
 $envFile = Read-DotEnv
@@ -99,14 +253,24 @@ if (-not (Test-Path -LiteralPath $python)) {
         $python = "python"
     }
     else {
+        $pyCmd = Find-Python
+        if (-not $pyCmd) {
+            $pyCmd = Install-PythonGuide
+        }
         Write-Step "Creating Python virtual environment"
-        python -m venv .venv
+        & $pyCmd -m venv .venv
+        if (-not (Test-Path -LiteralPath $python)) {
+            throw "Virtual environment creation failed. Verify your Python installation and try again."
+        }
         & $python -m pip install --upgrade pip
         & $python -m pip install -r requirements.txt
     }
 }
 
 $ollama = Find-Ollama
+if (-not $ollama -and -not $SkipInstall) {
+    $ollama = Install-OllamaGuide
+}
 if (-not $ollama) {
     Write-Warning "Ollama was not found. Install it from https://ollama.com/download (or: winget install Ollama.Ollama), then re-run this script."
 }

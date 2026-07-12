@@ -56,6 +56,9 @@ class ChatRequest(BaseModel):
     # Threaded into the Ollama options so a CPU/GPU benchmark measures the device it
     # asked for instead of letting Ollama silently re-place the model.
     num_gpu: Optional[int] = None
+    # Passed to backends that support grammar/schema-constrained generation.
+    # Native and OpenAI-compatible callers use the same response-format shape.
+    response_format: Optional[Dict[str, Any]] = None
 
 
 class VisionRequest(ChatRequest):
@@ -130,7 +133,10 @@ def get_global_limits() -> Dict[str, Any]:
     return {
         "max_prompt_chars": env_int("GLOBAL_MAX_PROMPT_CHARS", 20000),
         "max_output_tokens": env_int("GLOBAL_MAX_OUTPUT_TOKENS", 2048),
-        "max_images": env_int("GLOBAL_MAX_IMAGES", 1),
+        # Per-profile limits still default to one for existing profiles. This is
+        # only the hard server ceiling, allowing qualified vision profiles to opt
+        # into evidence bundles without weakening legacy 8 GB defaults.
+        "max_images": env_int("GLOBAL_MAX_IMAGES", 8),
         "max_image_mb": env_float("GLOBAL_MAX_IMAGE_MB", 10.0),
         "request_timeout_seconds": env_int("REQUEST_TIMEOUT_SECONDS", 180),
         "slow_response_seconds": env_int("SLOW_RESPONSE_SECONDS", 60),
@@ -351,6 +357,7 @@ def openai_request_to_local_payload(request_model: OpenAIChatCompletionRequest) 
         "safe_mode": request_model.safe_mode,
         "allow_clamp": request_model.allow_clamp,
         "timeout_seconds": request_model.timeout_seconds,
+        "response_format": request_model.response_format,
     }
     if model_override:
         payload["model"] = model_override
@@ -425,7 +432,9 @@ def prepare_request(
     backend = str(profile.get("backend")).lower()
     prompt = data.get("prompt") or ""
     system_prompt = data.get("system_prompt") or ""
-    estimated_prompt_chars = len(prompt) + len(system_prompt)
+    response_format = data.get("response_format")
+    response_format_chars = len(json.dumps(response_format, ensure_ascii=False)) if response_format else 0
+    estimated_prompt_chars = len(prompt) + len(system_prompt) + response_format_chars
     estimated_prompt_tokens = estimate_tokens_from_chars(estimated_prompt_chars)
     allow_clamp = bool(data.get("allow_clamp", False))
     safe_mode = bool(data.get("safe_mode", True))
@@ -468,8 +477,13 @@ def prepare_request(
     if images:
         if not profile.get("supports_vision", False):
             errors.append(f"Profile '{profile_name}' does not support vision requests.")
-        if len(images) > int(limits["max_images"]):
-            errors.append(f"Too many images: {len(images)} exceeds configured limit {limits['max_images']}.")
+        raw_profile_image_limit = profile.get("max_images")
+        profile_image_limit = int(raw_profile_image_limit if raw_profile_image_limit is not None else 1)
+        image_limit = min(profile_image_limit, int(limits["max_images"]))
+        if image_limit <= 0:
+            errors.append(f"Profile '{profile_name}' max_images must be greater than zero.")
+        elif len(images) > image_limit:
+            errors.append(f"Too many images: {len(images)} exceeds configured limit {image_limit}.")
         max_image_bytes = float(limits["max_image_mb"]) * 1024 * 1024
         cleaned_images: List[str] = []
         for idx, image in enumerate(images, start=1):
@@ -525,6 +539,7 @@ def prepare_request(
         "estimated_prompt_chars": estimated_prompt_chars,
         "estimated_prompt_tokens": estimated_prompt_tokens,
         "images_base64": data.get("images_base64") or [],
+        "response_format": response_format,
         "safe_mode": safe_mode,
         "warning": profile_warning(profile),
         "slow_response_seconds": int(profile.get("slow_response_seconds") or limits["slow_response_seconds"]),

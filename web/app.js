@@ -542,15 +542,15 @@ function updateNextActionCard() {
     );
   } else if (!steps.model) {
     html = nextActionHtml(
-      "Pull a starter model",
-      "No models installed yet — pull one to get going.",
-      "#pull-model"
+      "Get your first model",
+      "No models installed yet — get a recommended one that fits your hardware.",
+      "#btn-starter-pack"
     );
   } else if (!steps.deploy) {
     html = nextActionHtml(
-      "Deploy a profile",
-      "A model is ready — deploy a saved profile to start serving it.",
-      "#btn-serve"
+      "Deploy a model",
+      "A model is ready — deploy it from Your models to start serving it.",
+      "#your-models-card"
     );
   }
   card.innerHTML = html;
@@ -1226,8 +1226,9 @@ async function refreshInstalled() {
               <span class="fit"></span>
             </div>
             <span class="spacer"></span>
-            <button class="btn start-installed-btn">Deploy</button>
+            <button class="btn primary start-installed-btn">Deploy</button>
             <button class="btn fit-btn">Fit check</button>
+            <button class="btn edit-tuning-btn" title="Edit this model's run profile (context, KV cache, GPU layers…)">Edit tuning</button>
             <button class="btn danger del-btn" title="Delete from disk">Delete</button>
           </div>`;
         })
@@ -1241,6 +1242,9 @@ async function refreshInstalled() {
     );
     $$(".start-installed-btn", body).forEach((b) =>
       b.addEventListener("click", () => startInstalledModel(b.closest(".mrow").dataset.model, b))
+    );
+    $$(".edit-tuning-btn", body).forEach((b) =>
+      b.addEventListener("click", () => openTuningEditor(b.closest(".mrow").dataset.model))
     );
     // Auto-run the fit check for each row so warnings appear without a click.
     $$(".mrow", body).forEach((row) => fitCheckRow(row));
@@ -1304,12 +1308,28 @@ async function startInstalledModel(name, btn) {
 function findInstalledModel(modelId) {
   if (!modelId) return null;
   if (state.installedByName[modelId]) return state.installedByName[modelId];
-  const noTag = String(modelId).split(":")[0];
+  // Match case-insensitively and tolerate the differences between what the user
+  // asked to pull and how Ollama stores it: an implicit ":latest" tag, and
+  // "hf.co/Org/Repo-GGUF" landing as a lowercased name. Fall back to comparing
+  // the last path segment so an HF GGUF pull still resolves to its installed row.
+  const want = String(modelId).toLowerCase();
+  const wantNoTag = want.split(":")[0];
+  const tail = (s) => s.split("/").pop();
+  const names = Object.values(state.installedByName);
+  const norm = (m) => String(m.name || "").toLowerCase();
   return (
-    Object.values(state.installedByName).find((m) => m.name === `${modelId}:latest`) ||
-    Object.values(state.installedByName).find((m) => String(m.name || "").split(":")[0] === noTag) ||
+    names.find((m) => norm(m) === want) ||
+    names.find((m) => norm(m) === `${want}:latest`) ||
+    names.find((m) => norm(m).split(":")[0] === wantNoTag) ||
+    names.find((m) => tail(norm(m).split(":")[0]) === tail(wantNoTag)) ||
     null
   );
+}
+
+// The actual installed key for a model the user asked to pull (for scroll/flip
+// targeting), or the original string if it isn't installed (yet).
+function resolveInstalledName(modelId) {
+  return findInstalledModel(modelId)?.name || modelId;
 }
 
 function fitMatchesFilter(res, filter) {
@@ -1364,10 +1384,16 @@ async function scanConfiguredFits() {
       b.addEventListener("click", () => startProfile(b.dataset.profile, b))
     );
     $$(".fit-pull-btn", body).forEach((b) =>
-      b.addEventListener("click", () => {
-        $("#pull-model").value = b.dataset.model;
-        pullModel(b.dataset.model);
-      })
+      b.addEventListener("click", () => pullModel(b.dataset.model, b))
+    );
+    $$(".toggle-enabled-btn", body).forEach((b) =>
+      b.addEventListener("click", () => toggleProfileEnabled(b.dataset.profile, b.dataset.enabled === "true", b))
+    );
+    $$(".edit-profile-btn", body).forEach((b) =>
+      b.addEventListener("click", () => openTuningEditor(b.dataset.model, b.dataset.profile))
+    );
+    $$(".delete-profile-btn", body).forEach((b) =>
+      b.addEventListener("click", () => deleteProfile(b.dataset.profile, b))
     );
   } catch (err) {
     body.innerHTML = `<div class="muted">Scan failed.</div>`;
@@ -1377,6 +1403,111 @@ async function scanConfiguredFits() {
   }
 }
 
+async function deleteProfile(profile, btn) {
+  if (!profile) return;
+  if (!window.confirm(`Remove the profile "${profile}" from config.json? (This does not delete the model from disk.)`)) return;
+  busy(btn, true);
+  try {
+    const res = await postJSON("/profiles/delete", { profile });
+    if (!res.success) {
+      toast(res.error || "Could not delete profile.", "error");
+      return;
+    }
+    toast(`Removed profile ${profile}.`, "success");
+    await loadProfiles();
+    await scanConfiguredFits();
+  } catch (err) {
+    toast(`Delete failed: ${err.message}`, "error");
+  } finally {
+    busy(btn, false);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Tab 1 — Tuning editor (edit a model's run profile: context, KV cache, GPU…)
+// ---------------------------------------------------------------------------
+// The fields a user can tune, with input types. `model_id` is upserted so the
+// profile is created on the fly for models pulled before auto-create existed.
+const TUNING_FIELDS = [
+  { key: "description", label: "Description", type: "text" },
+  { key: "supports_vision", label: "Vision (multimodal)", type: "checkbox" },
+  { key: "max_images", label: "Max images per request", type: "number" },
+  { key: "context_limit", label: "Context limit", type: "number" },
+  { key: "safe_context_limit", label: "Safe context limit", type: "number" },
+  { key: "max_output_tokens", label: "Max output tokens", type: "number" },
+  { key: "temperature", label: "Temperature", type: "number", step: "0.05" },
+  { key: "top_p", label: "Top-p", type: "number", step: "0.05" },
+  { key: "repeat_penalty", label: "Repeat penalty", type: "number", step: "0.05" },
+  { key: "timeout_seconds", label: "Timeout (s)", type: "number" },
+  { key: "flash_attention", label: "Flash attention (llama.cpp)", type: "checkbox" },
+  { key: "kv_cache_type_k", label: "KV cache type K (e.g. q8_0)", type: "text" },
+  { key: "kv_cache_type_v", label: "KV cache type V (e.g. q8_0)", type: "text" },
+  { key: "gpu_layers", label: "GPU layers (number or 'all')", type: "text" },
+];
+
+function profileForModel(modelId, profileName) {
+  if (profileName && state.profileData[profileName]) return { name: profileName, data: state.profileData[profileName] };
+  const hit = Object.entries(state.profileData).find(([, v]) => v.model_id === modelId);
+  return hit ? { name: hit[0], data: hit[1] } : { name: null, data: {} };
+}
+
+function openTuningEditor(modelId, profileName) {
+  const { name, data } = profileForModel(modelId, profileName);
+  const heading = name || modelId;
+  const fieldsHtml = TUNING_FIELDS.map((f) => {
+    const val = data[f.key];
+    if (f.type === "checkbox") {
+      return `<label class="check tuning-field"><input type="checkbox" data-key="${f.key}" ${val ? "checked" : ""} /><span>${esc(f.label)}</span></label>`;
+    }
+    const step = f.step ? ` step="${f.step}"` : "";
+    const v = val == null ? "" : esc(String(val));
+    return `<label class="field tuning-field"><span>${esc(f.label)}</span><input type="${f.type}"${step} data-key="${f.key}" value="${v}" /></label>`;
+  }).join("");
+  const overlay = document.createElement("div");
+  overlay.className = "modal-overlay";
+  overlay.innerHTML = `<div class="modal-card" role="dialog" aria-modal="true">
+      <div class="card-head">
+        <div><h3 class="sub">Edit tuning</h3><div class="muted small">Model: <code>${esc(modelId)}</code>${name ? ` · profile <code>${esc(name)}</code>` : " · a profile will be created"}</div></div>
+        <button class="btn compact modal-close">✕</button>
+      </div>
+      <div class="tuning-grid">${fieldsHtml}</div>
+      <div class="row gap" style="justify-content:flex-end;margin-top:0.75rem">
+        <button class="btn modal-close">Cancel</button>
+        <button class="btn primary modal-save">Save profile</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  const close = () => overlay.remove();
+  overlay.addEventListener("click", (e) => { if (e.target === overlay) close(); });
+  $$(".modal-close", overlay).forEach((b) => b.addEventListener("click", close));
+  $(".modal-save", overlay).addEventListener("click", async (e) => {
+    const saveBtn = e.currentTarget;
+    const fields = {};
+    $$("input[data-key]", overlay).forEach((inp) => {
+      const key = inp.dataset.key;
+      if (inp.type === "checkbox") fields[key] = inp.checked;
+      else if (inp.type === "number") fields[key] = inp.value.trim() === "" ? null : Number(inp.value);
+      else fields[key] = inp.value.trim() === "" ? null : inp.value.trim();
+    });
+    busy(saveBtn, true);
+    try {
+      const payload = name ? { profile: name, fields } : { model_id: modelId, fields };
+      const res = await postJSON("/profiles/upsert", payload);
+      if (!res.success) {
+        toast(res.error || "Could not save profile.", "error");
+        return;
+      }
+      toast(`Saved profile ${res.profile}.`, "success");
+      close();
+      await loadProfiles();
+    } catch (err) {
+      toast(`Save failed: ${err.message}`, "error");
+    } finally {
+      busy(saveBtn, false);
+    }
+  });
+}
+
 function renderProfileFitCard(row) {
   const { profile, p, modelId, installed, fit } = row;
   const req = fit?.estimate_gb?.required;
@@ -1384,7 +1515,9 @@ function renderProfileFitCard(row) {
   const installedBadge = installed ? `<span class="badge on">installed</span>` : `<span class="badge off">not pulled</span>`;
   const vision = p.supports_vision ? `<span class="badge">vision</span>` : "";
   const backend = p.backend ? `<span class="badge">${esc(p.backend)}</span>` : "";
-  const enabled = p.enabled === false ? `<span class="badge off">disabled</span>` : `<span class="badge on">enabled</span>`;
+  const enabledNow = p.enabled !== false;
+  const enabledBadge = enabledNow ? `<span class="badge on">enabled</span>` : `<span class="badge off">disabled</span>`;
+  const toggleBtn = `<button class="btn compact toggle-enabled-btn" data-profile="${esc(profile)}" data-enabled="${enabledNow ? "false" : "true"}" title="${enabledNow ? "Disable" : "Enable"} this profile for Auto-pick">${enabledNow ? "Disable" : "Enable"}</button>`;
   const action = installed
     ? `<button class="btn fit-start-profile-btn" data-profile="${esc(profile)}">Deploy</button>`
     : `<button class="btn fit-pull-btn" data-model="${esc(modelId)}">Pull</button>`;
@@ -1408,12 +1541,33 @@ function renderProfileFitCard(row) {
     <div class="muted small">${esc(fit?.headline || "No fit estimate available.")}</div>
     <div class="muted small">${esc(detail)}</div>
     <div class="row gap wrap fit-card-actions">
-      ${enabled}${installedBadge}${vision}${backend}
+      ${enabledBadge}${installedBadge}${vision}${backend}
       <span class="spacer"></span>
+      ${toggleBtn}
+      <button class="btn compact edit-profile-btn" data-profile="${esc(profile)}" data-model="${esc(modelId)}" title="Edit tuning">Edit</button>
+      <button class="btn compact danger delete-profile-btn" data-profile="${esc(profile)}" title="Remove this profile from config.json">Delete</button>
       <button class="btn select-profile-btn" data-profile="${esc(profile)}">Select</button>
       ${action}
     </div>
   </div>`;
+}
+
+async function toggleProfileEnabled(profile, enabled, btn) {
+  busy(btn, true);
+  try {
+    const res = await postJSON("/system/set-enabled", { profile, enabled });
+    if (!res.success) {
+      toast(res.error || "Could not update profile.", "error");
+      return;
+    }
+    if (state.profileData[profile]) state.profileData[profile].enabled = enabled;
+    toast(`${profile} ${enabled ? "enabled" : "disabled"} for Auto-pick.`, "success");
+    await scanConfiguredFits();
+  } catch (err) {
+    toast(`Update failed: ${err.message}`, "error");
+  } finally {
+    busy(btn, false);
+  }
 }
 
 function selectProfile(profile) {
@@ -1448,6 +1602,68 @@ async function startProfile(profile, btn) {
 }
 
 // ---------------------------------------------------------------------------
+// Tab 1 — Starter pack (curated first-pull picks for the detected budget)
+// ---------------------------------------------------------------------------
+function renderStarterCard(c) {
+  const installed = !!findInstalledModel(c.pull_name);
+  const action = installed
+    ? `<span class="badge on">installed</span>`
+    : `<button class="btn starter-pull-btn" data-model="${esc(c.pull_name)}">Pull</button>`;
+  const vision = c.vision ? `<span class="badge">vision</span>` : "";
+  return `<div class="fit-card">
+    <div class="running-top">
+      <div>
+        <div class="model-title">${esc(c.id)}</div>
+        <div class="muted small">${esc(c.use_case || "")}</div>
+      </div>
+      <span class="badge" title="Hand-curated quality rating; 5 = best-in-class for its size class">tier ${esc(c.tier)}/5</span>
+    </div>
+    <div class="muted small">${esc(c.description || "")}</div>
+    <div class="muted small">${esc(c.reasoning || "")}</div>
+    <div class="row gap wrap fit-card-actions">
+      ${vision}
+      <span class="spacer"></span>
+      ${action}
+    </div>
+  </div>`;
+}
+
+async function starterPack(source) {
+  const btn = source?.currentTarget || source || $("#btn-starter-pack");
+  busy(btn, true);
+  const body = $("#starter-pack-body");
+  body.innerHTML = `<div class="muted"><span class="spin-inline"></span> Finding models that fit your hardware…</div>`;
+  try {
+    const data = await postJSON("/registry/starter-pack", {
+      free_vram_mb: targetVram(),
+      margin_gb: 2.0,
+      limit: 5,
+    });
+    if (!data.success || data.budget_gb == null) {
+      body.innerHTML = `<div class="muted">${esc(data.message || "Could not determine a fit budget.")}</div>`;
+      return;
+    }
+    const unit = data.budget_source === "vram" ? "VRAM" : "RAM";
+    const marginNote = data.margin_relaxed ? "" : ` (after a ${esc(data.margin_gb)} GB safety margin)`;
+    const header = `<div class="muted small" style="margin-bottom:0.5rem">Budget: ~${esc(data.budget_gb)} GB usable ${unit}${marginNote} from ~${esc(data.raw_budget_gb)} GB detected.</div>`;
+    const note = data.message ? `<div class="muted small">${esc(data.message)}</div>` : "";
+    if (!data.candidates.length) {
+      body.innerHTML = header + note + `<div class="muted">No curated models fit this budget.</div>`;
+      return;
+    }
+    body.innerHTML = header + note + `<div class="fit-grid">` + data.candidates.map(renderStarterCard).join("") + `</div>`;
+    $$(".starter-pull-btn", body).forEach((b) =>
+      b.addEventListener("click", () => pullModel(b.dataset.model, b))
+    );
+  } catch (err) {
+    body.innerHTML = `<div class="muted">Starter pack lookup failed.</div>`;
+    toast(`Starter pack failed: ${err.message}`, "error");
+  } finally {
+    busy(btn, false);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Tab 1 — Hugging Face model search
 // ---------------------------------------------------------------------------
 function fmtNum(n) {
@@ -1470,7 +1686,7 @@ function hfStatsHtml(candidate) {
 }
 
 async function checkUpdates(source) {
-  const btn = source?.currentTarget || source || $("#btn-updates");
+  const btn = source?.currentTarget || source || $("#btn-hf-search");
   busy(btn, true);
   const body = $("#updates-body");
   body.innerHTML = `<div class="muted">Checking Hugging Face…</div>`;
@@ -1522,10 +1738,7 @@ async function checkUpdates(source) {
     body.innerHTML = blocks + note;
     // Wire the per-candidate Pull buttons (GGUF repos via Ollama's hf.co/ shortcut).
     $$(".hf-pull-btn", body).forEach((b) =>
-      b.addEventListener("click", () => {
-        $("#pull-model").value = b.dataset.model;
-        pullModel(b.dataset.model);
-      })
+      b.addEventListener("click", () => pullModel(b.dataset.model, b))
     );
   } catch (err) {
     body.innerHTML = `<div class="muted">Check failed.</div>`;
@@ -1536,76 +1749,295 @@ async function checkUpdates(source) {
 }
 
 // ---------------------------------------------------------------------------
+// Tab 1 — Ollama install/start helper (shown when a pull can't reach Ollama)
+// ---------------------------------------------------------------------------
+function hideOllamaHelp() {
+  $("#ollama-help")?.classList.add("hidden");
+}
+
+function showOllamaHelp(retryModel, retryBtn, message) {
+  const help = $("#ollama-help");
+  if (!help) return;
+  const retryHtml = retryModel
+    ? `<button class="btn primary compact" id="btn-retry-pull">Retry pull</button>`
+    : "";
+  const detail = message || `Install it (or start it if it's already installed), then ${retryModel ? "retry the pull" : "try pulling a model"}.`;
+  help.innerHTML = `<div><strong>Ollama isn't reachable</strong><div class="muted small">${esc(detail)}</div></div>
+    <div class="row gap">
+      <button class="btn compact" id="btn-install-ollama">Install / start Ollama</button>
+      ${retryHtml}
+    </div>`;
+  help.classList.remove("hidden");
+  help.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  $("#btn-install-ollama").addEventListener("click", async (e) => {
+    const b = e.currentTarget;
+    busy(b, true);
+    try {
+      const res = await postJSON("/system/install-ollama", {});
+      toast(res.message || res.error || "Done.", res.success ? "success" : "error");
+      if (res.success) hideOllamaHelp();
+    } catch (err) {
+      toast(`Install failed: ${err.message}`, "error");
+    } finally {
+      busy(b, false);
+    }
+  });
+  if (retryModel) {
+    $("#btn-retry-pull").addEventListener("click", () => {
+      hideOllamaHelp();
+      pullModel(retryModel, retryBtn);
+    });
+  }
+}
+
+// Flip any rendered Pull button for `model` (starter pack, HF search, saved-
+// profile scan) to an "installed" badge without waiting on a full re-render.
+function markModelInstalledInUI(model) {
+  let selector;
+  try {
+    selector = `[data-model="${CSS.escape(model)}"]`;
+  } catch {
+    return;
+  }
+  $$(`.starter-pull-btn${selector}, .hf-pull-btn${selector}, .fit-pull-btn${selector}`).forEach((b) => {
+    const badge = document.createElement("span");
+    badge.className = "badge on";
+    badge.textContent = "installed";
+    b.replaceWith(badge);
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Tab 1 — Pull progress panel (%, speed, ETA, destination, completion)
+// ---------------------------------------------------------------------------
+function fmtBytes(n) {
+  if (n == null || !Number.isFinite(n)) return "";
+  if (n >= 1e9) return `${(n / 1e9).toFixed(2)} GB`;
+  if (n >= 1e6) return `${(n / 1e6).toFixed(0)} MB`;
+  if (n >= 1e3) return `${(n / 1e3).toFixed(0)} KB`;
+  return `${n} B`;
+}
+
+function fmtDuration(seconds) {
+  const s = Math.max(0, Math.round(seconds));
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ${s % 60}s`;
+  const h = Math.floor(m / 60);
+  return `${h}h ${m % 60}m`;
+}
+
+// Update the pull-progress panel. `percent === null` renders an indeterminate bar
+// (used while Ollama is doing sizeless work like "pulling manifest"/"verifying").
+function setPullProgress({ percent, status, stats }) {
+  const bar = $("#pull-progress-bar");
+  const pctLabel = $("#pull-progress-percent");
+  if (percent === null) {
+    bar.classList.add("indeterminate");
+    bar.style.width = "100%";
+    pctLabel.textContent = "";
+  } else if (percent != null) {
+    const p = Math.max(0, Math.min(100, percent));
+    bar.classList.remove("indeterminate");
+    bar.style.width = `${p.toFixed(1)}%`;
+    bar.setAttribute("aria-valuenow", String(Math.round(p)));
+    pctLabel.textContent = `${Math.round(p)}%`;
+  }
+  if (status != null) $("#pull-progress-status").textContent = status;
+  if (stats != null) $("#pull-progress-stats").textContent = stats;
+}
+
+function showPullDone(model) {
+  const done = $("#pull-progress-done");
+  done.innerHTML = `<div class="pull-done-row">
+      <div><strong>✓ Pulled — ${esc(model)} is ready</strong>
+        <div class="muted small">A run profile was created for it. Deploy it from Your models, or right here.</div>
+      </div>
+      <button class="btn primary compact" id="btn-deploy-pulled" data-model="${esc(model)}">Deploy now</button>
+    </div>`;
+  done.classList.remove("hidden");
+  $("#btn-deploy-pulled").addEventListener("click", (e) => {
+    const b = e.currentTarget;
+    startInstalledModel(resolveInstalledName(b.dataset.model), b);
+  });
+}
+
+// Scroll to + briefly flash the freshly-pulled model's row so it never looks
+// like the pull "vanished" (the row lives lower in the page than the pull panel).
+function highlightInstalledModel(model) {
+  const name = resolveInstalledName(model);
+  if (!name) return;
+  let row;
+  try {
+    row = $(`#installed-body [data-model="${CSS.escape(name)}"]`);
+  } catch {
+    return;
+  }
+  if (!row) return;
+  row.scrollIntoView({ behavior: "smooth", block: "center" });
+  row.classList.add("just-added");
+  setTimeout(() => row.classList.remove("just-added"), 2600);
+}
+
+// ---------------------------------------------------------------------------
 // Tab 1 — Pull (streamed, fit-gated)
 // ---------------------------------------------------------------------------
-async function pullModel(modelArg) {
-  // Called from the Pull button (no string arg) or a candidate row (a name).
+async function pullModel(modelArg, triggerBtn) {
+  // Called from the manual Pull button (no args), or a candidate row's own
+  // Pull button (model name + that button, so the card shows it's pulling).
   const model = typeof modelArg === "string" && modelArg ? modelArg : $("#pull-model").value.trim();
   if (!model) {
     toast("Enter a model name to pull.", "error");
     return;
   }
-  const btn = $("#btn-pull");
+  $("#pull-model").value = model;
+  const manualBtn = $("#btn-pull");
+  const btn = triggerBtn || manualBtn;
+  const usesSpinner = btn === manualBtn;
+  const cardOriginalHtml = usesSpinner ? null : btn.innerHTML;
   const cancelBtn = $("#btn-pull-cancel");
   const log = $("#pull-log");
-  busy(btn, true);
-  log.classList.remove("hidden");
+
+  hideOllamaHelp();
+  // Reset + reveal the progress panel.
+  const panel = $("#pull-progress");
+  $("#pull-progress-done").classList.add("hidden");
+  $("#pull-progress-done").innerHTML = "";
+  $("#pull-progress-title").textContent = model;
+  $("#pull-progress-dest").textContent = "";
+  setPullProgress({ percent: 0, status: "Starting…", stats: "" });
+  panel.classList.remove("hidden");
+  panel.scrollIntoView({ behavior: "smooth", block: "nearest" });
   log.textContent = "";
   const append = (line) => {
     log.textContent += line + "\n";
     log.scrollTop = log.scrollHeight;
   };
+
+  if (usesSpinner) busy(btn, true);
+  else {
+    btn.disabled = true;
+    btn.textContent = "Pulling…";
+  }
+
   // Wire a cancel that aborts the stream (closes the connection; Ollama stops).
   const controller = new AbortController();
   cancelBtn.hidden = false;
   const onCancel = () => controller.abort();
   cancelBtn.addEventListener("click", onCancel);
+
+  let ollamaUnreachable = false;
+  let sawError = false;
+  const checkOllamaError = (msg) => /ollama is (not running|installed but not reachable)|not reachable at/i.test(msg || "");
+
+  // Progress accounting across the model's layers (Ollama streams per-digest
+  // total/completed). Overall % = sum(completed)/sum(total); speed is a smoothed
+  // byte-rate; ETA derives from the remaining bytes at that rate.
+  const digests = {};
+  let lastTs = performance.now();
+  let lastBytes = 0;
+  let speed = 0; // bytes/sec, EMA
+  let overallPct = null;
+
+  const recompute = (statusText) => {
+    let total = 0;
+    let completed = 0;
+    for (const d of Object.values(digests)) {
+      total += d.total || 0;
+      completed += d.completed || 0;
+    }
+    const now = performance.now();
+    const dt = (now - lastTs) / 1000;
+    if (dt >= 0.4 && completed >= lastBytes) {
+      const inst = (completed - lastBytes) / dt;
+      speed = speed ? speed * 0.7 + inst * 0.3 : inst;
+      lastTs = now;
+      lastBytes = completed;
+    }
+    if (total > 0) {
+      overallPct = (completed / total) * 100;
+      const parts = [`${fmtBytes(completed)} / ${fmtBytes(total)}`];
+      if (speed > 0) parts.push(`${(speed / 1e6).toFixed(1)} MB/s`);
+      const eta = speed > 0 ? (total - completed) / speed : null;
+      if (eta != null && Number.isFinite(eta) && eta > 0.5) parts.push(`ETA ${fmtDuration(eta)}`);
+      setPullProgress({ percent: overallPct, status: statusText, stats: parts.join(" · ") });
+    } else {
+      setPullProgress({ percent: null, status: statusText, stats: "" });
+    }
+  };
+
   try {
     const out = await postMaybeStream(
       "/models/pull",
       { model, free_vram_mb: targetVram(), allow_override: $("#pull-override").checked },
       (evt) => {
+        if (evt.destination_label && !$("#pull-progress-dest").textContent) {
+          $("#pull-progress-dest").textContent = `→ ${evt.destination_label}`;
+        }
         if (evt.error) {
           append(`error: ${evt.error}`);
+          sawError = true;
+          if (checkOllamaError(evt.error)) ollamaUnreachable = true;
+          setPullProgress({ status: `Error: ${evt.error}` });
           return;
         }
         // A soft fit note (e.g. "won't fit GPU — will run on CPU") rides the start event.
         if (evt.note) append(`note: ${evt.note}`);
-        if (evt.status) {
-          const pct =
-            evt.total && evt.completed
-              ? ` ${Math.round((evt.completed / evt.total) * 100)}%`
-              : "";
-          append(`${evt.status}${pct}`);
+        if (evt.digest && evt.total) {
+          digests[evt.digest] = { total: evt.total, completed: evt.completed || 0 };
         }
-        // Unknown event shapes are ignored rather than dumped as raw JSON (I23).
+        if (evt.status) {
+          const layerPct = evt.total && evt.completed ? Math.round((evt.completed / evt.total) * 100) : null;
+          append(`${evt.status}${layerPct != null ? ` ${layerPct}%` : ""}`);
+          recompute(evt.status);
+          if (!usesSpinner) btn.textContent = overallPct != null ? `Pulling ${Math.round(overallPct)}%` : "Pulling…";
+        }
       },
       controller.signal
     );
     if (!out.streamed) {
       const j = out.json || {};
       if (j.blocked_by === "fit-check") {
-        append(`blocked by fit check: ${j.message || ""}`);
+        const msg = j.message || "Model may not fit available memory.";
+        append(`blocked by fit check: ${msg}`);
         if (j.fit?.estimate_gb) append(`  needs ~${j.fit.estimate_gb.required} GB`);
-        append("  tick “Warn only; pull anyway” to continue.");
+        setPullProgress({ percent: 0, status: `Blocked by fit check — tick "Warn only; pull anyway" to continue.` });
       } else {
-        append(j.error || "Pull could not start.");
+        const msg = j.error || "Pull could not start.";
+        append(msg);
+        if (checkOllamaError(msg)) ollamaUnreachable = true;
+        setPullProgress({ status: `Error: ${msg}` });
       }
+    } else if (sawError) {
+      // Stream opened but reported a failure mid-way — don't claim success or
+      // flip any card to "installed".
     } else {
       append("done.");
+      setPullProgress({ percent: 100, status: "Pulled successfully.", stats: "" });
       await refreshInstalled();
+      markModelInstalledInUI(model);
+      showPullDone(model);
+      highlightInstalledModel(model);
+      toast(`Pulled ${model}.`, "success");
     }
   } catch (err) {
     if (err.name === "AbortError") {
       append("cancelled.");
+      setPullProgress({ status: "Cancelled." });
       toast("Pull cancelled.", "info");
     } else {
       append(`error: ${err.message}`);
+      setPullProgress({ status: `Error: ${err.message}` });
     }
   } finally {
     cancelBtn.hidden = true;
     cancelBtn.removeEventListener("click", onCancel);
-    busy(btn, false);
+    if (usesSpinner) busy(btn, false);
+    else {
+      btn.disabled = false;
+      btn.innerHTML = cardOriginalHtml;
+    }
+    if (ollamaUnreachable) showOllamaHelp(model, triggerBtn);
   }
 }
 
@@ -2877,9 +3309,10 @@ $("#btn-status").addEventListener("click", refreshStatus);
 $("#btn-serve").addEventListener("click", serveModel);
 $("#btn-switch").addEventListener("click", switchModel);
 $("#btn-installed").addEventListener("click", refreshInstalled);
-$("#btn-updates").addEventListener("click", (e) => checkUpdates(e));
+$("#btn-updates")?.addEventListener("click", (e) => checkUpdates(e));
 $("#btn-hf-search")?.addEventListener("click", (e) => checkUpdates(e));
 $("#btn-fit-profiles")?.addEventListener("click", scanConfiguredFits);
+$("#btn-starter-pack")?.addEventListener("click", (e) => starterPack(e));
 $("#btn-free").addEventListener("click", freeMemory);
 $("#btn-pull").addEventListener("click", () => pullModel());
 $("#btn-builtin-bench").addEventListener("click", useBuiltInBench);
@@ -2994,7 +3427,58 @@ $$(".btn.file").forEach((label) => {
 
 // Initial load — populate the live sections so a newcomer sees real state
 // for hardware, served models, and installed models.
+function setOllamaPill(installed, reachable) {
+  const pill = $("#ollama-status-pill");
+  if (!pill) return;
+  let cls = "chip";
+  let text = "";
+  if (!installed) {
+    cls += " bad";
+    text = "Ollama: not installed";
+  } else if (!reachable) {
+    cls += " warn";
+    text = "Ollama: not running";
+  } else {
+    cls += " ok";
+    text = "Ollama: running";
+  }
+  pill.className = cls;
+  pill.textContent = text;
+  pill.classList.remove("hidden");
+}
+
+async function checkOllamaAvailability() {
+  try {
+    const res = await getJSON("/system/ollama-status");
+    setOllamaPill(res.installed, res.reachable);
+    if (!res.installed) {
+      showOllamaHelp(null, null, "Ollama isn't installed, so pulling and serving models won't work yet. Install it, then come back here.");
+    }
+  } catch {
+    // Non-fatal: the pull flow will surface this again if it matters.
+  }
+}
+
+// Segmented control inside "Get a model": show one panel at a time.
+function wireGetModelSegments() {
+  const btns = $$(".seg-btn");
+  btns.forEach((b) =>
+    b.addEventListener("click", () => {
+      const seg = b.dataset.seg;
+      btns.forEach((x) => {
+        const on = x === b;
+        x.classList.toggle("active", on);
+        x.setAttribute("aria-selected", on ? "true" : "false");
+      });
+      $$(".seg-panel").forEach((p) =>
+        p.classList.toggle("hidden", p.dataset.segPanel !== seg)
+      );
+    })
+  );
+}
+
 (async function init() {
+  wireGetModelSegments();
   loadBenchmarkRuns();
   await loadProfiles();
   renderBenchmarkWorkspace();
@@ -3003,5 +3487,6 @@ $$(".btn.file").forEach((label) => {
     refreshStatus(),
     refreshInstalled(),
     loadGraderTypes(),
+    checkOllamaAvailability(),
   ]);
 })();
