@@ -1431,6 +1431,7 @@ async function deleteProfile(profile, btn) {
 const TUNING_FIELDS = [
   { key: "description", label: "Description", type: "text" },
   { key: "supports_vision", label: "Vision (multimodal)", type: "checkbox" },
+  { key: "think", label: "Thinking mode", type: "checkbox" },
   { key: "max_images", label: "Max images per request", type: "number" },
   { key: "context_limit", label: "Context limit", type: "number" },
   { key: "safe_context_limit", label: "Safe context limit", type: "number" },
