@@ -91,7 +91,7 @@ def default_profile_for(
     """
     name = slugify_profile_name(model_id)
     supports_vision = _looks_like_vision(model_id)
-    return {
+    profile = {
         "name": name,
         "backend": "ollama",
         "model_id": model_id,
@@ -126,6 +126,14 @@ def default_profile_for(
         "mlock": None,
         "params_b": params_b,
     }
+    # Ollama thinking models can spend their entire output budget in the
+    # separate hidden reasoning field and return empty final content. Fresh
+    # profiles default to non-thinking for reliable chat and structured output;
+    # users can explicitly enable thinking for long-form reasoning workloads.
+    low = (model_id or "").lower()
+    if low.startswith("qwen3") or "deepseek-r1" in low:
+        profile["think"] = False
+    return profile
 
 
 def ensure_profile_for_model(model_id: str) -> Tuple[Optional[str], bool, Optional[str]]:

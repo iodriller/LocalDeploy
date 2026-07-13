@@ -53,6 +53,8 @@ def test_default_profile_detects_vision():
     assert _config.default_profile_for("qwen3-vl:8b-instruct")["supports_vision"] is True
     assert _config.default_profile_for("qwen3.6:27b")["supports_vision"] is True
     assert _config.default_profile_for("qwen3.6:27b")["max_images"] == 4
+    assert _config.default_profile_for("qwen3.6:27b")["think"] is False
+    assert "think" not in _config.default_profile_for("gemma3:4b")
     assert _config.default_profile_for("qwen2.5:7b")["supports_vision"] is False
     assert _config.default_profile_for("qwen2.5:7b")["max_images"] == 1
 

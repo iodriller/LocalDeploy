@@ -34,6 +34,7 @@ _EDITABLE_FIELDS = {
     "temperature",
     "top_p",
     "repeat_penalty",
+    "think",
     "timeout_seconds",
     "slow_response_seconds",
     "quantization",
