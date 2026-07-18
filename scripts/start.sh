@@ -18,13 +18,17 @@ echo "[start] installing dependencies ..."
 pip install --quiet --upgrade pip
 pip install --quiet -r requirements.txt
 
-# Seed local config from examples if absent (the app also falls back internally).
+# Seed local environment defaults if absent. The live config starts empty and
+# is created when the first model profile is saved.
 [ -f .env ] || { [ -f .env.example ] && cp .env.example .env; } || true
 
 HOST="${API_HOST:-127.0.0.1}"
 PORT="${API_PORT:-8000}"
 BROWSE_HOST="$HOST"
-case "$BROWSE_HOST" in 0.0.0.0|::) BROWSE_HOST="127.0.0.1" ;; esac
+case "$BROWSE_HOST" in
+  0.0.0.0|::) BROWSE_HOST="127.0.0.1" ;;
+  ::1) BROWSE_HOST="[::1]" ;;
+esac
 UI_URL="http://${BROWSE_HOST}:${PORT}/ui"
 echo "[start] LocalDeploy UI:  $UI_URL"
 

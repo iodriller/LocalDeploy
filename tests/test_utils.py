@@ -5,12 +5,29 @@ import pytest
 
 from localdeploy.utils import (
     BackendCallError,
+    api_auth_headers,
+    api_client_base_url,
     env_bool,
     env_float,
     env_int,
     get_backend_base_url,
     is_loopback_url,
 )
+
+
+def test_api_client_base_url_normalizes_bind_all_and_ipv6(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("API_PORT", "8123")
+    monkeypatch.setenv("API_HOST", "0.0.0.0")
+    assert api_client_base_url() == "http://127.0.0.1:8123"
+    assert api_client_base_url("::", 9000) == "http://127.0.0.1:9000"
+    assert api_client_base_url("::1", 9000) == "http://[::1]:9000"
+
+
+def test_api_auth_headers_follow_optional_token(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("API_TOKEN", raising=False)
+    assert api_auth_headers() == {}
+    monkeypatch.setenv("API_TOKEN", " secret ")
+    assert api_auth_headers() == {"X-API-Token": "secret"}
 
 
 class TestIsLoopbackUrl:

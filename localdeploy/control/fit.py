@@ -14,7 +14,7 @@ import re
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from .hardware import detect_hardware
 
@@ -44,11 +44,11 @@ _COMFORTABLE_MARGIN_GB = 1.0  # VRAM headroom above which a fit is "comfortable"
 class FitRequest(BaseModel):
     profile: Optional[str] = None
     model_id: Optional[str] = None
-    params_b: Optional[float] = None
+    params_b: Optional[float] = Field(default=None, gt=0, le=10_000)
     quant: Optional[str] = None
-    context: Optional[int] = None
-    free_vram_mb: Optional[int] = None
-    size_bytes: Optional[int] = None
+    context: Optional[int] = Field(default=None, gt=0, le=10_000_000)
+    free_vram_mb: Optional[int] = Field(default=None, ge=0, le=100_000_000)
+    size_bytes: Optional[int] = Field(default=None, gt=0, le=1_000_000_000_000_000)
 
 
 def _parse_params_b(text: Optional[str]) -> Optional[float]:
@@ -181,6 +181,130 @@ def _resolve_from_profile(req: FitRequest) -> Dict[str, Any]:
         resolved["context"] = profile.get("safe_context_limit") or profile.get("context_limit")
     resolved["kv_quant"] = profile.get("kv_cache_type_k") or profile.get("kv_cache_type_v")
     return resolved
+
+
+# --- quantization advisor ----------------------------------------------------
+# One row per common GGUF quant, ordered worst -> best quality. `tag` is the
+# conventional Ollama tag suffix; actual availability varies per family, so the
+# UI links to the family's tags page rather than promising a pullable name.
+_QUANT_LADDER = [
+    {"quant": "Q2_K", "quality": "heavy quality loss — last resort"},
+    {"quant": "Q3_K_M", "quality": "noticeable quality loss"},
+    {"quant": "Q4_K_M", "quality": "good — the usual default pull"},
+    {"quant": "Q5_K_M", "quality": "very good — small step up from Q4"},
+    {"quant": "Q6_K", "quality": "excellent — near Q8 at less memory"},
+    {"quant": "Q8_0", "quality": "near-lossless"},
+    {"quant": "F16", "quality": "reference quality, biggest footprint"},
+]
+
+
+class QuantAdviceRequest(BaseModel):
+    model_id: Optional[str] = None
+    params_b: Optional[float] = Field(default=None, gt=0, le=10_000)
+    context: Optional[int] = Field(default=None, gt=0, le=10_000_000)
+    free_vram_mb: Optional[int] = Field(default=None, ge=0, le=100_000_000)
+
+
+@router.post("/system/quant-advisor")
+def quant_advisor(req: QuantAdviceRequest) -> Dict[str, Any]:
+    """Estimate every common quant of one model family against the budget.
+
+    Reuses the fit-check formula per quant so the numbers agree with the rest
+    of the app, then says which quant is the best quality that still fits.
+    """
+    params_b = req.params_b or _parse_params_b(req.model_id)
+    if not params_b:
+        return {
+            "success": False,
+            "message": (
+                "Could not determine parameter count. Use a model name that "
+                "encodes size (e.g. 'gemma3:12b') or pass 'params_b'."
+            ),
+        }
+    context = req.context or 4096
+
+    hw = detect_hardware()
+    free_vram_mb = req.free_vram_mb
+    if free_vram_mb is None and hw["gpu_available"] and hw["gpus"]:
+        free_vram_mb = hw["gpus"][0].get("vram_free_mb")
+    free_vram_gb = (free_vram_mb / 1024.0) if free_vram_mb is not None else None
+    ram_available_mb = (hw.get("system") or {}).get("ram_available_mb")
+    ram_available_gb = (ram_available_mb / 1024.0) if ram_available_mb is not None else None
+
+    variants = []
+    for entry in _QUANT_LADDER:
+        weights_gb = params_b * _weight_gb_per_b(entry["quant"])
+        kv_cache_gb = _KV_MB_PER_TOKEN_PER_B * params_b * context / 1024.0
+        required_gb = weights_gb + kv_cache_gb + _OVERHEAD_GB
+        cls = _classify(required_gb, free_vram_gb, ram_available_gb)
+        variants.append(
+            {
+                "quant": entry["quant"],
+                "quality": entry["quality"],
+                "weights_gb": _round(weights_gb),
+                "required_gb": _round(required_gb),
+                "margin_gb": _round(free_vram_gb - required_gb) if free_vram_gb is not None else None,
+                "verdict": cls["verdict"],
+                "tier": cls["tier"],
+                "severity": cls["severity"],
+                "cpu_deployable": cls["cpu_deployable"],
+            }
+        )
+
+    # Best = highest-quality quant that fits the GPU; note whether that beats
+    # the usual Q4 default. Purely derived from the ladder — no special cases.
+    gpu_fits = [v for v in variants if v["verdict"] == "FITS"]
+    comfortable = [v for v in gpu_fits if v["severity"] == "ok"]
+    best = (comfortable or gpu_fits)[-1] if gpu_fits else None
+    default_idx = next(i for i, v in enumerate(variants) if v["quant"] == "Q4_K_M")
+    if best is None:
+        if any(v["cpu_deployable"] for v in variants):
+            recommendation = (
+                "Nothing fits the GPU budget at this size — the smaller quants can "
+                "still run on CPU (slower), or pick a smaller model size."
+            )
+        else:
+            recommendation = "This model size is too large for this machine at any quantization."
+    else:
+        best_idx = next(i for i, v in enumerate(variants) if v["quant"] == best["quant"])
+        if best_idx > default_idx:
+            recommendation = (
+                f"You have headroom for {best['quant']} (~{best['required_gb']} GB) — "
+                f"a quality step up from the usual {variants[default_idx]['quant']} default pull."
+            )
+        elif best_idx == default_idx:
+            recommendation = f"The usual {best['quant']} default is also the best fit for your budget."
+        else:
+            recommendation = (
+                f"The usual Q4_K_M default is too big here — {best['quant']} "
+                f"(~{best['required_gb']} GB) is the best quality that fits."
+            )
+
+    family = _base_family(req.model_id)
+    return {
+        "success": True,
+        "model": {"family": family, "params_b": params_b, "context": context},
+        "free_vram_gb": _round(free_vram_gb) if free_vram_gb is not None else None,
+        "ram_available_gb": _round(ram_available_gb) if ram_available_gb is not None else None,
+        "variants": variants,
+        "recommendation": recommendation,
+        "tags_url": f"https://ollama.com/library/{family}/tags" if family else None,
+        "note": (
+            "Estimates use the same weights+KV+overhead formula as fit checks. "
+            "Exact tag names and availability vary per family — check the tags page. "
+            "Some families also ship QAT tags that keep higher-quant quality at Q4 size."
+        ),
+    }
+
+
+def _base_family(model_id: Optional[str]) -> Optional[str]:
+    """'gemma3:12b' -> 'gemma3'; 'hf.co/org/Repo' -> None (not an Ollama library name)."""
+    if not model_id:
+        return None
+    base = model_id.split(":")[0].strip().lower()
+    if not base or "/" in base:
+        return None
+    return base
 
 
 @router.post("/system/fit-check")

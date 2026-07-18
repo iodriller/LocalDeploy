@@ -13,19 +13,20 @@ import requests
 from dotenv import load_dotenv
 
 
+from localdeploy.utils import api_auth_headers, api_client_base_url, app_home
+
 APP_DIR = Path(__file__).resolve().parent
-load_dotenv(APP_DIR / ".env")
+APP_HOME = app_home()
+load_dotenv(APP_HOME / ".env")
 
 
 def default_base_url() -> str:
-    host = os.getenv("API_HOST", "127.0.0.1")
-    port = os.getenv("API_PORT", "8000")
-    return f"http://{host}:{port}"
+    return api_client_base_url()
 
 
 def server_health(base_url: str) -> Optional[Dict[str, Any]]:
     try:
-        response = requests.get(f"{base_url.rstrip('/')}/health", timeout=5)
+        response = requests.get(f"{base_url.rstrip('/')}/health", headers=api_auth_headers(), timeout=5)
         if response.ok:
             return dict(response.json())
     except requests.RequestException:
@@ -41,7 +42,7 @@ def start_server(base_url: str) -> Optional[subprocess.Popen[Any]]:
     if not python_exe.exists():
         python_exe = Path(sys.executable)
 
-    logs_dir = APP_DIR / "logs"
+    logs_dir = APP_HOME / "logs"
     logs_dir.mkdir(exist_ok=True)
     stdout = (logs_dir / "chat_cli_api_server.out.log").open("a", encoding="utf-8")
     stderr = (logs_dir / "chat_cli_api_server.err.log").open("a", encoding="utf-8")
@@ -62,7 +63,7 @@ def start_server(base_url: str) -> Optional[subprocess.Popen[Any]]:
 
 def print_profiles(base_url: str) -> int:
     try:
-        response = requests.get(f"{base_url.rstrip('/')}/profiles", timeout=10)
+        response = requests.get(f"{base_url.rstrip('/')}/profiles", headers=api_auth_headers(), timeout=10)
         response.raise_for_status()
         data = response.json()
     except requests.RequestException as exc:
@@ -103,6 +104,7 @@ def send_chat(
         response = requests.post(
             f"{base_url.rstrip('/')}/chat",
             json=payload,
+            headers=api_auth_headers(),
             timeout=timeout,
         )
     except requests.Timeout:

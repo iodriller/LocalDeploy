@@ -1,0 +1,68 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "localdeploy"
+dynamic = ["version"]
+description = "Pick, deploy & benchmark the best local AI model for your machine — a fit-checking web UI and OpenAI-compatible API on top of Ollama."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.10"
+authors = [{ name = "iodriller and LocalDeploy contributors" }]
+keywords = ["ollama", "llm", "local-ai", "benchmark", "vram", "self-hosted"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Environment :: Web Environment",
+  "Intended Audience :: Developers",
+  "Intended Audience :: End Users/Desktop",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+  "fastapi>=0.110",
+  "uvicorn>=0.30",
+  "requests>=2.31",
+  "python-dotenv>=1.0",
+  "pydantic>=2.6",
+  "python-multipart>=0.0.31",
+  "huggingface_hub>=0.23",
+  "psutil>=5.9",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=7.0",
+  "httpx>=0.27",
+  "playwright>=1.40",
+  "pillow>=10.0",
+]
+
+[project.scripts]
+localdeploy = "localdeploy.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/iodriller/LocalDeploy"
+Documentation = "https://github.com/iodriller/LocalDeploy#readme"
+Changelog = "https://github.com/iodriller/LocalDeploy/blob/main/CHANGELOG.md"
+Issues = "https://github.com/iodriller/LocalDeploy/issues"
+
+[tool.setuptools]
+# The four root modules ship alongside the package: api_server is the ASGI app
+# the console script serves; the others are companion CLIs that expect it.
+py-modules = ["api_server", "benchmark", "chat_cli", "compare_models"]
+
+[tool.setuptools.dynamic]
+version = { attr = "localdeploy.__version__" }
+
+[tool.setuptools.packages.find]
+include = ["localdeploy*"]
+
+[tool.setuptools.package-data]
+localdeploy = ["web/*"]

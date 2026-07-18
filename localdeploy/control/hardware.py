@@ -11,8 +11,6 @@ import os
 import platform
 import shutil
 import subprocess
-import sys
-import importlib
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter
@@ -56,10 +54,10 @@ def _cpu_and_memory() -> Dict[str, Any]:
         "ram_total_mb": None,
         "ram_available_mb": None,
         "psutil_available": False,
-        "ram_probe_message": "Install psutil for RAM details.",
+        "ram_probe_message": "RAM details are unavailable because the system probe failed.",
     }
     try:
-        import psutil  # optional dependency
+        import psutil
 
         info["psutil_available"] = True
         info["ram_probe_message"] = None
@@ -70,7 +68,7 @@ def _cpu_and_memory() -> Dict[str, Any]:
         info["ram_total_mb"] = int(vm.total / (1024 * 1024))
         info["ram_available_mb"] = int(vm.available / (1024 * 1024))
     except Exception:
-        # psutil absent or probe failed — keep stdlib-derived values, RAM stays None.
+        # A damaged environment or failed OS probe still returns partial hardware data.
         pass
     return info
 
@@ -185,52 +183,3 @@ def detect_hardware() -> Dict[str, Any]:
 @router.get("/system/hardware")
 def system_hardware() -> Dict[str, Any]:
     return detect_hardware()
-
-
-@router.post("/system/install-psutil")
-def system_install_psutil() -> Dict[str, Any]:
-    """Install the optional RAM-probe dependency into the current Python env.
-
-    This is intentionally hard-coded to ``psutil``; the UI never passes an
-    arbitrary package name through to pip.
-    """
-    try:
-        import psutil  # noqa: F401
-
-        return {
-            "success": True,
-            "already_installed": True,
-            "message": "psutil is already installed.",
-            "hardware": detect_hardware(),
-        }
-    except Exception:
-        pass
-
-    cmd = [sys.executable, "-m", "pip", "install", "psutil"]
-    try:
-        completed = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
-    except (OSError, subprocess.SubprocessError) as exc:
-        return {"success": False, "error": f"Could not run pip: {exc}"}
-
-    if completed.returncode != 0:
-        stderr = (completed.stderr or completed.stdout or "").strip()
-        return {
-            "success": False,
-            "error": stderr[-1000:] or "pip install psutil failed.",
-        }
-
-    importlib.invalidate_caches()
-    try:
-        import psutil  # noqa: F401
-    except Exception as exc:
-        return {
-            "success": False,
-            "error": f"psutil installed, but this server process could not import it yet: {exc}",
-        }
-
-    return {
-        "success": True,
-        "already_installed": False,
-        "message": "Installed psutil. RAM details are available now.",
-        "hardware": detect_hardware(),
-    }

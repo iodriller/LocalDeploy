@@ -49,3 +49,7 @@ router.include_router(starter.router)
 from . import profiles  # noqa: E402
 
 router.include_router(profiles.router)
+
+from . import history  # noqa: E402
+
+router.include_router(history.router)

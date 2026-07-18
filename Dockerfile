@@ -22,6 +22,7 @@ COPY . .
 RUN chmod +x scripts/docker-entrypoint.sh
 
 ENV OLLAMA_BASE_URL=http://127.0.0.1:11434 \
+    LOCALDEPLOY_HOME=/data/localdeploy \
     API_HOST=0.0.0.0 \
     API_PORT=8000 \
     ENABLE_WEB_UI=true

@@ -15,7 +15,7 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import APIRouter
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from .fit import _KV_MB_PER_TOKEN_PER_B, _OVERHEAD_GB, _kv_quant_factor, _weight_gb_per_b
 from .hardware import detect_hardware
@@ -164,9 +164,9 @@ def _pick(catalog: List[Dict[str, Any]], budget_gb: float, limit: int) -> List[D
 
 
 class StarterPackRequest(BaseModel):
-    free_vram_mb: Optional[int] = None
-    margin_gb: float = 2.0
-    limit: int = 5
+    free_vram_mb: Optional[int] = Field(default=None, ge=0, le=100_000_000)
+    margin_gb: float = Field(default=2.0, ge=0, le=1_024)
+    limit: int = Field(default=5, ge=1, le=20)
 
 
 @router.post("/registry/starter-pack")
@@ -182,9 +182,8 @@ def starter_pack(req: StarterPackRequest) -> Dict[str, Any]:
             "candidates": [],
             "hardware": {"gpu_available": hw["gpu_available"], "gpus": hw["gpus"]},
             "message": (
-                "Could not determine VRAM or system RAM. Install psutil "
-                "(POST /system/install-psutil) for a RAM-based estimate, or "
-                "pass 'free_vram_mb' explicitly."
+                "Could not determine VRAM or system RAM. Pass "
+                "'free_vram_mb' explicitly to request a manual estimate."
             ),
         }
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from typing import Any, Dict
 from urllib.parse import urlparse
 
@@ -9,6 +10,31 @@ from pydantic import BaseModel
 
 class BackendCallError(Exception):
     pass
+
+
+# Repo root when running from a source checkout (this file is localdeploy/utils.py).
+_SOURCE_ROOT = Path(__file__).resolve().parent.parent
+
+
+def app_home() -> Path:
+    """Directory for runtime state: .env, config.json, logs/, reports/.
+
+    Precedence: LOCALDEPLOY_HOME env var; a source checkout's repo root
+    (unchanged historical behavior for `git clone` users); otherwise
+    ~/.localdeploy for pip/pipx installs, where site-packages isn't a sane
+    or writable place to keep state.
+    """
+    configured = os.getenv("LOCALDEPLOY_HOME")
+    if configured and configured.strip():
+        return Path(configured).expanduser()
+    if (_SOURCE_ROOT / "config.example.json").is_file():
+        return _SOURCE_ROOT
+    return Path.home() / ".localdeploy"
+
+
+def web_dir() -> Path:
+    """The static web UI, shipped as package data (localdeploy/web)."""
+    return Path(__file__).resolve().parent / "web"
 
 
 def env_bool(name: str, default: bool = False) -> bool:
@@ -57,6 +83,28 @@ def api_token() -> str:
     """Optional shared secret. When set (API_TOKEN), the HTTP API requires it;
     when empty (default), there is no auth and zero overhead. Opt-in security."""
     return (os.getenv("API_TOKEN") or "").strip()
+
+
+def api_auth_headers() -> Dict[str, str]:
+    """Headers for bundled clients calling LocalDeploy's own HTTP API."""
+    token = api_token()
+    return {"X-API-Token": token} if token else {}
+
+
+def api_client_base_url(host: str | None = None, port: str | int | None = None) -> str:
+    """Build a usable client URL from API bind settings.
+
+    Wildcard bind addresses are not portable connection targets, and IPv6
+    literals need brackets when embedded in a URL.
+    """
+    resolved_host = (host if host is not None else os.getenv("API_HOST", "127.0.0.1")).strip()
+    if resolved_host in {"", "0.0.0.0", "::"}:
+        resolved_host = "127.0.0.1"
+    url_host = resolved_host
+    if ":" in url_host and not (url_host.startswith("[") and url_host.endswith("]")):
+        url_host = f"[{url_host}]"
+    resolved_port = port if port is not None else os.getenv("API_PORT", "8000")
+    return f"http://{url_host}:{resolved_port}"
 
 
 def model_dump_compat(model: BaseModel) -> Dict[str, Any]:

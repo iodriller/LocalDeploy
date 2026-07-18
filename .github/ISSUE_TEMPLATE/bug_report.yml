@@ -13,8 +13,8 @@ body:
   - type: input
     id: os
     attributes:
-      label: Windows version
-      placeholder: Windows 10
+      label: OS and version
+      placeholder: Windows 11, macOS 15, or Ubuntu 24.04
   - type: input
     id: backend
     attributes:
