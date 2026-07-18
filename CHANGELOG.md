@@ -2,6 +2,32 @@
 
 All notable changes to this project should be documented here.
 
+## 0.5.1 - 2026-07-17
+
+UX overhaul across the whole UI.
+
+- **Model catalog is now searchable.** The local provider inventory gets a search box,
+  runtime and size filters, a sort control (measured tok/s, name, parameters, runtime),
+  and pagination — instead of one giant unfiltered table. Provider chips show
+  reachability with per-runtime "how to enable" hints, and a Discover section links
+  Hugging Face GGUF search and the Ollama library.
+- **Disk vs VRAM are visually distinct everywhere.** Model rows show `💾 X GB disk`
+  (drive space) separately from `⚡ needs ~Y GB VRAM` (memory to run), with a legend on
+  the Your models card; the serving card labels "⚡ VRAM in use" vs "💾 Size on disk".
+- **Your models polish**: fit checks still run automatically on load (the button is now a
+  small ↻ re-check), icon buttons (▶ Deploy, ⚙ Tune, 🗑 Delete), and the delete dialog
+  states exactly how many GB it frees.
+- **Use via API**: every served model card shows the full OpenAI-compatible endpoint URL
+  with one-click ⧉ copy buttons for the URL and a ready-to-run curl (model pre-filled).
+- **Chat redesigned** as a proper chat shell: header with model picker + system-prompt
+  panel, welcome screen with clickable suggestion prompts, role avatars, fenced code
+  blocks rendered with language tag and copy button, auto-growing composer, and
+  🕒 / ⚡ metadata under each reply.
+- **One-paste Windows install**: `irm …/scripts/install.ps1 | iex` downloads the repo
+  (git or ZIP — nothing preinstalled) and hands off to the guided start script.
+- Screenshot/GIF capture scripts now pick a chat model that is actually installed, so
+  they don't record a timeout when a hardcoded model was deleted.
+
 ## 0.5.0 - 2026-07-17
 
 - Detect NVIDIA, AMD, Intel, and Apple GPUs and estimate compatible multi-GPU placement without combining mixed runtime pools.

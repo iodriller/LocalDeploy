@@ -652,36 +652,90 @@ table.results td.num, table.results th.num { text-align: right; font-variant-num
 }
 
 /* --- Chat playground -------------------------------------------------- */
-.chat-card .card-head .field { max-width: 26rem; }
+.chat-shell {
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - 120px);
+  min-height: 480px;
+  max-width: 980px;
+  margin: 0 auto;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--panel);
+  overflow: hidden;
+}
+.chat-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  padding: 0.7rem 1rem;
+  border-bottom: 1px solid var(--border);
+  background: linear-gradient(180deg, rgba(79, 134, 247, 0.10), transparent);
+}
+.chat-topbar h2 { margin: 0; font-size: 1.05rem; }
+.chat-topbar-left { display: flex; align-items: center; gap: 0.6rem; min-width: 0; }
+.chat-topbar-left #chat-hint { display: block; max-width: 40ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-logo { font-size: 1.4rem; }
+.chat-topbar-right { display: flex; align-items: flex-end; gap: 0.5rem; flex-wrap: wrap; }
+.chat-model-field { min-width: 15rem; max-width: 24rem; }
+.chat-system-panel { padding: 0.6rem 1rem; border-bottom: 1px solid var(--border); background: var(--panel-2); }
+.chat-system-panel textarea { width: 100%; }
 .chat-messages {
-  min-height: 320px;
-  max-height: 56vh;
+  flex: 1;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 0.6rem;
-  padding: 0.85rem;
-  border: 1px solid var(--border);
-  border-radius: 10px;
+  gap: 0.75rem;
+  padding: 1rem;
   background: var(--panel-2);
-  margin: 0.6rem 0;
 }
-.chat-row { display: flex; }
-.chat-row.user { justify-content: flex-end; }
+.chat-welcome { margin: auto; text-align: center; max-width: 46rem; padding: 1rem; }
+.chat-welcome-logo { font-size: 2.2rem; margin-bottom: 0.4rem; }
+.chat-welcome h3 { margin: 0 0 0.3rem; }
+.chat-suggestion-chips { display: flex; gap: 0.5rem; flex-wrap: wrap; justify-content: center; margin-top: 0.8rem; }
+.chat-suggestion {
+  border: 1px solid rgba(79, 134, 247, 0.4);
+  background: rgba(79, 134, 247, 0.08);
+  color: var(--fg);
+  border-radius: 999px;
+  padding: 0.45rem 0.9rem;
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.chat-suggestion:hover { background: rgba(79, 134, 247, 0.2); }
+.chat-row { display: flex; gap: 0.55rem; align-items: flex-end; }
+.chat-row.user { flex-direction: row-reverse; }
+.chat-avatar {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  flex: none;
+  display: grid;
+  place-items: center;
+  font-size: 0.95rem;
+  border: 1px solid var(--border);
+  background: var(--panel);
+}
+.chat-row.assistant .chat-avatar { background: linear-gradient(135deg, rgba(79,134,247,.25), rgba(34,211,238,.25)); }
 .chat-bubble {
-  max-width: min(72ch, 86%);
-  padding: 0.55rem 0.8rem;
-  border-radius: 12px;
+  max-width: min(72ch, 82%);
+  padding: 0.6rem 0.85rem;
+  border-radius: 14px;
   border: 1px solid var(--border);
   background: var(--panel);
 }
 .chat-row.user .chat-bubble {
-  background: rgba(79, 134, 247, 0.16);
-  border-color: rgba(79, 134, 247, 0.35);
+  background: linear-gradient(135deg, rgba(79, 134, 247, 0.22), rgba(79, 134, 247, 0.12));
+  border-color: rgba(79, 134, 247, 0.4);
+  border-bottom-right-radius: 4px;
 }
+.chat-row.assistant .chat-bubble { border-bottom-left-radius: 4px; }
 .chat-bubble.error { border-color: rgba(230, 100, 100, 0.6); }
-.chat-bubble-text { white-space: pre-wrap; overflow-wrap: anywhere; }
-.chat-bubble-meta { margin-top: 0.25rem; }
+.chat-bubble-text { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.45; }
+.chat-bubble-meta { margin-top: 0.3rem; }
 .chat-bubble-meta:empty { display: none; }
 .chat-bubble.typing .chat-bubble-text::after {
   content: "▍";
@@ -689,6 +743,35 @@ table.results td.num, table.results th.num { text-align: right; font-variant-num
   color: var(--accent);
 }
 @keyframes chat-blink { 50% { opacity: 0; } }
+.chat-code {
+  position: relative;
+  margin: 0.5rem 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  overflow: hidden;
+}
+.chat-code pre { margin: 0; padding: 0.65rem 0.75rem; overflow-x: auto; }
+.chat-code code { font-size: 0.82rem; }
+.chat-code-lang {
+  position: absolute;
+  top: 4px;
+  left: 8px;
+  font-size: 0.68rem;
+  color: var(--muted);
+  text-transform: lowercase;
+}
+.chat-code-copy {
+  position: absolute;
+  top: 4px;
+  right: 6px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 0.85rem;
+}
+.chat-code-copy:hover { color: var(--fg); }
 .chat-bubble-images { display: flex; gap: 0.4rem; flex-wrap: wrap; margin-bottom: 0.35rem; }
 .chat-bubble-images img {
   max-width: 160px;
@@ -696,13 +779,19 @@ table.results td.num, table.results th.num { text-align: right; font-variant-num
   border-radius: 8px;
   border: 1px solid var(--border);
 }
+.chat-composer { border-top: 1px solid var(--border); padding: 0.65rem 1rem 0.55rem; background: var(--panel); }
 .chat-input-row { display: flex; gap: 0.5rem; align-items: flex-end; }
-.chat-input-row textarea { flex: 1; resize: vertical; min-height: 2.6rem; }
-.chat-attach { align-self: flex-end; }
+.chat-input-row textarea {
+  flex: 1;
+  resize: none;
+  min-height: 2.5rem;
+  max-height: 180px;
+  border-radius: 12px;
+}
+.chat-send { border-radius: 12px; white-space: nowrap; }
+.chat-attach { align-self: flex-end; border-radius: 12px; }
 .chat-attach.disabled { opacity: 0.45; pointer-events: none; }
-.chat-system-details { margin-bottom: 0.5rem; }
-.chat-system-details summary { cursor: pointer; color: var(--muted); font-size: 0.85rem; }
-.chat-system-details textarea { width: 100%; margin-top: 0.4rem; }
+.chat-footnote { margin-top: 0.4rem; text-align: center; }
 .chat-attachments { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 0.5rem; }
 .chat-attach-chip {
   position: relative;
@@ -726,6 +815,41 @@ table.results td.num, table.results th.num { text-align: right; font-variant-num
   line-height: 1;
   cursor: pointer;
 }
+
+/* --- Catalog toolbar + pagination -------------------------------------- */
+.catalog-toolbar { margin: 0.6rem 0; }
+.catalog-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.9rem;
+  margin-top: 0.6rem;
+}
+.provider-statuses { display: flex; gap: 0.4rem; flex-wrap: wrap; margin-bottom: 0.35rem; }
+
+/* --- Serving card: API snippet ----------------------------------------- */
+.api-snippet {
+  margin-top: 0.6rem;
+  padding: 0.55rem 0.7rem;
+  border: 1px dashed rgba(79, 134, 247, 0.45);
+  border-radius: 8px;
+  background: rgba(79, 134, 247, 0.06);
+}
+.api-snippet-row { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; margin-top: 0.3rem; }
+.api-url {
+  flex: 1;
+  min-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.82rem;
+  padding: 0.3rem 0.5rem;
+  border-radius: 6px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+}
+.disk-chip { white-space: nowrap; }
+.fit-legend .badge { font-size: 0.7rem; }
 
 /* --- Your models: bulk delete bar ------------------------------------- */
 .bulk-bar {

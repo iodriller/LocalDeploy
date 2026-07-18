@@ -32,7 +32,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from capture_screenshots import _seed_runs  # noqa: E402  (shared seed data)
+from capture_screenshots import _best_chat_profile, _seed_runs  # noqa: E402  (shared helpers)
 
 OUT_PATH = ROOT / "docs" / "assets" / "demo.gif"
 VIEWPORT = {"width": 1280, "height": 800}
@@ -201,11 +201,11 @@ def main() -> int:
             if _glide(page, '.tab[data-tab="chat"]'):
                 page.locator('.tab[data-tab="chat"]').click()
                 page.wait_for_timeout(900)
-                try:
-                    # Prefer a small, fast profile when the machine has one.
-                    page.select_option("#chat-profile", "llama32_3b_ollama")
-                except Exception:
-                    pass
+                chat_profile = _best_chat_profile(base)
+                if chat_profile:
+                    page.select_option("#chat-profile", chat_profile)
+                if not chat_profile:
+                    raise RuntimeError  # handled below: skip the chat scene cleanly
                 page.locator("#chat-input").click()
                 page.keyboard.type("In one short sentence: why run AI models locally?", delay=16)
                 page.wait_for_timeout(300)

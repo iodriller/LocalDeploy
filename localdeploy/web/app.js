@@ -47,6 +47,8 @@ const state = {
   installedList: [],
   // Opt-in server-side benchmark history (reports/benchmark-history).
   benchHistoryServer: false,
+  // Provider catalog (fetched once, filtered/sorted/paged client-side).
+  catalog: { rows: [], providers: [], loaded: false, page: 0 },
 };
 
 const BENCHMARK_RUNS_KEY = "localdeploy.benchmarkRuns.v1";
@@ -1133,10 +1135,11 @@ async function refreshStatus() {
             </div>
             ${vramBarHtml(vramMb, total, usedLabel)}
             <div class="model-meta-grid">
-              <span>VRAM</span><b>${esc(usedLabel)}</b>
-              <span>Model size</span><b>${fmtMb(diskMb)}</b>
+              <span>⚡ VRAM in use</span><b>${esc(usedLabel)}</b>
+              <span>💾 Size on disk</span><b>${fmtMb(diskMb)}</b>
               <span>GPU residency</span><b>${m.gpu_percent != null ? `${esc(m.gpu_percent)}%` : "?"}</b>
             </div>
+            ${apiSnippetHtml(m.name)}
             <div class="muted small">${esc(m.activity_note || "Ollama keeps this model warm until the keep-alive expires.")}</div>
           </div>`;
         })
@@ -1148,12 +1151,54 @@ async function refreshStatus() {
     $$(".kill-model-btn", body).forEach((b) =>
       b.addEventListener("click", () => killRunningModel(b.closest(".running-card").dataset.model, b))
     );
+    wireCopyButtons(body);
   } catch (err) {
     toast(`Status failed: ${err.message}`, "error");
   } finally {
     busy(btn, false);
     updateProgressRail();
   }
+}
+
+// The full local API address for a served model, with one-click copy: the
+// endpoint URL for OpenAI-compatible clients, and a ready-to-run curl.
+function apiEndpointBase() {
+  return `${window.location.origin}/v1/chat/completions`;
+}
+
+function curlSnippetFor(model) {
+  return [
+    `curl ${apiEndpointBase()} \\`,
+    `  -H "Content-Type: application/json" \\`,
+    `  -d '{"model": "${model}", "messages": [{"role": "user", "content": "Hello!"}]}'`,
+  ].join("\n");
+}
+
+function apiSnippetHtml(model) {
+  const url = apiEndpointBase();
+  return `<div class="api-snippet">
+    <span class="eyebrow">🔌 Use via API</span>
+    <div class="api-snippet-row">
+      <code class="api-url" title="OpenAI-compatible endpoint — point any client here with model: &quot;${esc(model)}&quot; and any API key">${esc(url)}</code>
+      <button class="btn compact copy-btn" data-copy="${esc(url)}" title="Copy endpoint URL">⧉ URL</button>
+      <button class="btn compact copy-btn" data-copy="${esc(curlSnippetFor(model))}" title="Copy a ready-to-run curl request for this model">⧉ curl</button>
+    </div>
+  </div>`;
+}
+
+function wireCopyButtons(root) {
+  $$(".copy-btn", root).forEach((b) =>
+    b.addEventListener("click", async () => {
+      try {
+        await navigator.clipboard.writeText(b.dataset.copy);
+        const was = b.textContent;
+        b.textContent = "✓ Copied";
+        setTimeout(() => (b.textContent = was), 1400);
+      } catch (err) {
+        toast(`Copy failed: ${err.message}`, "error");
+      }
+    })
+  );
 }
 
 async function killRunningModel(name, btn) {
@@ -1388,28 +1433,31 @@ function renderInstalledList() {
     `<div class="mlist">` +
     sortedInstalled()
       .map((m) => {
-        const size = m.size ? fmtMb(Math.round(m.size / 1e6)) : "";
+        const diskGb = m.size ? (m.size / 1e9).toFixed(1) : null;
         const d = m.details || {};
         const quant = d.quantization_level
           ? `<span class="badge" style="font-size:.72rem">${esc(d.quantization_level)}</span>`
           : "";
         const params = d.parameter_size ? `<span class="meta">${esc(d.parameter_size)}</span>` : "";
         const date = m.modified_at ? `<span class="meta">updated ${esc(m.modified_at.slice(0, 10))}</span>` : "";
-        const loaded = state.servedModels.includes(m.name) ? `<span class="badge on">loaded</span>` : "";
-        const loadedHint = loaded ? `<span class="meta">Unload from Served model card</span>` : "";
+        const disk = diskGb
+          ? `<span class="meta disk-chip" title="Space this model takes on your drive (not the memory it needs to run)">💾 ${esc(diskGb)} GB disk</span>`
+          : "";
+        const loaded = state.servedModels.includes(m.name) ? `<span class="badge on">● loaded</span>` : "";
+        const loadedHint = loaded ? `<span class="meta">Unload from Currently serving</span>` : "";
         const checked = state.installedSelection.has(m.name) ? " checked" : "";
         return `<div class="mrow model-row" data-model="${esc(m.name)}">
           <input type="checkbox" class="model-select" title="Select for bulk delete"${checked} />
           <div class="model-row-main">
             <span class="name">${esc(m.name)}</span>
-            <span class="model-row-meta">${params}${quant}${date}<span class="meta">${esc(size)}</span>${loaded}${loadedHint}</span>
-            <span class="fit"></span>
+            <span class="model-row-meta">${params}${quant}${disk}${date}${loaded}${loadedHint}</span>
+            <span class="fit"><span class="muted small">⚡ checking VRAM fit…</span></span>
           </div>
           <span class="spacer"></span>
-          <button class="btn primary start-installed-btn">Deploy</button>
-          <button class="btn fit-btn">Fit check</button>
-          <button class="btn edit-tuning-btn" title="Edit this model's run profile (context, KV cache, GPU layers…)">Edit tuning</button>
-          <button class="btn danger del-btn" title="Delete from disk">Delete</button>
+          <button class="btn primary start-installed-btn" title="Load this model into memory and start serving it">▶ Deploy</button>
+          <button class="btn edit-tuning-btn" title="Edit this model's run profile (context, KV cache, GPU layers…)">⚙ Tune</button>
+          <button class="btn compact fit-btn" title="Re-run the VRAM fit estimate (runs automatically when the list loads)">↻</button>
+          <button class="btn danger del-btn" title="Delete from disk${diskGb ? ` — frees ${esc(diskGb)} GB` : ""}">🗑 Delete</button>
         </div>`;
       })
       .join("") +
@@ -1477,8 +1525,10 @@ async function fitCheckRow(row, force = false) {
     if (res.verdict) {
       const req = res.estimate_gb?.required;
       const free = res.free_vram_gb;
-      const detail = req != null ? ` ~${req} GB${free != null ? ` / ${free} GB budget` : ""}` : "";
-      slot.innerHTML = `<div class="fit-summary">${fitBadge(res)}<span class="meta">${esc(detail)}</span></div>${fitMeterHtml(res)}`;
+      const detail = req != null
+        ? `⚡ needs ~${req} GB VRAM${free != null ? ` of ${free} GB budget` : ""}`
+        : "";
+      slot.innerHTML = `<div class="fit-summary">${fitBadge(res)}<span class="meta" title="Estimated memory to run this model (weights + KV cache + overhead) — different from its size on disk">${esc(detail)}</span></div>${fitMeterHtml(res)}`;
     } else {
       slot.innerHTML = `<span class="muted">${esc(res.message || "n/a")}</span>`;
     }
@@ -1926,6 +1976,8 @@ async function starterPack(source) {
 // ---------------------------------------------------------------------------
 // Tab 1 — Hugging Face model search
 // ---------------------------------------------------------------------------
+const CATALOG_PAGE_SIZE = 12;
+
 async function loadProviderCatalog(source) {
   const btn = source?.currentTarget || source || $("#btn-provider-refresh");
   const body = $("#provider-catalog-body");
@@ -1933,28 +1985,129 @@ async function loadProviderCatalog(source) {
   body.innerHTML = `<div class="muted"><span class="spin-inline"></span> Checking local providers…</div>`;
   try {
     const data = await getJSON("/registry/providers");
-    const statuses = (data.providers || [])
-      .map((provider) => `<span class="badge ${provider.reachable ? "on" : "off"}" title="${esc(provider.error || provider.base_url)}">${esc(provider.provider)}</span>`)
-      .join(" ");
-    const rows = [...(data.models || [])]
-      .sort((a, b) => (b.tokens_per_second || -1) - (a.tokens_per_second || -1) || a.model.localeCompare(b.model))
-      .map((model) => `<tr>
+    state.catalog.rows = data.models || [];
+    state.catalog.providers = data.providers || [];
+    state.catalog.loaded = true;
+    state.catalog.page = 0;
+    renderProviderStatuses();
+    populateCatalogProviderFilter();
+    renderProviderCatalog();
+  } catch (err) {
+    body.innerHTML = `<div class="muted">Provider inventory failed: ${esc(err.message)}</div>`;
+  } finally {
+    busy(btn, false);
+  }
+}
+
+// How to bring an unreachable runtime online, shown in the status chip tooltip.
+const PROVIDER_HINTS = {
+  ollama: "Install/start Ollama from ollama.com",
+  lmstudio: "In LM Studio: Developer -> Start local server (port 1234)",
+  vllm: "Set VLLM_BASE_URL in .env and start your vLLM server",
+  docker: "Enable Docker Model Runner (port 12434)",
+  llamacpp: "Start llama-server and set ENABLE_LLAMA_CPP=true",
+  openai: "Point a profile at your OpenAI-compatible server",
+};
+
+function renderProviderStatuses() {
+  const slot = $("#provider-statuses");
+  if (!slot) return;
+  slot.innerHTML = state.catalog.providers
+    .map((provider) => {
+      const n = (provider.models || []).length;
+      const hint = provider.reachable
+        ? `${provider.base_url} — ${n} model${n === 1 ? "" : "s"}`
+        : `${provider.error || "unreachable"}. ${PROVIDER_HINTS[provider.provider] || ""}`;
+      return `<span class="badge ${provider.reachable ? "on" : "off"}" title="${esc(hint)}">${provider.reachable ? "●" : "○"} ${esc(provider.provider)}${provider.reachable ? ` · ${n}` : ""}</span>`;
+    })
+    .join(" ");
+}
+
+function populateCatalogProviderFilter() {
+  const sel = $("#catalog-provider");
+  if (!sel) return;
+  const current = sel.value;
+  const names = [...new Set(state.catalog.rows.map((m) => m.provider))].sort();
+  sel.innerHTML = `<option value="">All</option>` + names.map((n) => `<option value="${esc(n)}"${n === current ? " selected" : ""}>${esc(n)}</option>`).join("");
+}
+
+function catalogParamsB(model) {
+  const explicit = parseFloat(String(model.parameters || ""));
+  if (Number.isFinite(explicit) && explicit > 0) return explicit;
+  const match = String(model.model || "").toLowerCase().match(/(\d+(?:\.\d+)?)\s*b\b/);
+  return match ? parseFloat(match[1]) : null;
+}
+
+function catalogSizeBucket(paramsB) {
+  if (paramsB == null) return null;
+  if (paramsB < 4) return "tiny";
+  if (paramsB < 8) return "small";
+  if (paramsB < 15) return "mid";
+  return "large";
+}
+
+function filteredCatalogRows() {
+  const q = ($("#catalog-search")?.value || "").trim().toLowerCase();
+  const provider = $("#catalog-provider")?.value || "";
+  const size = $("#catalog-size")?.value || "";
+  const sort = $("#catalog-sort")?.value || "tps";
+  const rows = state.catalog.rows.filter((m) => {
+    if (provider && m.provider !== provider) return false;
+    if (size && catalogSizeBucket(catalogParamsB(m)) !== size) return false;
+    if (q) {
+      const hay = `${m.model} ${m.publisher || ""} ${m.provider} ${m.quant || ""}`.toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
+    return true;
+  });
+  const by = {
+    tps: (a, b) => (b.tokens_per_second ?? -1) - (a.tokens_per_second ?? -1) || a.model.localeCompare(b.model),
+    name: (a, b) => a.model.localeCompare(b.model),
+    params: (a, b) => (catalogParamsB(b) ?? -1) - (catalogParamsB(a) ?? -1) || a.model.localeCompare(b.model),
+    provider: (a, b) => a.provider.localeCompare(b.provider) || a.model.localeCompare(b.model),
+  };
+  return rows.sort(by[sort] || by.tps);
+}
+
+function renderProviderCatalog() {
+  const body = $("#provider-catalog-body");
+  const pager = $("#catalog-pagination");
+  if (!body || !state.catalog.loaded) return;
+  const rows = filteredCatalogRows();
+  if (!rows.length) {
+    body.innerHTML = `<div class="empty-state">No models match${state.catalog.rows.length ? " these filters" : " — no reachable runtime reported any models yet"}.</div>`;
+    pager?.classList.add("hidden");
+    return;
+  }
+  const pages = Math.max(1, Math.ceil(rows.length / CATALOG_PAGE_SIZE));
+  state.catalog.page = Math.min(state.catalog.page, pages - 1);
+  const startIdx = state.catalog.page * CATALOG_PAGE_SIZE;
+  const pageRows = rows.slice(startIdx, startIdx + CATALOG_PAGE_SIZE);
+  body.innerHTML = `<div class="table-wrap provider-table-wrap"><table class="results provider-table">
+      <thead><tr><th>Model</th><th>Runtime</th><th>Publisher</th><th class="num">Params</th><th>Quant</th><th class="num" title="Measured from your saved benchmark runs">tok/s ⚡</th><th class="num">Context</th><th></th></tr></thead>
+      <tbody>${pageRows
+        .map(
+          (model) => `<tr>
         <td><b>${esc(model.model)}</b></td>
-        <td>${esc(model.provider)}</td>
+        <td><span class="badge">${esc(model.provider)}</span></td>
         <td>${esc(model.publisher || "—")}</td>
-        <td class="num">${esc(model.parameters || "—")}</td>
+        <td class="num">${esc(model.parameters || (catalogParamsB(model) != null ? catalogParamsB(model) + "B" : "—"))}</td>
         <td>${esc(model.quant || "—")}</td>
-        <td class="num" title="${model.benchmark_samples ? `${esc(model.benchmark_samples)} saved samples` : "No saved benchmark samples"}">${model.tokens_per_second != null ? esc(model.tokens_per_second) : "—"}</td>
+        <td class="num" title="${model.benchmark_samples ? `${esc(model.benchmark_samples)} saved samples` : "Not benchmarked yet — run it in Benchmark & Compare"}">${model.tokens_per_second != null ? esc(model.tokens_per_second) : "—"}</td>
         <td class="num">${model.context != null ? esc(model.context) : "—"}</td>
-        <td><button class="btn compact provider-profile-btn" data-model="${esc(model.model)}" data-provider="${esc(model.provider)}" data-base-url="${esc(model.base_url)}">Add profile</button></td>
-      </tr>`)
-      .join("");
-    body.innerHTML = `<div class="provider-statuses">${statuses || '<span class="muted">No providers configured.</span>'}</div>
-      <div class="table-wrap provider-table-wrap"><table class="results provider-table">
-        <thead><tr><th>Model</th><th>Runtime</th><th>Publisher</th><th class="num">Params</th><th>Quant</th><th class="num">tok/s</th><th class="num">Context</th><th></th></tr></thead>
-        <tbody>${rows || '<tr><td colspan="8" class="muted">No local provider models found.</td></tr>'}</tbody>
-      </table></div>`;
-    $$(".provider-profile-btn", body).forEach((profileBtn) => profileBtn.addEventListener("click", async () => {
+        <td><button class="btn compact provider-profile-btn" data-model="${esc(model.model)}" data-provider="${esc(model.provider)}" data-base-url="${esc(model.base_url)}" title="Create a run profile for this model">＋ Add profile</button></td>
+      </tr>`
+        )
+        .join("")}</tbody>
+    </table></div>`;
+  if (pager) {
+    pager.classList.toggle("hidden", pages <= 1);
+    $("#catalog-page-label").textContent = `${startIdx + 1}–${Math.min(startIdx + CATALOG_PAGE_SIZE, rows.length)} of ${rows.length} models`;
+    $("#catalog-prev").disabled = state.catalog.page === 0;
+    $("#catalog-next").disabled = state.catalog.page >= pages - 1;
+  }
+  $$(".provider-profile-btn", body).forEach((profileBtn) =>
+    profileBtn.addEventListener("click", async () => {
       busy(profileBtn, true);
       try {
         const result = await postJSON("/profiles/upsert", {
@@ -1970,12 +2123,8 @@ async function loadProviderCatalog(source) {
       } finally {
         busy(profileBtn, false);
       }
-    }));
-  } catch (err) {
-    body.innerHTML = `<div class="muted">Provider inventory failed: ${esc(err.message)}</div>`;
-  } finally {
-    busy(btn, false);
-  }
+    })
+  );
 }
 
 function fmtNum(n) {
@@ -2374,7 +2523,9 @@ async function freeMemory() {
 
 // Delete a model from disk (with confirm), then refresh the installed list.
 async function deleteModel(name, btn) {
-  if (!window.confirm(`Delete "${name}" from disk? This frees space but you'll need to pull it again.`)) {
+  const bytes = state.installedByName[name]?.size || 0;
+  const frees = bytes ? ` This frees ${(bytes / 1e9).toFixed(1)} GB of disk space.` : "";
+  if (!window.confirm(`Delete "${name}" from disk?${frees}\n\nYou can always pull it again later.`)) {
     return;
   }
   busy(btn, true);
@@ -2543,12 +2694,62 @@ function addChatImages(files) {
   });
 }
 
-// Build one message bubble. Text is set via textContent (never innerHTML) so
-// model output can't inject markup; whitespace is preserved by CSS.
+// Render reply text into a bubble body: fenced ``` code blocks become styled
+// <pre><code> elements with a copy button; everything else stays textContent
+// (never innerHTML), so model output can't inject markup.
+function renderChatText(container, text) {
+  container.innerHTML = "";
+  const parts = String(text).split(/```([\w+-]*)\n?([\s\S]*?)(?:```|$)/g);
+  // split() with two capture groups yields [text, lang, code, text, lang, code, …]
+  for (let i = 0; i < parts.length; i += 3) {
+    const plain = parts[i];
+    if (plain) {
+      const span = document.createElement("span");
+      span.textContent = plain;
+      container.appendChild(span);
+    }
+    if (i + 2 < parts.length) {
+      const code = parts[i + 2] ?? "";
+      const wrap = document.createElement("div");
+      wrap.className = "chat-code";
+      if (parts[i + 1]) {
+        const lang = document.createElement("span");
+        lang.className = "chat-code-lang";
+        lang.textContent = parts[i + 1];
+        wrap.appendChild(lang);
+      }
+      const copy = document.createElement("button");
+      copy.type = "button";
+      copy.className = "chat-code-copy";
+      copy.textContent = "⧉";
+      copy.title = "Copy code";
+      copy.addEventListener("click", async () => {
+        try {
+          await navigator.clipboard.writeText(code);
+          copy.textContent = "✓";
+          setTimeout(() => (copy.textContent = "⧉"), 1200);
+        } catch { /* clipboard unavailable */ }
+      });
+      wrap.appendChild(copy);
+      const pre = document.createElement("pre");
+      const codeEl = document.createElement("code");
+      codeEl.textContent = code;
+      pre.appendChild(codeEl);
+      wrap.appendChild(pre);
+      container.appendChild(wrap);
+    }
+  }
+}
+
+// Build one message bubble with a role avatar.
 function appendChatBubble(role, text, images = []) {
   const list = $("#chat-messages");
   const row = document.createElement("div");
   row.className = `chat-row ${role}`;
+  const avatar = document.createElement("div");
+  avatar.className = "chat-avatar";
+  avatar.textContent = role === "user" ? "🧑" : "✨";
+  row.appendChild(avatar);
   const bubble = document.createElement("div");
   bubble.className = "chat-bubble";
   if (images.length) {
@@ -2614,7 +2815,7 @@ async function sendChatMessage() {
   renderChatAttachments();
   input.value = "";
 
-  $("#chat-messages .empty-state")?.remove();
+  $("#chat-messages .chat-welcome")?.remove();
   state.chatMessages.push({ role: "user", text, images });
   appendChatBubble("user", text, images);
   const assistant = appendChatBubble("assistant", "", []);
@@ -2642,7 +2843,7 @@ async function sendChatMessage() {
           if (firstTokenAt === null) firstTokenAt = performance.now();
           reply += delta;
           assistant.bubble.classList.remove("typing");
-          assistant.body.textContent = reply;
+          renderChatText(assistant.body, reply);
           const list = $("#chat-messages");
           list.scrollTop = list.scrollHeight;
         }
@@ -2672,12 +2873,18 @@ async function sendChatMessage() {
   // dominates a cold first message) doesn't poison the generation speed.
   const approxTokens = Math.max(1, Math.ceil(reply.length / 4));
   const genSeconds = firstTokenAt !== null ? (performance.now() - firstTokenAt) / 1000 : elapsed;
-  const tps = genSeconds > 0.2 && approxTokens > 2 ? ` · ~${(approxTokens / genSeconds).toFixed(1)} tok/s` : "";
+  const tps = genSeconds > 0.2 && approxTokens > 2 ? ` · ⚡ ~${(approxTokens / genSeconds).toFixed(1)} tok/s` : "";
   const firstTok = firstTokenAt !== null && (firstTokenAt - started) / 1000 > 2
     ? ` · first token ${((firstTokenAt - started) / 1000).toFixed(1)} s`
     : "";
-  assistant.meta.textContent = `${elapsed.toFixed(1)} s${firstTok}${tps}${failed ? ` · ${failed}` : ""}`;
+  assistant.meta.textContent = `🕒 ${elapsed.toFixed(1)} s${firstTok}${tps}${failed ? ` · ${failed}` : ""}`;
 }
+
+const CHAT_SUGGESTIONS = [
+  "Explain what a quantized model is, in two sentences.",
+  "Write a haiku about running AI locally.",
+  "Return a JSON object with three fields describing this machine's ideal use.",
+];
 
 function clearChat() {
   state.chatController?.abort();
@@ -2685,7 +2892,27 @@ function clearChat() {
   state.chatImages = [];
   renderChatAttachments();
   const list = $("#chat-messages");
-  list.innerHTML = `<div class="empty-state">Pick a model and say hello — replies stream in live.</div>`;
+  list.innerHTML = "";
+  const welcome = document.createElement("div");
+  welcome.className = "chat-welcome";
+  welcome.innerHTML = `<div class="chat-welcome-logo">✨</div>
+    <h3>Talk to your local model</h3>
+    <p class="muted small">Streaming replies, straight from your own hardware. Try one of these:</p>`;
+  const chips = document.createElement("div");
+  chips.className = "chat-suggestion-chips";
+  CHAT_SUGGESTIONS.forEach((text) => {
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "chat-suggestion";
+    chip.textContent = text;
+    chip.addEventListener("click", () => {
+      $("#chat-input").value = text;
+      sendChatMessage();
+    });
+    chips.appendChild(chip);
+  });
+  welcome.appendChild(chips);
+  list.appendChild(welcome);
 }
 
 // ---------------------------------------------------------------------------
@@ -3940,6 +4167,12 @@ $("#btn-installed").addEventListener("click", refreshInstalled);
 $("#btn-updates")?.addEventListener("click", (e) => checkUpdates(e));
 $("#btn-hf-search")?.addEventListener("click", (e) => checkUpdates(e));
 $("#btn-provider-refresh")?.addEventListener("click", (e) => loadProviderCatalog(e));
+$("#catalog-search")?.addEventListener("input", () => { state.catalog.page = 0; renderProviderCatalog(); });
+["#catalog-provider", "#catalog-size", "#catalog-sort"].forEach((sel) =>
+  $(sel)?.addEventListener("change", () => { state.catalog.page = 0; renderProviderCatalog(); })
+);
+$("#catalog-prev")?.addEventListener("click", () => { state.catalog.page -= 1; renderProviderCatalog(); });
+$("#catalog-next")?.addEventListener("click", () => { state.catalog.page += 1; renderProviderCatalog(); });
 $("#btn-fit-profiles")?.addEventListener("click", scanConfiguredFits);
 $("#btn-clean-orphans")?.addEventListener("click", (e) => cleanOrphanProfiles(e.currentTarget));
 $("#btn-quant-advise")?.addEventListener("click", (e) => quantAdvise(e.currentTarget));
@@ -3963,6 +4196,11 @@ $("#btn-bulk-clear")?.addEventListener("click", () => {
 $("#btn-chat-send")?.addEventListener("click", sendChatMessage);
 $("#btn-chat-clear")?.addEventListener("click", clearChat);
 $("#chat-profile")?.addEventListener("change", updateChatProfileState);
+$("#btn-chat-system-toggle")?.addEventListener("click", () => {
+  const panel = $("#chat-system-panel");
+  panel.classList.toggle("hidden");
+  if (!panel.classList.contains("hidden")) $("#chat-system").focus();
+});
 $("#chat-images")?.addEventListener("change", (e) => {
   if (!chatProfileSupportsVision()) {
     toast("The selected profile isn't marked vision-capable.", "error");
@@ -3970,6 +4208,11 @@ $("#chat-images")?.addEventListener("change", (e) => {
     addChatImages(e.target.files);
   }
   e.target.value = "";
+});
+$("#chat-input")?.addEventListener("input", (e) => {
+  const el = e.target;
+  el.style.height = "auto";
+  el.style.height = Math.min(el.scrollHeight, 180) + "px";
 });
 $("#chat-input")?.addEventListener("keydown", (e) => {
   if (e.key === "Enter" && !e.shiftKey) {

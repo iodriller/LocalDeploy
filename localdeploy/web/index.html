@@ -4,8 +4,8 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>LocalDeploy</title>
-    <link rel="icon" type="image/png" href="favicon.png?v=20260717-ui21" />
-    <link rel="stylesheet" href="styles.css?v=20260717-ui21" />
+    <link rel="icon" type="image/png" href="favicon.png?v=20260717-ui22" />
+    <link rel="stylesheet" href="styles.css?v=20260717-ui22" />
     <script>
       // Applied synchronously, before CSS renders, so a saved preference never flashes the other theme.
       try {
@@ -19,13 +19,13 @@
   <body>
     <header class="topbar">
       <button class="brand brand-button" id="brand-home" type="button" title="Go to setup">
-        <img class="brand-icon" src="logo.svg?v=20260717-ui21" alt="" />
+        <img class="brand-icon" src="logo.svg?v=20260717-ui22" alt="" />
         <span>LocalDeploy</span>
       </button>
       <nav class="tabs" role="tablist">
-        <button class="tab active" data-tab="serve" role="tab" aria-selected="true">Setup &amp; Deploy</button>
-        <button class="tab" data-tab="chat" role="tab" aria-selected="false">Chat</button>
-        <button class="tab" data-tab="bench" role="tab" aria-selected="false">Benchmark &amp; Compare</button>
+        <button class="tab active" data-tab="serve" role="tab" aria-selected="true">🖥 Setup &amp; Deploy</button>
+        <button class="tab" data-tab="chat" role="tab" aria-selected="false">💬 Chat</button>
+        <button class="tab" data-tab="bench" role="tab" aria-selected="false">📊 Benchmark &amp; Compare</button>
       </nav>
       <div class="topbar-right">
         <div id="hw-chip" class="chip hidden" title="Detected GPU / VRAM"></div>
@@ -124,13 +124,49 @@
           <div class="seg-panel hidden" data-seg-panel="hf">
             <div class="section-title">
               <div>
-                <h3 class="sub">Local provider inventory</h3>
-                <p class="muted small">Models exposed by Ollama, LM Studio, vLLM, Docker Model Runner, llama.cpp, and configured OpenAI-compatible runtimes.</p>
+                <h3 class="sub">📦 Local provider inventory</h3>
+                <p class="muted small">Every model your local runtimes expose — Ollama, LM Studio, vLLM, Docker Model Runner, llama.cpp, and configured OpenAI-compatible servers — searchable in one place.</p>
               </div>
-              <button class="btn" id="btn-provider-refresh">Refresh providers</button>
+              <button class="btn" id="btn-provider-refresh" data-icon="↻">Refresh providers</button>
+            </div>
+            <div id="provider-statuses" class="provider-statuses"></div>
+            <div class="row gap wrap catalog-toolbar">
+              <label class="field grow">
+                <span>Search</span>
+                <input type="search" id="catalog-search" placeholder="Filter by model, publisher, quant…" />
+              </label>
+              <label class="field">
+                <span>Runtime</span>
+                <select id="catalog-provider"><option value="">All</option></select>
+              </label>
+              <label class="field">
+                <span>Size</span>
+                <select id="catalog-size">
+                  <option value="">Any</option>
+                  <option value="tiny">&lt; 4B</option>
+                  <option value="small">4–8B</option>
+                  <option value="mid">8–15B</option>
+                  <option value="large">15B+</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>Sort by</span>
+                <select id="catalog-sort">
+                  <option value="tps">Measured tok/s</option>
+                  <option value="name">Name A–Z</option>
+                  <option value="params">Parameters</option>
+                  <option value="provider">Runtime</option>
+                </select>
+              </label>
             </div>
             <div id="provider-catalog-body" class="muted">Provider inventory has not been loaded yet.</div>
-            <h3 class="sub" style="margin-top:1rem">Find GGUF models</h3>
+            <div id="catalog-pagination" class="catalog-pagination hidden">
+              <button class="btn compact" id="catalog-prev">◀ Prev</button>
+              <span id="catalog-page-label" class="muted small"></span>
+              <button class="btn compact" id="catalog-next">Next ▶</button>
+            </div>
+            <h3 class="sub" style="margin-top:1.1rem">🌐 Discover new models</h3>
+            <p class="muted small" style="margin-bottom:0.4rem">Search Hugging Face for GGUF repos Ollama can pull directly, or browse the <a href="https://ollama.com/search" target="_blank" rel="noopener">Ollama library ↗</a>.</p>
             <div class="row gap wrap" style="margin-bottom: 0.5rem">
               <label class="field grow">
                 <span>Search (blank = auto-detect from installed)</span>
@@ -221,7 +257,8 @@
           <div class="card-head">
             <div>
               <h2>Your models</h2>
-              <p class="muted small">Models you've pulled into Ollama. Deploy one to start serving it; fit badges use the budget above.</p>
+              <p class="muted small">Models you've pulled into Ollama. Deploy one to start serving it.</p>
+              <p class="muted small fit-legend">Each row shows <b>💾 disk size</b> (space on your drive) separately from <b>⚡ VRAM needed</b> (memory to run it, estimated against your fit budget): <span class="badge fits">fits</span> <span class="badge tight">tight</span> <span class="badge wont">won't fit</span></p>
               <p class="muted small" id="models-disk-summary"></p>
             </div>
             <div class="row gap wrap">
@@ -345,35 +382,43 @@
 
       <!-- ===================== TAB 2: Chat playground ===================== -->
       <section id="tab-chat" class="tab-panel">
-        <div class="card chat-card">
-          <div class="card-head">
-            <div>
-              <h2>Chat playground</h2>
-              <p class="muted small">Talk to a model you've pulled — streaming, straight through the local OpenAI-compatible API.</p>
+        <div class="chat-shell">
+          <header class="chat-topbar">
+            <div class="chat-topbar-left">
+              <span class="chat-logo">💬</span>
+              <div>
+                <h2>Chat</h2>
+                <span id="chat-hint" class="muted small"></span>
+              </div>
             </div>
-            <div class="row gap wrap" style="align-items: flex-end">
-              <label class="field" style="min-width: 16rem">
-                <span>Model (profile)</span>
+            <div class="chat-topbar-right">
+              <label class="field chat-model-field">
+                <span>Model</span>
                 <select id="chat-profile"></select>
               </label>
-              <button class="btn" id="btn-chat-clear" title="Clear the conversation">Clear</button>
+              <button class="btn compact" id="btn-chat-system-toggle" type="button" title="Set a system prompt">⚙ System</button>
+              <button class="btn compact" id="btn-chat-clear" title="Clear the conversation">🧹 Clear</button>
             </div>
-          </div>
-          <details class="chat-system-details">
-            <summary>System prompt (optional)</summary>
-            <textarea id="chat-system" rows="2" spellcheck="false" placeholder="You are a helpful assistant…"></textarea>
-          </details>
-          <div id="chat-messages" class="chat-messages" aria-live="polite"></div>
-          <div id="chat-attachments" class="chat-attachments hidden"></div>
-          <div class="chat-input-row">
-            <label class="btn file chat-attach" id="chat-attach-label" title="Attach images (vision profiles only)">
-              🖼
-              <input type="file" id="chat-images" accept="image/png,image/jpeg,image/webp,image/gif" multiple hidden />
+          </header>
+          <div class="chat-system-panel hidden" id="chat-system-panel">
+            <label class="field grow">
+              <span>System prompt — sent with every message</span>
+              <textarea id="chat-system" rows="2" spellcheck="false" placeholder="You are a helpful assistant…"></textarea>
             </label>
-            <textarea id="chat-input" rows="2" spellcheck="false" placeholder="Ask something… (Enter to send, Shift+Enter for a new line)"></textarea>
-            <button class="btn primary" id="btn-chat-send">Send</button>
           </div>
-          <p class="muted small" id="chat-hint"></p>
+          <div id="chat-messages" class="chat-messages" aria-live="polite"></div>
+          <footer class="chat-composer">
+            <div id="chat-attachments" class="chat-attachments hidden"></div>
+            <div class="chat-input-row">
+              <label class="btn file chat-attach" id="chat-attach-label" title="Attach images (vision profiles only)">
+                🖼
+                <input type="file" id="chat-images" accept="image/png,image/jpeg,image/webp,image/gif" multiple hidden />
+              </label>
+              <textarea id="chat-input" rows="1" spellcheck="false" placeholder="Ask anything… (Enter to send, Shift+Enter for a new line)"></textarea>
+              <button class="btn primary chat-send" id="btn-chat-send" title="Send (Enter)">➤ Send</button>
+            </div>
+            <div class="chat-footnote muted small">Runs 100% locally through <code>/v1/chat/completions</code> — nothing leaves this machine.</div>
+          </footer>
         </div>
       </section>
 
@@ -588,6 +633,6 @@
     </main>
 
     <div id="toasts" class="toasts" aria-live="polite"></div>
-    <script src="app.js?v=20260717-ui21"></script>
+    <script src="app.js?v=20260717-ui22"></script>
   </body>
 </html>
