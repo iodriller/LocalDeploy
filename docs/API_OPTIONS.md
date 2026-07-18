@@ -80,6 +80,27 @@ instruction in the prompt and also forwards the constraint to the backend: Ollam
 while llama.cpp receives `response_format` on `/v1/chat/completions`. Clients must still parse and validate the result;
 application-level retry or rejection remains necessary if a backend/model returns semantically invalid data.
 
+### Tool calls
+
+Pass OpenAI-style `tools` and `tool_choice` fields. LocalDeploy forwards function declarations to
+the selected local runtime and returns `message.tool_calls` with `finish_reason: "tool_calls"`.
+It never executes a tool; the client owns validation, authorization, execution, and any follow-up
+tool message. Ollama and tool-capable loopback OpenAI-compatible runtimes are supported.
+
+## Responses and embeddings
+
+`POST /v1/responses` accepts string or message-list `input`, optional `instructions`, function
+tools, and `max_output_tokens`. Non-streaming responses return `output_text` plus message or
+`function_call` output items. Streaming emits progressive typed Responses SSE events, including
+`response.output_text.delta`, function-call argument events, and `response.completed`.
+
+`POST /v1/embeddings` accepts a string or list of strings and `encoding_format` of `float` or
+`base64`. Ollama uses `/api/embed` with a legacy fallback; other local providers use their
+`/v1/embeddings` endpoint.
+
+Profiles may target `ollama`, `llamacpp`, `lmstudio`, `vllm`, `docker`, or `openai`. Every backend
+URL is still required to resolve to loopback; provider support does not permit cloud API URLs.
+
 ## Context Testing
 
 The API defaults are intentionally conservative. Use `compare_models.py` for normal comparisons. For probing larger contexts, increase limits in your local `config.json` or test directly against Ollama with `num_ctx` before changing API defaults.

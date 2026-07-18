@@ -78,13 +78,17 @@ def build_card(payload: Dict[str, Any]) -> Dict[str, Any]:
     tests = payload.get("tests") or []
     return {
         "kind": "localdeploy.report_card",
-        "version": 1,
+        "version": 2,
         "id": payload.get("id") or _card_id(payload, tests),
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "profile": payload.get("profile"),
         "model_id": payload.get("model_id"),
         "device": payload.get("device") or None,
         "hardware": payload.get("hardware") or {},
+        "provenance": payload.get("provenance") or {},
+        "variance": payload.get("variance") or {},
+        "aggregates": payload.get("aggregates") or [],
+        "repetitions": payload.get("repetitions") or 1,
         "tests": tests,
         "summary": payload.get("summary") or _summary(tests),
         "category_summary": payload.get("category_summary") or _category_summary(tests),
@@ -105,6 +109,9 @@ def render_md(card: Dict[str, Any]) -> str:
     dev = _device_suffix(card)
     tps = s.get("avg_tokens_per_second")
     tps_label = f" · avg {tps} tok/s" if tps is not None else ""
+    provenance = card.get("provenance") or {}
+    profile_provenance = (provenance.get("profiles") or {}).get(card.get("profile"), {})
+    variance = card.get("variance") or {}
     lines = [
         "# LocalDeploy Report Card",
         "",
@@ -112,6 +119,11 @@ def render_md(card: Dict[str, Any]) -> str:
         f"- Profile: `{card.get('profile') or '?'}`",
         f"- Hardware: {hw_label}",
         f"- Generated: {card['generated_at']}",
+        f"- Repetitions: {card.get('repetitions') or 1}",
+        f"- Runtime: {profile_provenance.get('backend') or '?'} {profile_provenance.get('backend_version') or ''}".rstrip(),
+        f"- Model digest: `{profile_provenance.get('model_digest') or '?'}`",
+        f"- Quant / context / start: {profile_provenance.get('quant') or '?'} / {profile_provenance.get('context') or '?'} / {profile_provenance.get('warm_state') or '?'}",
+        f"- Variance: latency σ {variance.get('latency_stdev_seconds', 0)}s · tok/s σ {variance.get('tokens_per_second_stdev', 0)}",
         "",
         f"**{s['passed']}/{s['tests']} passed · avg accuracy {s['avg_accuracy']} · "
         f"avg latency {s['avg_latency_s']}s{tps_label}**",
@@ -150,6 +162,9 @@ def render_md(card: Dict[str, Any]) -> str:
 def render_html(card: Dict[str, Any]) -> str:
     s = card["summary"]
     hw = card.get("hardware") or {}
+    provenance = card.get("provenance") or {}
+    profile_provenance = (provenance.get("profiles") or {}).get(card.get("profile"), {})
+    variance = card.get("variance") or {}
 
     def _tps_cell(value: Any) -> str:
         return _html.escape(str(value)) if value is not None else "—"
@@ -197,6 +212,14 @@ def render_html(card: Dict[str, Any]) -> str:
         "<h1>LocalDeploy Report Card</h1>"
         f"<p class='meta'>Model <code>{model}</code>{dev} · Hardware "
         f"{_html.escape(str(hw.get('gpu') or 'CPU only'))} · {_html.escape(card['generated_at'])}</p>"
+        f"<p class='meta'>Runtime {_html.escape(str(profile_provenance.get('backend') or '?'))} "
+        f"{_html.escape(str(profile_provenance.get('backend_version') or ''))} · quant "
+        f"{_html.escape(str(profile_provenance.get('quant') or '?'))} · context "
+        f"{_html.escape(str(profile_provenance.get('context') or '?'))} · "
+        f"{_html.escape(str(profile_provenance.get('warm_state') or '?'))} start · "
+        f"{card.get('repetitions') or 1} repetition(s) · latency σ "
+        f"{_html.escape(str(variance.get('latency_stdev_seconds', 0)))}s · tok/s σ "
+        f"{_html.escape(str(variance.get('tokens_per_second_stdev', 0)))}</p>"
         f"<p><b>{s['passed']}/{s['tests']} passed</b> · avg accuracy {s['avg_accuracy']} · "
         f"avg latency {s['avg_latency_s']}s{tps_label}</p>"
         f"{cat_table}"

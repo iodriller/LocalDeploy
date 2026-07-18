@@ -20,7 +20,18 @@ from pydantic import BaseModel, Field
 
 import localdeploy
 from localdeploy.backends.llamacpp import call_llamacpp, llama_health
-from localdeploy.backends.ollama import call_ollama, ollama_models, stream_ollama
+from localdeploy.backends.ollama import (
+    call_ollama_detailed,
+    embed_ollama,
+    encode_embedding_base64,
+    ollama_models,
+    stream_ollama_events,
+)
+from localdeploy.backends.openai_compatible import (
+    call_openai_compatible,
+    embed_openai_compatible,
+    stream_openai_compatible,
+)
 from localdeploy.utils import (
     BackendCallError,
     api_token,
@@ -42,6 +53,8 @@ APP_DIR = Path(__file__).resolve().parent
 # the repo root for a source checkout, ~/.localdeploy for pip installs.
 APP_HOME = app_home()
 load_dotenv(APP_HOME / ".env")
+
+SUPPORTED_BACKENDS = {"ollama", "llamacpp", "lmstudio", "vllm", "docker", "openai"}
 
 
 class ChatRequest(BaseModel):
@@ -65,6 +78,9 @@ class ChatRequest(BaseModel):
     # Passed to backends that support grammar/schema-constrained generation.
     # Native and OpenAI-compatible callers use the same response-format shape.
     response_format: Optional[Dict[str, Any]] = None
+    messages: Optional[List[Dict[str, Any]]] = None
+    tools: Optional[List[Dict[str, Any]]] = None
+    tool_choice: Optional[Any] = None
 
 
 class VisionRequest(ChatRequest):
@@ -84,7 +100,10 @@ class EstimateRequest(VisionRequest):
 
 class OpenAIChatMessage(BaseModel):
     role: str
-    content: Any
+    content: Any = None
+    name: Optional[str] = None
+    tool_call_id: Optional[str] = None
+    tool_calls: Optional[List[Dict[str, Any]]] = None
 
 
 class OpenAIChatCompletionRequest(BaseModel):
@@ -102,6 +121,30 @@ class OpenAIChatCompletionRequest(BaseModel):
     allow_clamp: bool = False
     timeout_seconds: Optional[int] = None
     repeat_penalty: Optional[float] = None
+    tools: Optional[List[Dict[str, Any]]] = None
+    tool_choice: Optional[Any] = None
+    parallel_tool_calls: Optional[bool] = None
+
+
+class OpenAIEmbeddingRequest(BaseModel):
+    input: Any
+    model: str
+    encoding_format: str = "float"
+    dimensions: Optional[int] = None
+    user: Optional[str] = None
+
+
+class OpenAIResponseRequest(BaseModel):
+    model: str
+    input: Any
+    instructions: Optional[str] = None
+    tools: Optional[List[Dict[str, Any]]] = None
+    tool_choice: Optional[Any] = None
+    max_output_tokens: Optional[int] = None
+    temperature: Optional[float] = None
+    top_p: Optional[float] = None
+    stream: bool = False
+    profile: Optional[str] = None
 
 
 class LocalLLMResponse(BaseModel):
@@ -110,6 +153,8 @@ class LocalLLMResponse(BaseModel):
     profile: Optional[str] = None
     model: Optional[str] = None
     response: Optional[Any] = None
+    tool_calls: Optional[List[Dict[str, Any]]] = None
+    metrics: Optional[Dict[str, Any]] = None
     elapsed_seconds: float = 0.0
     estimated_prompt_chars: int = 0
     estimated_prompt_tokens: int = 0
@@ -284,21 +329,20 @@ def resolve_profile(
 
     requested_backend = request_data.get("backend")
     if requested_backend:
+        original_backend = str(profile.get("backend") or "ollama").strip().lower()
         backend = str(requested_backend).strip().lower()
-        if backend not in {"ollama", "llamacpp"}:
-            return profile_name, profile, "backend must be 'ollama' or 'llamacpp'."
+        if backend not in SUPPORTED_BACKENDS:
+            return profile_name, profile, f"backend must be one of: {', '.join(sorted(SUPPORTED_BACKENDS))}."
         profile["backend"] = backend
-        if backend == "ollama":
-            profile["base_url"] = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
-        else:
-            profile["base_url"] = os.getenv("LLAMACPP_BASE_URL", "http://127.0.0.1:8080")
+        if backend != original_backend:
+            profile.pop("base_url", None)
 
     requested_model = request_data.get("model")
     if requested_model:
         profile["model_id"] = str(requested_model)
 
     backend = str(profile.get("backend", "")).lower()
-    if backend not in {"ollama", "llamacpp"}:
+    if backend not in SUPPORTED_BACKENDS:
         return profile_name, profile, f"Unsupported backend '{backend}' in profile '{profile_name}'."
 
     if require_gpu_only():
@@ -381,6 +425,9 @@ def openai_request_to_local_payload(request_model: OpenAIChatCompletionRequest) 
         "allow_clamp": request_model.allow_clamp,
         "timeout_seconds": request_model.timeout_seconds,
         "response_format": request_model.response_format,
+        "messages": [model_dump_compat(message) for message in request_model.messages],
+        "tools": request_model.tools,
+        "tool_choice": request_model.tool_choice,
     }
     if model_override:
         payload["model"] = model_override
@@ -564,6 +611,9 @@ def prepare_request(
         "estimated_prompt_tokens": estimated_prompt_tokens,
         "images_base64": data.get("images_base64") or [],
         "response_format": response_format,
+        "messages": data.get("messages") or [],
+        "tools": data.get("tools") or [],
+        "tool_choice": data.get("tool_choice"),
         "safe_mode": safe_mode,
         "warning": profile_warning(profile),
         "slow_response_seconds": int(profile.get("slow_response_seconds") or limits["slow_response_seconds"]),
@@ -601,7 +651,9 @@ def make_error_response(
     )
 
 
-def make_success_response(prepared: Dict[str, Any], content: Any, elapsed_seconds: float) -> Dict[str, Any]:
+def make_success_response(
+    prepared: Dict[str, Any], content: Any, elapsed_seconds: float, details: Optional[Dict[str, Any]] = None
+) -> Dict[str, Any]:
     warning = prepared.get("warning")
     if elapsed_seconds >= prepared.get("slow_response_seconds", 60):
         slow_warning = f"Response exceeded slow threshold of {prepared.get('slow_response_seconds')} seconds."
@@ -613,6 +665,8 @@ def make_success_response(prepared: Dict[str, Any], content: Any, elapsed_second
             profile=prepared["profile_name"],
             model=prepared["model"],
             response=content,
+            tool_calls=(details or {}).get("tool_calls") or None,
+            metrics=(details or {}).get("metrics") or None,
             elapsed_seconds=round(elapsed_seconds, 3),
             estimated_prompt_chars=prepared["estimated_prompt_chars"],
             estimated_prompt_tokens=prepared["estimated_prompt_tokens"],
@@ -634,9 +688,18 @@ def run_local_request(kind: str, request_data: Dict[str, Any]) -> Dict[str, Any]
     start = time.perf_counter()
     try:
         if prepared["backend"] == "ollama":
-            content = call_ollama(prepared)
+            details = call_ollama_detailed(prepared)
+            content = details.get("content") or ""
         elif prepared["backend"] == "llamacpp":
-            content = call_llamacpp(prepared)
+            if prepared.get("tools"):
+                details = call_openai_compatible(prepared)
+                content = details.get("content") or ""
+            else:
+                content = call_llamacpp(prepared)
+                details = {"content": content, "tool_calls": [], "metrics": {}}
+        elif prepared["backend"] in {"lmstudio", "vllm", "docker", "openai"}:
+            details = call_openai_compatible(prepared)
+            content = details.get("content") or ""
         else:
             raise BackendCallError(f"Unsupported backend '{prepared['backend']}'.")
     except BackendCallError as exc:
@@ -670,7 +733,7 @@ def run_local_request(kind: str, request_data: Dict[str, Any]) -> Dict[str, Any]
             warning=prepared.get("warning"),
         )
     elapsed = time.perf_counter() - start
-    return make_success_response(prepared, content, elapsed)
+    return make_success_response(prepared, content, elapsed, details)
 
 
 def estimate_request_safety(request_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -914,7 +977,7 @@ def openai_stream_response(request_model: OpenAIChatCompletionRequest) -> Stream
             yield "data: [DONE]\n\n"
             return
 
-        if prepared["backend"] != "ollama":
+        if prepared["backend"] == "llamacpp" and not prepared.get("tools"):
             try:
                 content = call_llamacpp(prepared)
             except BackendCallError as exc:
@@ -933,10 +996,33 @@ def openai_stream_response(request_model: OpenAIChatCompletionRequest) -> Stream
             return
 
         yield openai_sse_chunk(completion_id, model_name, {"role": "assistant"}, None)
+        finish_reason = "stop"
         try:
-            for chunk in stream_ollama(prepared):
-                if chunk:
-                    yield openai_sse_chunk(completion_id, model_name, {"content": chunk}, None)
+            events = (
+                stream_ollama_events(prepared)
+                if prepared["backend"] == "ollama"
+                else stream_openai_compatible(prepared)
+            )
+            for event in events:
+                if event.get("content"):
+                    yield openai_sse_chunk(completion_id, model_name, {"content": event["content"]}, None)
+                if event.get("tool_calls"):
+                    finish_reason = "tool_calls"
+                    streamed_tool_calls = (
+                        normalize_tool_calls(event["tool_calls"])
+                        if prepared["backend"] == "ollama"
+                        else event["tool_calls"]
+                    )
+                    if prepared["backend"] == "ollama":
+                        streamed_tool_calls = [
+                            {**tool_call, "index": index}
+                            for index, tool_call in enumerate(streamed_tool_calls)
+                        ]
+                    yield openai_sse_chunk(
+                        completion_id, model_name, {"tool_calls": streamed_tool_calls}, None
+                    )
+                if event.get("done_reason") == "tool_calls":
+                    finish_reason = "tool_calls"
         except BackendCallError as exc:
             yield openai_sse_error(completion_id, model_name, str(exc))
             yield "data: [DONE]\n\n"
@@ -948,7 +1034,7 @@ def openai_stream_response(request_model: OpenAIChatCompletionRequest) -> Stream
             yield openai_sse_error(completion_id, model_name, f"Unexpected error: {exc}")
             yield "data: [DONE]\n\n"
             return
-        yield openai_sse_chunk(completion_id, model_name, {}, "stop")
+        yield openai_sse_chunk(completion_id, model_name, {}, finish_reason)
         yield "data: [DONE]\n\n"
 
     return StreamingResponse(emit(), media_type="text/event-stream")
@@ -956,10 +1042,16 @@ def openai_stream_response(request_model: OpenAIChatCompletionRequest) -> Stream
 
 def openai_chat_completion_response(request_model: OpenAIChatCompletionRequest, result: Dict[str, Any]) -> Dict[str, Any]:
     content = str(result.get("response") or "")
+    tool_calls = normalize_tool_calls(result.get("tool_calls") or [])
     if request_model.response_format:
         content = normalize_structured_content(content)
-    prompt_tokens = int(result.get("estimated_prompt_tokens") or estimate_tokens_from_chars(result.get("estimated_prompt_chars") or 0))
-    completion_tokens = estimate_tokens_from_chars(len(content)) if content else 0
+    metrics = result.get("metrics") or {}
+    prompt_tokens = int(
+        metrics.get("prompt_eval_count")
+        or result.get("estimated_prompt_tokens")
+        or estimate_tokens_from_chars(result.get("estimated_prompt_chars") or 0)
+    )
+    completion_tokens = int(metrics.get("eval_count") or (estimate_tokens_from_chars(len(content)) if content else 0))
     return {
         "id": f"chatcmpl-localdeploy-{int(time.time() * 1000)}",
         "object": "chat.completion",
@@ -970,9 +1062,10 @@ def openai_chat_completion_response(request_model: OpenAIChatCompletionRequest, 
                 "index": 0,
                 "message": {
                     "role": "assistant",
-                    "content": content,
+                    "content": content or None,
+                    **({"tool_calls": tool_calls} if tool_calls else {}),
                 },
-                "finish_reason": "stop",
+                "finish_reason": "tool_calls" if tool_calls else "stop",
             }
         ],
         "usage": {
@@ -988,8 +1081,28 @@ def openai_chat_completion_response(request_model: OpenAIChatCompletionRequest, 
             "warning": result.get("warning"),
             "context_limit_used": result.get("context_limit_used"),
             "max_output_tokens_used": result.get("max_output_tokens_used"),
+            "metrics": result.get("metrics"),
         },
     }
+
+
+def normalize_tool_calls(tool_calls: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    normalized = []
+    for index, call in enumerate(tool_calls):
+        if not isinstance(call, dict):
+            continue
+        function = call.get("function") if isinstance(call.get("function"), dict) else {}
+        arguments = function.get("arguments")
+        if not isinstance(arguments, str):
+            arguments = json.dumps(arguments or {}, ensure_ascii=False)
+        normalized.append(
+            {
+                "id": call.get("id") or f"call_localdeploy_{index}",
+                "type": "function",
+                "function": {"name": function.get("name"), "arguments": arguments},
+            }
+        )
+    return normalized
 
 
 def normalize_structured_content(content: str) -> str:
@@ -1028,29 +1141,36 @@ def check_lan_exposure() -> None:
     entry points, neither of which share a single call site otherwise.
     """
     host = os.getenv("API_HOST", "127.0.0.1")
-    if _host_is_loopback(host) or api_token():
+    if _host_is_loopback(host):
         return
+    token_configured = bool(api_token())
     in_docker = os.path.exists("/.dockerenv")
     lines = [
         "=" * 70,
-        f"WARNING: API_HOST={host} is not loopback-only and no API_TOKEN is set.",
+        f"WARNING: API_HOST={host} is not loopback-only.",
     ]
     if in_docker:
         lines.append(
             "Inside Docker this is expected (the container always binds 0.0.0.0 "
             "internally) - what actually controls exposure is the *host* port "
             "mapping in docker-compose.yml. If you changed it to reach this from "
-            "your LAN, set API_TOKEN too."
+            "your LAN, return the host mapping to 127.0.0.1."
         )
     else:
         lines.append(
             "The control-plane (pull/delete/unload/set-default/benchmark) is "
-            "reachable by anyone who can reach this host, with no authentication."
+            "reachable by network clients. LocalDeploy is a single-user local tool, not an internet-facing server."
         )
-    lines.append("Set API_TOKEN to require a token, or bind API_HOST=127.0.0.1 to stay local-only.")
+    if token_configured:
+        lines.append(
+            "API_TOKEN is configured, but it is one shared token and does not provide TLS or multi-user isolation."
+        )
+    else:
+        lines.append("No API_TOKEN is configured; any reachable client can use the control plane.")
+    lines.append("Bind API_HOST=127.0.0.1. Do not expose LocalDeploy directly to the internet or a public tunnel.")
     lines.append("=" * 70)
     message = "\n".join(lines)
-    if env_bool("REQUIRE_TOKEN_ON_LAN", False):
+    if env_bool("REQUIRE_TOKEN_ON_LAN", False) and not token_configured:
         raise SystemExit(message + "\nRefusing to start (REQUIRE_TOKEN_ON_LAN=true).")
     print(message, file=sys.stderr)
 
@@ -1220,21 +1340,356 @@ def openai_chat_completions(request: OpenAIChatCompletionRequest) -> Any:
 
 
 @app.post("/v1/embeddings")
-def openai_embeddings(_request: Request) -> JSONResponse:
-    return JSONResponse(
-        status_code=501,
-        content={
-            "error": {
-                "message": (
-                    "LocalDeploy does not implement /v1/embeddings. "
-                    "Call Ollama directly at POST http://127.0.0.1:11434/api/embeddings, "
-                    "or run a dedicated embedding server."
-                ),
-                "type": "localdeploy_not_implemented",
-                "code": "embeddings_not_implemented",
-            }
-        },
+def openai_embeddings(request: OpenAIEmbeddingRequest) -> Any:
+    values = [request.input] if isinstance(request.input, str) else request.input
+    if not isinstance(values, list) or not values or not all(isinstance(value, str) for value in values):
+        return JSONResponse(
+            status_code=400,
+            content={"error": {"message": "input must be a string or non-empty list of strings.", "type": "invalid_request_error"}},
+        )
+    if request.encoding_format not in {"float", "base64"}:
+        return JSONResponse(
+            status_code=400,
+            content={"error": {"message": "encoding_format must be 'float' or 'base64'.", "type": "invalid_request_error"}},
+        )
+    config = load_config()
+    profile_name, model_override = profile_for_openai_model(config, request.model)
+    resolved_name, profile, error = resolve_profile(
+        config,
+        {"profile": profile_name, **({"model": model_override} if model_override else {})},
+        require_enabled=True,
     )
+    if error or profile is None:
+        return openai_error_response(
+            make_error_response(error=error or "Profile resolution failed.", profile=resolved_name, model=request.model)
+        )
+    backend = str(profile.get("backend") or "ollama").lower()
+    model = str(profile.get("model_id") or request.model)
+    timeout = int(profile.get("timeout_seconds") or get_global_limits()["request_timeout_seconds"])
+    try:
+        if backend == "ollama":
+            result = embed_ollama(str(profile["base_url"]), model, values, timeout)
+            usage = {
+                "prompt_tokens": int(result.get("prompt_eval_count") or sum(estimate_tokens_from_chars(len(v)) for v in values)),
+                "total_tokens": int(result.get("prompt_eval_count") or sum(estimate_tokens_from_chars(len(v)) for v in values)),
+            }
+        else:
+            result = embed_openai_compatible(profile, backend, model, values, timeout)
+            usage = result.get("usage") or {}
+    except BackendCallError as exc:
+        return openai_error_response(make_error_response(error=str(exc), backend=backend, profile=resolved_name, model=model))
+    embeddings = result.get("embeddings") or []
+    data = []
+    for index, vector in enumerate(embeddings):
+        encoded = encode_embedding_base64(vector) if request.encoding_format == "base64" else vector
+        data.append({"object": "embedding", "embedding": encoded, "index": index})
+    return {"object": "list", "data": data, "model": request.model, "usage": usage}
+
+
+def _responses_chat_request(request: OpenAIResponseRequest) -> OpenAIChatCompletionRequest:
+    messages: List[Dict[str, Any]] = []
+    if request.instructions:
+        messages.append({"role": "system", "content": request.instructions})
+    if isinstance(request.input, str):
+        messages.append({"role": "user", "content": request.input})
+    elif isinstance(request.input, list):
+        for item in request.input:
+            if not isinstance(item, dict):
+                continue
+            role = str(item.get("role") or "user")
+            content = item.get("content")
+            if isinstance(content, list):
+                translated = []
+                for part in content:
+                    if not isinstance(part, dict):
+                        continue
+                    value = dict(part)
+                    if value.get("type") == "input_text":
+                        value["type"] = "text"
+                    elif value.get("type") == "input_image":
+                        value["type"] = "image_url"
+                        value["image_url"] = value.get("image_url") or value.get("image")
+                    translated.append(value)
+                content = translated
+            if item.get("type") == "function_call_output":
+                role = "tool"
+                content = item.get("output") or ""
+            messages.append(
+                {
+                    "role": role,
+                    "content": content,
+                    "tool_call_id": item.get("call_id"),
+                    "name": item.get("name"),
+                }
+            )
+    tools = []
+    for tool in request.tools or []:
+        if not isinstance(tool, dict):
+            continue
+        if tool.get("type") == "function" and "function" not in tool:
+            tools.append(
+                {
+                    "type": "function",
+                    "function": {
+                        "name": tool.get("name"),
+                        "description": tool.get("description"),
+                        "parameters": tool.get("parameters") or {},
+                    },
+                }
+            )
+        else:
+            tools.append(tool)
+    return OpenAIChatCompletionRequest(
+        model=request.model,
+        profile=request.profile,
+        messages=[OpenAIChatMessage(**item) for item in messages],
+        tools=tools or None,
+        tool_choice=request.tool_choice,
+        max_tokens=request.max_output_tokens,
+        temperature=request.temperature,
+        top_p=request.top_p,
+    )
+
+
+def _responses_payload(
+    request: OpenAIResponseRequest, result: Dict[str, Any], response_id: Optional[str] = None
+) -> Dict[str, Any]:
+    response_id = response_id or f"resp_localdeploy_{int(time.time() * 1000)}"
+    output: List[Dict[str, Any]] = []
+    content = str(result.get("response") or "")
+    if content:
+        output.append(
+            {
+                "type": "message",
+                "id": f"msg_{int(time.time() * 1000)}",
+                "role": "assistant",
+                "status": "completed",
+                "content": [{"type": "output_text", "text": content, "annotations": []}],
+            }
+        )
+    for index, tool_call in enumerate(normalize_tool_calls(result.get("tool_calls") or [])):
+        function = tool_call.get("function") or {}
+        output.append(
+            {
+                "type": "function_call",
+                "id": tool_call.get("id") or f"fc_{index}",
+                "call_id": tool_call.get("id") or f"call_{index}",
+                "name": function.get("name"),
+                "arguments": function.get("arguments") or "{}",
+                "status": "completed",
+            }
+        )
+    metrics = result.get("metrics") or {}
+    input_tokens = int(
+        metrics.get("prompt_eval_count")
+        or metrics.get("prompt_tokens")
+        or result.get("estimated_prompt_tokens")
+        or 0
+    )
+    output_tokens = int(
+        metrics.get("eval_count")
+        or metrics.get("completion_tokens")
+        or estimate_tokens_from_chars(len(content))
+    )
+    return {
+        "id": response_id,
+        "object": "response",
+        "created_at": int(time.time()),
+        "status": "completed",
+        "model": request.model,
+        "output": output,
+        "output_text": content,
+        "usage": {"input_tokens": input_tokens, "output_tokens": output_tokens, "total_tokens": input_tokens + output_tokens},
+        "error": None,
+        "localdeploy": {
+            "backend": result.get("backend"),
+            "profile": result.get("profile"),
+            "model": result.get("model"),
+            "metrics": metrics,
+        },
+    }
+
+
+def _responses_sse(event_type: str, payload: Dict[str, Any]) -> str:
+    data = {"type": event_type, **payload}
+    return f"event: {event_type}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+def _merge_tool_call_deltas(
+    state: Dict[int, Dict[str, Any]], tool_calls: List[Dict[str, Any]]
+) -> None:
+    for position, raw in enumerate(tool_calls):
+        if not isinstance(raw, dict):
+            continue
+        try:
+            index = int(raw.get("index", position))
+        except (TypeError, ValueError):
+            index = position
+        item = state.setdefault(
+            index,
+            {"id": raw.get("id") or f"call_localdeploy_{index}", "type": "function", "function": {}},
+        )
+        if raw.get("id"):
+            item["id"] = raw["id"]
+        function = raw.get("function") if isinstance(raw.get("function"), dict) else {}
+        if function.get("name"):
+            item["function"]["name"] = function["name"]
+        arguments = function.get("arguments")
+        if isinstance(arguments, str):
+            item["function"]["arguments"] = item["function"].get("arguments", "") + arguments
+        elif arguments is not None:
+            item["function"]["arguments"] = json.dumps(arguments, ensure_ascii=False)
+
+
+def _responses_stream_response(
+    request: OpenAIResponseRequest, chat_request: OpenAIChatCompletionRequest
+) -> StreamingResponse:
+    response_id = f"resp_localdeploy_{int(time.time() * 1000)}"
+    payload, has_images = openai_request_to_local_payload(chat_request)
+    prepared, error_response = prepare_request(
+        "vision" if has_images else "chat", payload, require_enabled=True
+    )
+
+    def emit() -> Iterator[str]:
+        started_response = {
+            "id": response_id,
+            "object": "response",
+            "created_at": int(time.time()),
+            "status": "in_progress",
+            "model": request.model,
+            "output": [],
+            "output_text": "",
+            "error": None,
+        }
+        yield _responses_sse("response.created", {"response": started_response})
+        yield _responses_sse("response.in_progress", {"response": started_response})
+        if error_response or prepared is None:
+            message = str((error_response or {}).get("error") or "Request preparation failed.")
+            failed = {**started_response, "status": "failed", "error": {"message": message}}
+            yield _responses_sse("response.failed", {"response": failed})
+            return
+
+        content_chunks: List[str] = []
+        tool_state: Dict[int, Dict[str, Any]] = {}
+        metrics: Dict[str, Any] = {}
+        message_started = False
+        message_id = f"msg_{int(time.time() * 1000)}"
+        try:
+            if prepared["backend"] == "llamacpp" and not prepared.get("tools"):
+                backend_events: Iterator[Dict[str, Any]] = iter(
+                    [{"content": call_llamacpp(prepared), "tool_calls": [], "metrics": {}}]
+                )
+            elif prepared["backend"] == "ollama":
+                backend_events = stream_ollama_events(prepared)
+            else:
+                backend_events = stream_openai_compatible(prepared)
+
+            for event in backend_events:
+                chunk = str(event.get("content") or "")
+                if chunk:
+                    if not message_started:
+                        message_started = True
+                        item = {
+                            "type": "message",
+                            "id": message_id,
+                            "role": "assistant",
+                            "status": "in_progress",
+                            "content": [],
+                        }
+                        yield _responses_sse(
+                            "response.output_item.added", {"output_index": 0, "item": item}
+                        )
+                        yield _responses_sse(
+                            "response.content_part.added",
+                            {
+                                "item_id": message_id,
+                                "output_index": 0,
+                                "content_index": 0,
+                                "part": {"type": "output_text", "text": "", "annotations": []},
+                            },
+                        )
+                    content_chunks.append(chunk)
+                    yield _responses_sse(
+                        "response.output_text.delta",
+                        {
+                            "item_id": message_id,
+                            "output_index": 0,
+                            "content_index": 0,
+                            "delta": chunk,
+                        },
+                    )
+                if event.get("tool_calls"):
+                    _merge_tool_call_deltas(tool_state, event["tool_calls"])
+                if isinstance(event.get("metrics"), dict):
+                    metrics.update(event["metrics"])
+        except Exception as exc:  # noqa: BLE001 - preserve the SSE error contract
+            failed = {**started_response, "status": "failed", "error": {"message": str(exc)}}
+            yield _responses_sse("response.failed", {"response": failed})
+            return
+
+        content = "".join(content_chunks)
+        result = {
+            "success": True,
+            "backend": prepared["backend"],
+            "profile": prepared["profile_name"],
+            "model": prepared["model"],
+            "response": content,
+            "tool_calls": [tool_state[index] for index in sorted(tool_state)],
+            "metrics": metrics,
+            "estimated_prompt_tokens": prepared["estimated_prompt_tokens"],
+        }
+        completed = _responses_payload(request, result, response_id=response_id)
+        for output_index, item in enumerate(completed["output"]):
+            if item["type"] == "message":
+                yield _responses_sse(
+                    "response.output_text.done",
+                    {
+                        "item_id": item["id"],
+                        "output_index": output_index,
+                        "content_index": 0,
+                        "text": content,
+                    },
+                )
+                yield _responses_sse(
+                    "response.content_part.done",
+                    {
+                        "item_id": item["id"],
+                        "output_index": output_index,
+                        "content_index": 0,
+                        "part": item["content"][0],
+                    },
+                )
+            else:
+                yield _responses_sse(
+                    "response.output_item.added", {"output_index": output_index, "item": item}
+                )
+                yield _responses_sse(
+                    "response.function_call_arguments.done",
+                    {
+                        "item_id": item["id"],
+                        "output_index": output_index,
+                        "arguments": item["arguments"],
+                    },
+                )
+            yield _responses_sse(
+                "response.output_item.done", {"output_index": output_index, "item": item}
+            )
+        yield _responses_sse("response.completed", {"response": completed})
+
+    return StreamingResponse(emit(), media_type="text/event-stream")
+
+
+@app.post("/v1/responses", response_model=None)
+def openai_responses(request: OpenAIResponseRequest) -> Any:
+    chat_request = _responses_chat_request(request)
+    if request.stream:
+        return _responses_stream_response(request, chat_request)
+    payload, has_images = openai_request_to_local_payload(chat_request)
+    result = run_local_request("vision" if has_images else "chat", payload)
+    if not result.get("success"):
+        return openai_error_response(result)
+    response = _responses_payload(request, result)
+    return response
 
 
 def parse_scalar(value: Any) -> Any:

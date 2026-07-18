@@ -60,6 +60,21 @@ def test_build_card_embeds_category_summary() -> None:
     assert {c["category"] for c in card["category_summary"]} == {"planning", "code"}
 
 
+def test_build_card_preserves_provenance_and_variance() -> None:
+    payload = {
+        "profile": "p",
+        "tests": _tests(),
+        "repetitions": 3,
+        "provenance": {"profiles": {"p": {"model_digest": "sha256:full", "quant": "Q4_K_M"}}},
+        "variance": {"latency_stdev_seconds": 0.2, "tokens_per_second_stdev": 1.5},
+    }
+    card = build_card(payload)
+    assert card["version"] == 2
+    assert card["repetitions"] == 3
+    assert card["provenance"]["profiles"]["p"]["model_digest"] == "sha256:full"
+    assert "latency σ 0.2s" in render_md(card)
+
+
 def test_build_card_id_is_stable_for_same_content() -> None:
     # Re-exporting (or re-importing) the same completed run must yield the same
     # id both times, or the client's history dedup (which matches on id) can

@@ -137,6 +137,14 @@ def get_backend_base_url(profile: Dict[str, Any], backend: str) -> str:
         base_url = profile.get("base_url") or os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
     elif backend == "llamacpp":
         base_url = profile.get("base_url") or os.getenv("LLAMACPP_BASE_URL", "http://127.0.0.1:8080")
+    elif backend == "lmstudio":
+        base_url = profile.get("base_url") or os.getenv("LMSTUDIO_BASE_URL", "http://127.0.0.1:1234")
+    elif backend == "docker":
+        base_url = profile.get("base_url") or os.getenv("DOCKER_MODEL_RUNNER_BASE_URL", "http://127.0.0.1:12434")
+    elif backend == "vllm":
+        base_url = profile.get("base_url") or os.getenv("VLLM_BASE_URL", "http://127.0.0.1:8001")
+    elif backend == "openai":
+        base_url = profile.get("base_url") or os.getenv("OPENAI_COMPAT_BASE_URL", "http://127.0.0.1:8001")
     else:
         raise BackendCallError(f"Unsupported backend '{backend}'.")
     base_url = strip_trailing_slash(str(base_url))
