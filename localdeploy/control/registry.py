@@ -1,9 +1,9 @@
 """Step 4 - model registry.
 
 GET  /registry/installed      -> models pulled locally (Ollama /api/tags)
-POST /registry/check-updates  -> newest matching models on Hugging Face
+POST /registry/check-updates  -> matching models from Hugging Face
 
-The Hugging Face call is a generic search (newest-first) rather than a
+The Hugging Face call is a generic catalog search (popular-first) rather than a
 per-model lookup table, so it stays a single mechanism instead of a chain of
 special cases. Network/dependency failures degrade to a clear "offline" result.
 """
@@ -11,11 +11,13 @@ from __future__ import annotations
 
 import re
 from concurrent.futures import ThreadPoolExecutor
+from html.parser import HTMLParser
 from pathlib import Path
 import json
 import os
 from statistics import mean
 from typing import Any, Dict, List, Optional, Tuple
+from urllib.parse import urlsplit
 
 from fastapi import APIRouter
 from pydantic import BaseModel
@@ -154,6 +156,157 @@ def registry_providers() -> Dict[str, Any]:
     return {"success": True, "providers": providers, "models": rows}
 
 
+# --- Ollama library search (ollama.com) --------------------------------------
+# Ollama does not document a model-library JSON endpoint, so discovery parses
+# the official public search page. HTMLParser keeps namespaced community model
+# paths intact and degrades cleanly if optional markup changes.
+
+
+class _OllamaLibraryParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.results: List[Dict[str, Any]] = []
+        self.current: Optional[Dict[str, Any]] = None
+        self._description_depth = 0
+        self._description_parts: List[str] = []
+        self._span_stack: List[Dict[str, Any]] = []
+        self._span_texts: List[str] = []
+
+    @staticmethod
+    def _classes(attrs: List[Tuple[str, Optional[str]]]) -> str:
+        return next((value or "" for key, value in attrs if key == "class"), "")
+
+    def handle_starttag(self, tag: str, attrs: List[Tuple[str, Optional[str]]]) -> None:
+        attrs_map = dict(attrs)
+        if tag == "a" and self.current is None:
+            path = urlsplit(attrs_map.get("href") or "").path
+            if path.startswith("/library/"):
+                name = path[len("/library/") :].strip("/")
+                if name:
+                    self.current = {"name": name, "sizes": [], "capabilities": []}
+                    self._description_parts = []
+                    self._span_stack = []
+                    self._span_texts = []
+        if self.current is None:
+            return
+        classes = self._classes(attrs)
+        if tag == "p" and "max-w-lg" in classes:
+            self._description_depth = 1
+        elif self._description_depth:
+            self._description_depth += 1
+        if tag == "span":
+            kind = "size" if "text-blue-600" in classes else "capability" if "text-indigo-600" in classes else None
+            self._span_stack.append({"kind": kind, "parts": []})
+
+    def handle_data(self, data: str) -> None:
+        if self.current is None:
+            return
+        if self._description_depth:
+            self._description_parts.append(data)
+        for span in self._span_stack:
+            span["parts"].append(data)
+
+    def handle_endtag(self, tag: str) -> None:
+        if self.current is None:
+            return
+        if tag == "span" and self._span_stack:
+            span = self._span_stack.pop()
+            value = " ".join("".join(span["parts"]).split())
+            if value:
+                self._span_texts.append(value)
+                if span["kind"] == "size" and re.fullmatch(r"\d+(?:\.\d+)?[mb]", value.lower()):
+                    self.current["sizes"].append(value.lower())
+                elif span["kind"] == "capability":
+                    self.current["capabilities"].append(value.lower())
+        if self._description_depth:
+            self._description_depth -= 1
+        if tag == "li":
+            self._finish_current()
+
+    def _finish_current(self) -> None:
+        if self.current is None:
+            return
+        item = self.current
+        description = " ".join("".join(self._description_parts).split()) or None
+        span_text = " ".join(self._span_texts)
+        pulls_match = re.search(r"([\d.,]+[KMB]?)\s+Pulls\b", span_text, re.I)
+        updated_match = re.search(r"\b((?:\d+\s+\w+\s+ago)|yesterday|today)\b", span_text, re.I)
+        name = str(item["name"])
+        capabilities = list(dict.fromkeys(item["capabilities"]))
+        pullable = "cloud" not in capabilities or bool(item["sizes"])
+        self.results.append(
+            {
+                "name": name,
+                "provider": "ollama",
+                "publisher": name.split("/", 1)[0] if "/" in name else "ollama",
+                "description": description,
+                "sizes": list(dict.fromkeys(item["sizes"])),
+                "capabilities": capabilities,
+                "pulls": pulls_match.group(1) if pulls_match else None,
+                "updated": updated_match.group(1) if updated_match else None,
+                "pullable": pullable,
+                "pull_name": name if pullable else None,
+                "url": f"https://ollama.com/library/{name}",
+            }
+        )
+        self.current = None
+        self._description_depth = 0
+        self._description_parts = []
+        self._span_stack = []
+        self._span_texts = []
+
+    def finish(self) -> List[Dict[str, Any]]:
+        self._finish_current()
+        return self.results
+
+
+def parse_ollama_library_search(html: str) -> List[Dict[str, Any]]:
+    """Extract model entries from an ollama.com/search results page."""
+    parser = _OllamaLibraryParser()
+    parser.feed(html or "")
+    parsed = parser.finish()
+    return list({item["name"]: item for item in parsed}.values())
+
+
+class LibrarySearchRequest(BaseModel):
+    query: str = ""
+    limit: int = 24
+
+
+@router.post("/registry/search-ollama-library")
+def search_ollama_library(req: LibrarySearchRequest) -> Dict[str, Any]:
+    """Search the public Ollama library (an empty query returns the popular list)."""
+    if offline_mode():
+        return {
+            "success": True,
+            "online": False,
+            "results": [],
+            "message": "offline mode (OFFLINE=true): Ollama library search skipped — no egress",
+        }
+    import requests
+
+    try:
+        resp = requests.get(
+            "https://ollama.com/search",
+            params={"q": req.query.strip()},
+            headers={"User-Agent": "LocalDeploy (+https://github.com/iodriller/LocalDeploy)"},
+            timeout=15,
+        )
+        resp.raise_for_status()
+    except requests.RequestException as exc:
+        return {"success": True, "online": False, "results": [], "message": f"Could not reach ollama.com: {exc}"}
+
+    results = parse_ollama_library_search(resp.text)[: max(1, min(req.limit, 50))]
+    installed, _ = _ollama.list_installed()
+    installed_bases = {(m.get("name") or "").split(":")[0] for m in installed}
+    for item in results:
+        item["installed_match"] = item["name"] in installed_bases
+    message = None
+    if not results:
+        message = "No results parsed — ollama.com may have changed its page layout. Try the library link directly."
+    return {"success": True, "online": True, "results": results, "message": message}
+
+
 class CheckUpdatesRequest(BaseModel):
     queries: Optional[List[str]] = None
     limit: int = 5
@@ -225,9 +378,11 @@ def _list_hf(
         return None, f"huggingface_hub unavailable: {exc}"
     try:
         api = HfApi()
-        # sort="lastModified" returns most-recent-first; `direction` was removed in
-        # huggingface_hub 1.x, so we rely on the default ordering.
-        kwargs: Dict[str, Any] = {"search": query, "sort": "lastModified", "limit": limit}
+        # This endpoint backs a catalog, not an update feed: broad/blank searches
+        # should surface established repositories before recent low-signal uploads.
+        kwargs: Dict[str, Any] = {"sort": "downloads", "limit": max(1, min(limit, 50)), "full": True}
+        if query:
+            kwargs["search"] = query
         if gguf_only:
             kwargs["filter"] = "gguf"
         models = api.list_models(**kwargs)
@@ -290,7 +445,10 @@ def _matches_fit_filter(item: Dict[str, Any], fit_filter: str) -> bool:
 @router.post("/registry/check-updates")
 def check_updates(req: CheckUpdatesRequest) -> Dict[str, Any]:
     installed, _ = _ollama.list_installed()
-    queries = req.queries or (_derive_queries(installed) if installed else ["gemma", "qwen"])
+    queries = req.queries if req.queries is not None else (_derive_queries(installed) if installed else ["gemma", "qwen"])
+    queries = [str(query).strip() for query in queries]
+    if not queries:
+        queries = [""]
     installed_signatures = [
         _installed_signature(m.get("name") or "") for m in installed if m.get("name")
     ]

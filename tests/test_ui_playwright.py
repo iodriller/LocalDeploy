@@ -141,3 +141,100 @@ def test_clear_history_is_present_and_confirms(live_server, browser):
         assert page.locator(".run-library-row").count() == 2
     finally:
         page.close()
+
+
+def test_chat_only_lists_installed_models_and_tracks_load_delete(live_server, browser):
+    page = browser.new_page(viewport={"width": 1280, "height": 800})
+    runtime = {
+        "installed": [
+            {
+                "name": "gemma3:4b",
+                "size": 3_300_000_000,
+                "details": {"parameter_size": "4.3B", "quantization_level": "Q4_K_M"},
+            }
+        ],
+        "running": [],
+    }
+    profiles = {
+        "gemma3_4b": {
+            "backend": "ollama",
+            "model_id": "gemma3:4b",
+            "enabled": True,
+            "supports_vision": True,
+        },
+        "missing_disabled_gguf": {
+            "backend": "llamacpp",
+            "model_id": "C:/models/missing.gguf",
+            "enabled": False,
+            "model_file_exists": False,
+        },
+    }
+
+    page.route(
+        "**/profiles",
+        lambda route: route.fulfill(json={"success": True, "default_profile": "missing_disabled_gguf", "profiles": profiles}),
+    )
+    page.route(
+        "**/profiles/upsert",
+        lambda route: route.fulfill(json={"success": True, "profile": "gemma3_4b", "profile_data": profiles["gemma3_4b"]}),
+    )
+    page.route(
+        "**/registry/installed",
+        lambda route: route.fulfill(json={"success": True, "installed": runtime["installed"], "error": None}),
+    )
+
+    def status_route(route):
+        route.fulfill(
+            json={
+                "success": True,
+                "ollama": {"reachable": True, "running": runtime["running"], "error": None},
+                "served_models": [item["name"] for item in runtime["running"]],
+                "hardware": {"gpu_available": False, "gpus": [], "system": {}},
+            }
+        )
+
+    def serve_route(route):
+        runtime["running"] = [
+            {
+                "name": "gemma3:4b",
+                "size": 3_300_000_000,
+                "size_vram": 3_100_000_000,
+                "placement": "GPU",
+                "gpu_percent": 100,
+                "expires_at": "2099-01-01T00:00:00Z",
+            }
+        ]
+        route.fulfill(json={"success": True, "served": "gemma3:4b", "message": "Loaded for 60m."})
+
+    def delete_route(route):
+        runtime["installed"] = []
+        runtime["running"] = []
+        route.fulfill(json={"success": True, "deleted": "gemma3:4b"})
+
+    page.route("**/system/status", status_route)
+    page.route("**/models/serve", serve_route)
+    page.route("**/models/delete", delete_route)
+    try:
+        page.goto(f"{live_server}/ui", wait_until="domcontentloaded")
+        page.get_by_role("tab", name="Chat").click()
+        page.wait_for_function("document.querySelector('#chat-model')?.options.length === 1")
+        model_select = page.locator("#chat-model")
+        assert model_select.input_value() == "gemma3:4b"
+        assert "missing.gguf" not in model_select.inner_text()
+        assert page.locator("#chat-input").is_disabled()
+        assert page.locator("#btn-chat-session").inner_text() == "Load model"
+
+        page.locator("#btn-chat-session").click()
+        sync_api.expect(page.locator("#chat-session-state")).to_contain_text("Ready")
+        assert page.locator("#chat-input").is_enabled()
+        assert page.locator("#btn-chat-session").inner_text() == "Unload"
+
+        page.get_by_role("tab", name="Setup & Deploy").click()
+        page.once("dialog", lambda dialog: dialog.accept())
+        page.locator('#installed-body .model-row[data-model="gemma3:4b"] .del-btn').click()
+        page.wait_for_function("document.querySelector('#chat-model')?.value === ''")
+        page.get_by_role("tab", name="Chat").click()
+        sync_api.expect(page.locator("#chat-hint")).to_contain_text("No local models are installed")
+        assert page.locator("#chat-input").is_disabled()
+    finally:
+        page.close()
