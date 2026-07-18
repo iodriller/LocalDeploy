@@ -307,6 +307,84 @@ def search_ollama_library(req: LibrarySearchRequest) -> Dict[str, Any]:
     return {"success": True, "online": True, "results": results, "message": message}
 
 
+# --- Ollama library tags (real, pullable quant variants) ---------------------
+
+_LIB_TAG_RE = re.compile(r'href="/library/([\w.\-/]+):([\w.\-]+)"')
+_LIB_TAG_SIZE_RE = re.compile(r">([\d.]+[KMGT]B)<")
+_LIB_TAG_CTX_RE = re.compile(r">(\d+[KM])<")
+
+
+def parse_ollama_library_tags(html: str) -> List[Dict[str, Any]]:
+    """Extract every published tag (with disk size and context, best-effort)
+    from an ollama.com/library/<model>/tags page. Tags appear more than once
+    in the page; the occurrence that carries a size wins."""
+    tags: Dict[str, Dict[str, Any]] = {}
+    order: List[str] = []
+    for match in _LIB_TAG_RE.finditer(html or ""):
+        tag = match.group(2)
+        segment = (html or "")[match.end() : match.end() + 1500]
+        size = _LIB_TAG_SIZE_RE.search(segment)
+        ctx = _LIB_TAG_CTX_RE.search(segment)
+        entry = {
+            "tag": tag,
+            "size": size.group(1) if size else None,
+            "context": ctx.group(1) if ctx else None,
+        }
+        if tag not in tags:
+            tags[tag] = entry
+            order.append(tag)
+        elif tags[tag]["size"] is None and entry["size"]:
+            tags[tag] = entry
+    return [tags[tag] for tag in order]
+
+
+class LibraryTagsRequest(BaseModel):
+    model: str
+
+
+@router.post("/registry/library-tags")
+def library_tags(req: LibraryTagsRequest) -> Dict[str, Any]:
+    """Every published tag of one Ollama library model — so 'pull this exact
+    quant' is a click on a real tag instead of guessing tag-name conventions."""
+    family = req.model.strip().split(":")[0].lower()
+    if not re.fullmatch(r"[\w.\-]+(?:/[\w.\-]+)?", family):
+        return {"success": False, "error": f"Not an Ollama library model name: {req.model!r}"}
+    if offline_mode():
+        return {
+            "success": True,
+            "online": False,
+            "family": family,
+            "tags": [],
+            "message": "offline mode (OFFLINE=true): tag lookup skipped — no egress",
+        }
+    import requests
+
+    try:
+        resp = requests.get(
+            f"https://ollama.com/library/{family}/tags",
+            headers={"User-Agent": "LocalDeploy (+https://github.com/iodriller/LocalDeploy)"},
+            timeout=15,
+        )
+        resp.raise_for_status()
+    except requests.RequestException as exc:
+        return {"success": True, "online": False, "family": family, "tags": [], "message": f"Could not reach ollama.com: {exc}"}
+
+    parsed = parse_ollama_library_tags(resp.text)
+    installed, _ = _ollama.list_installed()
+    installed_names = {(m.get("name") or "").lower() for m in installed}
+    tags = []
+    for item in parsed:
+        full = f"{family}:{item['tag']}"
+        tags.append({**item, "full": full, "installed": full.lower() in installed_names})
+    return {
+        "success": True,
+        "online": True,
+        "family": family,
+        "tags": tags,
+        "message": None if tags else "No tags parsed — the page layout may have changed.",
+    }
+
+
 # --- unified remote search (Ollama library + Hugging Face, one query) --------
 
 
