@@ -71,6 +71,10 @@ def test_new_ui_controls_have_safe_bindings() -> None:
         "bench-history-server", "btn-clean-orphans",
         # provider catalog + repeated benchmark variance
         "btn-provider-refresh", "provider-catalog-body", "bench-repetitions",
+        # remote discovery catalog lifecycle
+        "remote-source-filter", "remote-size-filter", "remote-fit-filter", "remote-cap-filter",
+        "remote-sort", "remote-installed-filter", "btn-remote-clear", "remote-active-filters",
+        "btn-pull-dismiss", "pull-progress-actions", "chat-session-progress",
     ):
         assert f'id="{dom_id}"' in html, dom_id
     assert '$("#btn-hf-search")?.addEventListener("click", (e) => searchUnifiedModels(e))' in js
@@ -106,6 +110,10 @@ def test_api_docs_quant_help_and_model_lifecycle_controls_are_present() -> None:
     assert ".quant-label" in css
     assert "unload-installed-btn" in js
     assert 'postJSON("/models/stop"' in js
+    assert "waitForModelToUnload" in js
+    assert "expandRemoteCatalog" in js
+    assert "renderChatJson" in js
+    assert "Download JSON" in js
 
 
 def test_system_card_holds_hardware_and_fit_budget() -> None:
