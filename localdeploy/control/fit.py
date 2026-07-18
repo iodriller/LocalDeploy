@@ -11,7 +11,7 @@ verdict is never a black box. The real proof is a short warmup (Step 6).
 from __future__ import annotations
 
 import re
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
@@ -193,6 +193,52 @@ def _resolve_from_profile(req: FitRequest) -> Dict[str, Any]:
         resolved["context"] = profile.get("safe_context_limit") or profile.get("context_limit")
     resolved["kv_quant"] = profile.get("kv_cache_type_k") or profile.get("kv_cache_type_v")
     return resolved
+
+
+# --- batch fit (one call colors a whole catalog page) -------------------------
+
+
+class FitBatchRequest(BaseModel):
+    params_b: List[float] = Field(default_factory=list, max_length=100)
+    context: int = Field(default=4096, gt=0)
+    free_vram_mb: Optional[int] = Field(default=None, ge=0)
+
+
+@router.post("/system/fit-batch")
+def fit_batch(req: FitBatchRequest) -> Dict[str, Any]:
+    """Fit-classify many parameter counts in one call (single hardware probe),
+    so the catalog can badge every size chip without one request per chip."""
+    for value in req.params_b:
+        if not (0 < value <= 5000):
+            return {"success": False, "message": f"params_b values must be in (0, 5000]; got {value}"}
+    hw = detect_hardware()
+    free_vram_mb = req.free_vram_mb
+    if free_vram_mb is None and hw["gpu_available"] and hw["gpus"]:
+        free_vram_mb = hw["gpus"][0].get("vram_free_mb")
+    free_vram_gb = (free_vram_mb / 1024.0) if free_vram_mb is not None else None
+    ram_available_mb = (hw.get("system") or {}).get("ram_available_mb")
+    ram_available_gb = (ram_available_mb / 1024.0) if ram_available_mb is not None else None
+
+    items = []
+    for params_b in dict.fromkeys(req.params_b):  # dedupe, keep order
+        weights_gb = params_b * _DEFAULT_WEIGHT_GB_PER_B
+        kv_cache_gb = _KV_MB_PER_TOKEN_PER_B * params_b * req.context / 1024.0
+        required_gb = weights_gb + kv_cache_gb + _OVERHEAD_GB
+        cls = _classify(required_gb, free_vram_gb, ram_available_gb)
+        items.append(
+            {
+                "params_b": params_b,
+                "required_gb": _round(required_gb),
+                "verdict": cls["verdict"],
+                "tier": cls["tier"],
+                "severity": cls["severity"],
+            }
+        )
+    return {
+        "success": True,
+        "free_vram_gb": _round(free_vram_gb) if free_vram_gb is not None else None,
+        "items": items,
+    }
 
 
 # --- quantization advisor ----------------------------------------------------

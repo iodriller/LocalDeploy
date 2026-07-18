@@ -303,7 +303,6 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--a
 
 /* Contextual help stays available to mouse and keyboard users. */
 .help-tip {
-  position: relative;
   display: inline-grid;
   place-items: center;
   width: 1rem;
@@ -318,16 +317,16 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--a
   cursor: help;
 }
 .help-tip:hover,
-.help-tip:focus-visible { color: var(--text); border-color: var(--accent-strong); }
-.help-tip::after {
-  content: attr(data-tooltip);
-  position: absolute;
-  z-index: 80;
-  top: calc(100% + 0.45rem);
-  left: -0.45rem;
+.help-tip:focus-visible,
+.help-tip.tooltip-open { color: var(--text); border-color: var(--accent-strong); }
+.ui-tooltip {
+  position: fixed;
+  z-index: 1000;
+  top: 0;
+  left: 0;
   width: max-content;
-  max-width: min(18rem, 72vw);
-  padding: 0.5rem 0.6rem;
+  max-width: min(20rem, calc(100vw - 1.5rem));
+  padding: 0.5rem 0.65rem;
   border: 1px solid var(--border);
   border-radius: 6px;
   background: var(--panel);
@@ -337,13 +336,17 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--a
   font-weight: 400;
   line-height: 1.4;
   white-space: normal;
+  visibility: hidden;
   opacity: 0;
   pointer-events: none;
-  transform: translateY(-0.2rem);
+  transform: translateY(0.2rem);
   transition: opacity 0.12s ease, transform 0.12s ease;
 }
-.help-tip:hover::after,
-.help-tip:focus-visible::after { opacity: 1; transform: translateY(0); }
+.ui-tooltip.is-visible {
+  visibility: visible;
+  opacity: 1;
+  transform: translateY(0);
+}
 
 /* ---- badges ---- */
 .badge {
@@ -1025,6 +1028,36 @@ table.results td.num, table.results th.num { text-align: right; font-variant-num
   background: rgba(79, 134, 247, 0.06);
 }
 
+/* --- Catalog fit chips + quant pull ---------------------------------------- */
+.size-pull-btn.fit-ok { border-color: rgba(52, 211, 153, 0.65); color: var(--good); }
+.size-pull-btn.fit-soft { border-color: rgba(251, 191, 36, 0.65); color: var(--warn); }
+.size-pull-btn.fit-hard { border-color: rgba(248, 113, 113, 0.55); color: var(--bad); opacity: 0.8; }
+.chip-swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  border: 2px solid var(--border);
+  vertical-align: middle;
+}
+.chip-swatch.fit-ok { border-color: rgba(52, 211, 153, 0.9); }
+.chip-swatch.fit-soft { border-color: rgba(251, 191, 36, 0.9); }
+.chip-swatch.fit-hard { border-color: rgba(248, 113, 113, 0.9); }
+.catalog-fit-legend { margin-left: auto; align-self: center; }
+.catalog-description {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.catalog-result-title { flex-wrap: wrap; }
+.catalog-result-title .badge { font-size: 0.68rem; }
+.catalog-table td { padding-top: 0.45rem; padding-bottom: 0.45rem; }
+.quant-pull-cell { white-space: nowrap; }
+.quant-all-tags { margin-top: 0.6rem; }
+.quant-all-tags summary { cursor: pointer; color: var(--muted); font-size: 0.85rem; }
+.quant-tag-grid { display: flex; flex-wrap: wrap; gap: 0.3rem; margin-top: 0.5rem; }
+
 /* --- Chat file chips + markdown-lite --------------------------------------- */
 .chat-file-chip {
   display: inline-flex;
@@ -1545,12 +1578,6 @@ table.results td.num, table.results th.num { text-align: right; font-variant-num
   .queue-row-side { justify-content: flex-start; }
 }
 @media (max-width: 620px) {
-  .help-tip::after {
-    position: fixed;
-    inset: auto 1rem 1rem;
-    width: auto;
-    max-width: none;
-  }
   .topbar {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;

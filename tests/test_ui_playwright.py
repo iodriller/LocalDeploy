@@ -112,6 +112,31 @@ def test_page_loads_and_tabs_switch(live_server, browser):
         page.close()
 
 
+def test_tooltips_support_touch_and_stay_inside_mobile_viewport(live_server, browser):
+    page = browser.new_page(viewport={"width": 390, "height": 844}, has_touch=True)
+    try:
+        page.goto(f"{live_server}/ui", wait_until="domcontentloaded")
+        page.get_by_role("tab", name="Setup & Deploy").click()
+        trigger = page.locator(".deploy-opts .help-tip").first
+        trigger.tap()
+
+        tooltip = page.locator("#ui-tooltip")
+        sync_api.expect(tooltip).to_be_visible()
+        sync_api.expect(tooltip).to_contain_text("Auto lets Ollama choose placement")
+        sync_api.expect(trigger).to_have_attribute("aria-expanded", "true")
+        box = tooltip.bounding_box()
+        assert box is not None
+        assert box["x"] >= 0
+        assert box["x"] + box["width"] <= 390
+        assert page.evaluate("document.documentElement.scrollWidth") == 390
+
+        trigger.tap()
+        sync_api.expect(tooltip).to_be_hidden()
+        sync_api.expect(trigger).to_have_attribute("aria-expanded", "false")
+    finally:
+        page.close()
+
+
 def test_run_library_per_run_delete(live_server, browser):
     page = browser.new_page()
     try:
@@ -241,6 +266,15 @@ def test_chat_only_lists_installed_models_and_tracks_load_delete(live_server, br
         sync_api.expect(model_row.locator(".unload-installed-btn")).to_have_text("■ Unload")
         sync_api.expect(page.locator("#status-body .api-docs-link")).to_have_attribute("href", f"{live_server}/docs")
         assert model_row.locator(".start-installed-btn").count() == 0
+
+        quant = model_row.locator(".quant-label")
+        quant.hover()
+        tooltip = page.locator("#ui-tooltip")
+        sync_api.expect(tooltip).to_be_visible()
+        sync_api.expect(tooltip).to_contain_text("4-bit K-quant, medium variant")
+        sync_api.expect(quant).to_have_attribute("aria-expanded", "true")
+        quant.press("Escape")
+        sync_api.expect(tooltip).to_be_hidden()
 
         model_row.locator(".unload-installed-btn").click()
         sync_api.expect(model_row.locator(".start-installed-btn")).to_have_text("▶ Deploy")

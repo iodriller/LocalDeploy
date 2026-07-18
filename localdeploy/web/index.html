@@ -4,8 +4,8 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>LocalDeploy</title>
-    <link rel="icon" type="image/png" href="favicon.png?v=20260718-ui25" />
-    <link rel="stylesheet" href="styles.css?v=20260718-ui25" />
+    <link rel="icon" type="image/png" href="favicon.png?v=20260718-ui26" />
+    <link rel="stylesheet" href="styles.css?v=20260718-ui26" />
     <script>
       // Applied synchronously, before CSS renders, so a saved preference never flashes the other theme.
       try {
@@ -19,7 +19,7 @@
   <body>
     <header class="topbar">
       <button class="brand brand-button" id="brand-home" type="button" title="Go to setup">
-        <img class="brand-icon" src="logo.svg?v=20260718-ui25" alt="" />
+        <img class="brand-icon" src="logo.svg?v=20260718-ui26" alt="" />
         <span>LocalDeploy</span>
       </button>
       <nav class="tabs" role="tablist">
@@ -152,11 +152,11 @@
           <div class="seg-panel hidden" data-seg-panel="quant">
             <div class="row gap wrap" style="margin-bottom: 0.5rem">
               <label class="field grow">
-                <span>Model or family <span class="help-tip" tabindex="0" role="img" aria-label="Include the parameter size so memory can be estimated, for example gemma3 colon 12b." data-tooltip="Include the parameter size so memory can be estimated, for example gemma3:12b.">?</span></span>
+                <span>Model or family <span class="help-tip" tabindex="0" role="button" aria-expanded="false" aria-label="Include the parameter size so memory can be estimated, for example gemma3 colon 12b." data-tooltip="Include the parameter size so memory can be estimated, for example gemma3:12b.">?</span></span>
                 <input type="text" id="quant-model" placeholder="gemma3:12b, qwen2.5:7b, llama3.1:8b…" />
               </label>
               <label class="field" style="min-width: 6.5rem">
-                <span>Context <span class="help-tip" tabindex="0" role="img" aria-label="Maximum tokens retained for the conversation. Larger context uses more memory for the KV cache." data-tooltip="Maximum tokens retained for the conversation. Larger context uses more memory for the KV cache.">?</span></span>
+                <span>Context <span class="help-tip" tabindex="0" role="button" aria-expanded="false" aria-label="Maximum tokens retained for the conversation. Larger context uses more memory for the KV cache." data-tooltip="Maximum tokens retained for the conversation. Larger context uses more memory for the KV cache.">?</span></span>
                 <input type="number" id="quant-context" value="4096" min="512" step="512" />
               </label>
               <button class="btn primary" id="btn-quant-advise" data-icon="⚖">Estimate quants</button>
@@ -224,7 +224,7 @@
           </div>
           <div class="row gap wrap deploy-opts">
             <label class="field">
-              <span>Deploy to <span class="help-tip" tabindex="0" role="img" aria-label="Auto lets Ollama choose placement. GPU requests full GPU offload. CPU uses system memory and is usually slower." data-tooltip="Auto lets Ollama choose placement. GPU requests full GPU offload. CPU uses system memory and is usually slower.">?</span></span>
+              <span>Deploy to <span class="help-tip" tabindex="0" role="button" aria-expanded="false" aria-label="Auto lets Ollama choose placement. GPU requests full GPU offload. CPU uses system memory and is usually slower." data-tooltip="Auto lets Ollama choose placement. GPU requests full GPU offload. CPU uses system memory and is usually slower.">?</span></span>
               <select id="serve-device">
                 <option value="auto" selected>Auto</option>
                 <option value="gpu">GPU</option>
@@ -232,7 +232,7 @@
               </select>
             </label>
             <label class="field">
-              <span>Keep-alive <span class="help-tip" tabindex="0" role="img" aria-label="How long the model stays loaded in RAM or VRAM after use. Enter 60m, 1h, or 0 to unload immediately." data-tooltip="How long the model stays loaded in RAM or VRAM after use. Enter 60m, 1h, or 0 to unload immediately.">?</span></span>
+              <span>Keep-alive <span class="help-tip" tabindex="0" role="button" aria-expanded="false" aria-label="How long the model stays loaded in RAM or VRAM after use. Enter 60m, 1h, or 0 to unload immediately." data-tooltip="How long the model stays loaded in RAM or VRAM after use. Enter 60m, 1h, or 0 to unload immediately.">?</span></span>
               <input type="text" id="keep-alive" value="60m" />
             </label>
             <span class="muted small" style="align-self: center">These apply when you Deploy a model below.</span>
@@ -636,7 +636,8 @@
       </section>
     </main>
 
+    <div id="ui-tooltip" class="ui-tooltip" role="tooltip" aria-hidden="true"></div>
     <div id="toasts" class="toasts" aria-live="polite"></div>
-    <script src="app.js?v=20260718-ui25"></script>
+    <script src="app.js?v=20260718-ui26"></script>
   </body>
 </html>

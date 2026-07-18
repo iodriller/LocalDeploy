@@ -99,7 +99,10 @@ def test_api_docs_quant_help_and_model_lifecycle_controls_are_present() -> None:
     assert "QUANT_EXPLANATIONS" in js
     assert "4-bit K-quant, medium variant" in js
     assert html.count('class="help-tip"') >= 4
-    assert ".help-tip::after" in css
+    assert 'id="ui-tooltip"' in html
+    assert "initTooltips" in js
+    assert ".ui-tooltip.is-visible" in css
+    assert ".help-tip::after" not in css
     assert ".quant-label" in css
     assert "unload-installed-btn" in js
     assert 'postJSON("/models/stop"' in js
