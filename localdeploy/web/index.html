@@ -4,8 +4,8 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>LocalDeploy</title>
-    <link rel="icon" type="image/png" href="favicon.png?v=20260717-ui22" />
-    <link rel="stylesheet" href="styles.css?v=20260717-ui22" />
+    <link rel="icon" type="image/png" href="favicon.png?v=20260718-ui24" />
+    <link rel="stylesheet" href="styles.css?v=20260718-ui24" />
     <script>
       // Applied synchronously, before CSS renders, so a saved preference never flashes the other theme.
       try {
@@ -19,7 +19,7 @@
   <body>
     <header class="topbar">
       <button class="brand brand-button" id="brand-home" type="button" title="Go to setup">
-        <img class="brand-icon" src="logo.svg?v=20260717-ui22" alt="" />
+        <img class="brand-icon" src="logo.svg?v=20260718-ui24" alt="" />
         <span>LocalDeploy</span>
       </button>
       <nav class="tabs" role="tablist">
@@ -115,67 +115,29 @@
 
           <div class="seg-panel" data-seg-panel="recommended">
             <div class="section-title">
-              <p class="muted small">Top models from a curated catalog that fit your detected GPU (or system RAM), with a safety margin so they don't just barely fit. Good first pull if you're not sure where to start.</p>
+              <p class="muted small">Hand-picked, known-good models that fit your detected GPU (or system RAM), with a safety margin so they don't just barely fit. Good first pull if you're not sure where to start.</p>
               <button class="btn primary" id="btn-starter-pack" data-icon="★">Recommend models for my hardware</button>
             </div>
             <div id="starter-pack-body" class="muted">Detect hardware first, then run this to see curated picks for your budget.</div>
           </div>
 
           <div class="seg-panel hidden" data-seg-panel="hf">
-            <div class="section-title">
-              <div>
-                <h3 class="sub">📦 Local provider inventory</h3>
-                <p class="muted small">Every model your local runtimes expose — Ollama, LM Studio, vLLM, Docker Model Runner, llama.cpp, and configured OpenAI-compatible servers — searchable in one place.</p>
-              </div>
-              <button class="btn" id="btn-provider-refresh" data-icon="↻">Refresh providers</button>
-            </div>
-            <div id="provider-statuses" class="provider-statuses"></div>
-            <div class="row gap wrap catalog-toolbar">
-              <label class="field grow">
-                <span>Search</span>
-                <input type="search" id="catalog-search" placeholder="Filter by model, publisher, quant…" />
-              </label>
-              <label class="field">
-                <span>Runtime</span>
-                <select id="catalog-provider"><option value="">All</option></select>
-              </label>
-              <label class="field">
-                <span>Size</span>
-                <select id="catalog-size">
-                  <option value="">Any</option>
-                  <option value="tiny">&lt; 4B</option>
-                  <option value="small">4–8B</option>
-                  <option value="mid">8–15B</option>
-                  <option value="large">15B+</option>
-                </select>
-              </label>
-              <label class="field">
-                <span>Sort by</span>
-                <select id="catalog-sort">
-                  <option value="tps">Measured tok/s</option>
-                  <option value="name">Name A–Z</option>
-                  <option value="params">Parameters</option>
-                  <option value="provider">Runtime</option>
-                </select>
-              </label>
-            </div>
-            <div id="provider-catalog-body" class="muted">Provider inventory has not been loaded yet.</div>
-            <div id="catalog-pagination" class="catalog-pagination hidden">
-              <button class="btn compact" id="catalog-prev">◀ Prev</button>
-              <span id="catalog-page-label" class="muted small"></span>
-              <button class="btn compact" id="catalog-next">Next ▶</button>
-            </div>
-            <h3 class="sub" style="margin-top:1.1rem">🌐 Discover new models</h3>
-            <p class="muted small" style="margin-bottom:0.4rem">Search Hugging Face for GGUF repos Ollama can pull directly, or browse the <a href="https://ollama.com/search" target="_blank" rel="noopener">Ollama library ↗</a>.</p>
+            <p class="muted small" style="margin-bottom:0.5rem">Search remote model catalogs, not just models already on this machine. Local-deployable entries offer Pull; cloud-only entries are labeled and link to their source.</p>
             <div class="row gap wrap" style="margin-bottom: 0.5rem">
               <label class="field grow">
-                <span>Search (blank = auto-detect from installed)</span>
-                <input type="text" id="hf-search" placeholder="gemma, llama, qwen…" />
+                <span>Search models to pull</span>
+                <input type="search" id="hf-search" placeholder="gemma, qwen, coder, vision… (blank = most popular)" />
               </label>
-              <label class="field" style="min-width: 5rem">
-                <span>Results</span>
-                <input type="number" id="hf-limit" value="5" min="1" max="20" />
+              <label class="field">
+                <span>Source</span>
+                <select id="catalog-source">
+                  <option value="library" selected>🦙 Ollama library</option>
+                  <option value="hf">🤗 Hugging Face (GGUF)</option>
+                </select>
               </label>
+              <button class="btn primary" id="btn-hf-search" data-icon="⌕">Search</button>
+            </div>
+            <div class="row gap wrap hidden" id="hf-options" style="margin-bottom: 0.5rem">
               <label class="field">
                 <span>Show</span>
                 <select id="hf-fit-filter">
@@ -188,9 +150,9 @@
                 <input type="checkbox" id="hf-gguf-only" checked />
                 <span>GGUF only ⓘ</span>
               </label>
-              <button class="btn primary" id="btn-hf-search" data-icon="⌕">Search Hugging Face</button>
             </div>
-            <div id="updates-body" class="muted">No Hugging Face search has been run yet.</div>
+            <div id="updates-body" class="muted">Search above, or leave it blank to see the most popular models.</div>
+            <p class="muted small" style="margin-top:0.6rem">Browse directly: <a href="https://ollama.com/search" target="_blank" rel="noopener">Ollama library ↗</a> · <a href="https://huggingface.co/models?library=gguf" target="_blank" rel="noopener">Hugging Face GGUF ↗</a></p>
           </div>
 
           <div class="seg-panel hidden" data-seg-panel="manual">
@@ -216,7 +178,7 @@
               </label>
               <label class="field" style="min-width: 6.5rem" title="Context window used for the KV-cache part of the estimate.">
                 <span>Context ⓘ</span>
-                <input type="number" id="quant-context" value="8192" min="512" step="512" />
+                <input type="number" id="quant-context" value="4096" min="512" step="512" />
               </label>
               <button class="btn primary" id="btn-quant-advise" data-icon="⚖">Estimate quants</button>
             </div>
@@ -317,6 +279,53 @@
             <span class="muted small">GPU auto-pick, deploy by saved profile, and all run profiles &amp; tuning</span>
           </summary>
 
+          <!-- Local runtime inventory -->
+          <div class="advanced-block">
+            <div class="card-head">
+              <div>
+                <h3 class="sub">📦 Local runtime inventory</h3>
+                <p class="muted small">Models already exposed by runtimes on this machine — Ollama, LM Studio, vLLM, Docker Model Runner, llama.cpp, and configured OpenAI-compatible servers. One click adds a run profile.</p>
+              </div>
+              <button class="btn" id="btn-provider-refresh" data-icon="↻">Scan runtimes</button>
+            </div>
+            <div id="provider-statuses" class="provider-statuses"></div>
+            <div class="row gap wrap catalog-toolbar">
+              <label class="field grow">
+                <span>Search</span>
+                <input type="search" id="catalog-search" placeholder="Filter by model, publisher, quant…" />
+              </label>
+              <label class="field">
+                <span>Runtime</span>
+                <select id="catalog-provider"><option value="">All</option></select>
+              </label>
+              <label class="field">
+                <span>Size</span>
+                <select id="catalog-size">
+                  <option value="">Any</option>
+                  <option value="tiny">&lt; 4B</option>
+                  <option value="small">4–8B</option>
+                  <option value="mid">8–15B</option>
+                  <option value="large">15B+</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>Sort by</span>
+                <select id="catalog-sort">
+                  <option value="tps">Measured tok/s</option>
+                  <option value="name">Name A–Z</option>
+                  <option value="params">Parameters</option>
+                  <option value="provider">Runtime</option>
+                </select>
+              </label>
+            </div>
+            <div id="provider-catalog-body" class="muted">Runtimes have not been scanned yet.</div>
+            <div id="catalog-pagination" class="catalog-pagination hidden">
+              <button class="btn compact" id="catalog-prev">◀ Prev</button>
+              <span id="catalog-page-label" class="muted small"></span>
+              <button class="btn compact" id="catalog-next">Next ▶</button>
+            </div>
+          </div>
+
           <!-- Tune for my GPU -->
           <div class="advanced-block">
             <div class="card-head">
@@ -385,24 +394,39 @@
         <div class="chat-shell">
           <header class="chat-topbar">
             <div class="chat-topbar-left">
-              <span class="chat-logo">💬</span>
               <div>
                 <h2>Chat</h2>
-                <span id="chat-hint" class="muted small"></span>
+                <span id="chat-hint" class="muted small">Checking installed models…</span>
               </div>
             </div>
             <div class="chat-topbar-right">
-              <label class="field chat-model-field">
-                <span>Model</span>
-                <select id="chat-profile"></select>
-              </label>
-              <button class="btn compact" id="btn-chat-system-toggle" type="button" title="Set a system prompt">⚙ System</button>
-              <button class="btn compact" id="btn-chat-clear" title="Clear the conversation">🧹 Clear</button>
+              <button class="btn compact" id="btn-chat-system-toggle" type="button">System prompt</button>
+              <button class="btn compact" id="btn-chat-clear" type="button">Clear chat</button>
             </div>
           </header>
+          <div class="chat-session-bar">
+            <label class="field chat-model-field">
+              <span>Installed model</span>
+              <select id="chat-model" aria-label="Installed model"></select>
+            </label>
+            <div class="chat-session-state" id="chat-session-state" aria-live="polite">
+              <span class="chat-state-dot"></span>
+              <span>Not loaded</span>
+            </div>
+            <label class="field chat-duration-field">
+              <span>Keep loaded</span>
+              <select id="chat-keep-alive">
+                <option value="15m">15 minutes</option>
+                <option value="60m" selected>60 minutes</option>
+                <option value="4h">4 hours</option>
+                <option value="24h">24 hours</option>
+              </select>
+            </label>
+            <button class="btn primary chat-session-action" id="btn-chat-session" type="button">Load model</button>
+          </div>
           <div class="chat-system-panel hidden" id="chat-system-panel">
             <label class="field grow">
-              <span>System prompt — sent with every message</span>
+              <span>System prompt</span>
               <textarea id="chat-system" rows="2" spellcheck="false" placeholder="You are a helpful assistant…"></textarea>
             </label>
           </div>
@@ -414,10 +438,10 @@
                 🖼
                 <input type="file" id="chat-images" accept="image/png,image/jpeg,image/webp,image/gif" multiple hidden />
               </label>
-              <textarea id="chat-input" rows="1" spellcheck="false" placeholder="Ask anything… (Enter to send, Shift+Enter for a new line)"></textarea>
-              <button class="btn primary chat-send" id="btn-chat-send" title="Send (Enter)">➤ Send</button>
+              <textarea id="chat-input" rows="1" spellcheck="false" placeholder="Load an installed model to start chatting" disabled></textarea>
+              <button class="btn primary chat-send" id="btn-chat-send" title="Send (Enter)" disabled>Send</button>
             </div>
-            <div class="chat-footnote muted small">Runs 100% locally through <code>/v1/chat/completions</code> — nothing leaves this machine.</div>
+            <div class="chat-footnote muted small">Chat requests use the local <code>/v1/chat/completions</code> endpoint.</div>
           </footer>
         </div>
       </section>
@@ -633,6 +657,6 @@
     </main>
 
     <div id="toasts" class="toasts" aria-live="polite"></div>
-    <script src="app.js?v=20260717-ui22"></script>
+    <script src="app.js?v=20260718-ui24"></script>
   </body>
 </html>

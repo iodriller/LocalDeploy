@@ -81,6 +81,23 @@ def test_check_updates_offline_is_graceful(monkeypatch) -> None:
     assert "Hugging Face" in body["message"]
 
 
+def test_check_updates_blank_query_requests_popular_catalog(monkeypatch) -> None:
+    seen = []
+
+    def fake_list_hf(query, limit, gguf_only=True):
+        seen.append((query, limit, gguf_only))
+        return ([{"id": "org/popular-GGUF"}], None)
+
+    monkeypatch.setattr(registry, "_list_hf", fake_list_hf)
+    body = client.post(
+        "/registry/check-updates",
+        json={"queries": [""], "limit": 24, "gguf_only": True},
+    ).json()
+    assert seen == [("", 24, True)]
+    assert body["results"][0]["query"] == ""
+    assert body["results"][0]["candidates"][0]["id"] == "org/popular-GGUF"
+
+
 def test_list_hf_marks_gguf_repos_pullable(monkeypatch) -> None:
     import huggingface_hub
 
