@@ -10,22 +10,148 @@ special cases. Network/dependency failures degrade to a clear "offline" result.
 from __future__ import annotations
 
 import re
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+import json
+import os
+from statistics import mean
 from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import APIRouter
 from pydantic import BaseModel
 
-from ..utils import offline_mode
+from ..backends.openai_compatible import list_openai_models
+from ..utils import BackendCallError, get_backend_base_url, offline_mode
 from . import _ollama
 from .fit import FitRequest, fit_check
 
 router = APIRouter()
+
+_LOCAL_PROVIDER_DEFAULTS = {
+    "lmstudio": "http://127.0.0.1:1234",
+    "docker": "http://127.0.0.1:12434",
+}
 
 
 @router.get("/registry/installed")
 def registry_installed() -> Dict[str, Any]:
     models, error = _ollama.list_installed()
     return {"success": error is None, "installed": models, "error": error}
+
+
+def _benchmark_rates() -> Dict[Tuple[str, str], Dict[str, Any]]:
+    """Index opt-in server benchmark history by (backend, model)."""
+    try:
+        from .history import _history_dir
+
+        files = list(_history_dir().glob("*.json"))[-200:]
+    except OSError:
+        return {}
+    values: Dict[Tuple[str, str], List[float]] = {}
+    counts: Dict[Tuple[str, str], int] = {}
+    for path in files:
+        try:
+            run = json.loads(Path(path).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        key = (str(run.get("backend") or ""), str(run.get("model_id") or run.get("profile") or ""))
+        rates = []
+        for test in run.get("tests") or []:
+            metrics = test.get("metrics") or {}
+            rate = metrics.get("tokens_per_second") or test.get("approx_tokens_per_second")
+            if rate is not None:
+                try:
+                    rates.append(float(rate))
+                except (TypeError, ValueError):
+                    pass
+        if rates and key[1]:
+            values.setdefault(key, []).extend(rates)
+            counts[key] = counts.get(key, 0) + 1
+    return {
+        key: {"tokens_per_second": round(mean(rates), 2), "sample_count": len(rates), "run_count": counts[key]}
+        for key, rates in values.items()
+    }
+
+
+def _provider_targets() -> List[Dict[str, Any]]:
+    from api_server import load_config
+
+    targets: Dict[Tuple[str, str], Dict[str, Any]] = {}
+    config = load_config()
+    for profile_name, profile in config.get("profiles", {}).items():
+        backend = str(profile.get("backend") or "ollama").lower()
+        if backend == "ollama":
+            continue
+        try:
+            base_url = get_backend_base_url(profile, backend)
+        except BackendCallError:
+            continue
+        target = targets.setdefault(
+            (backend, base_url), {"provider": backend, "base_url": base_url, "profiles": []}
+        )
+        target["profiles"].append(profile_name)
+    for backend, default in _LOCAL_PROVIDER_DEFAULTS.items():
+        targets.setdefault((backend, default), {"provider": backend, "base_url": default, "profiles": []})
+    if os.getenv("VLLM_BASE_URL"):
+        try:
+            base_url = get_backend_base_url({}, "vllm")
+            targets.setdefault(("vllm", base_url), {"provider": "vllm", "base_url": base_url, "profiles": []})
+        except BackendCallError:
+            pass
+    return list(targets.values())
+
+
+def _generic_inventory(target: Dict[str, Any]) -> Dict[str, Any]:
+    models, error = list_openai_models(target["base_url"], target["provider"])
+    return {**target, "reachable": error is None, "models": models, "error": error}
+
+
+@router.get("/registry/providers")
+def registry_providers() -> Dict[str, Any]:
+    """Inventory models exposed by supported loopback inference runtimes."""
+    installed, ollama_error = _ollama.list_installed()
+    version, _ = _ollama.version()
+    try:
+        ollama_base_url = _ollama.base_url()
+    except BackendCallError:
+        ollama_base_url = "http://127.0.0.1:11434"
+    providers = [
+        {
+            "provider": "ollama",
+            "base_url": ollama_base_url,
+            "reachable": ollama_error is None,
+            "version": version,
+            "models": installed,
+            "error": ollama_error,
+        }
+    ]
+    targets = _provider_targets()
+    with ThreadPoolExecutor(max_workers=max(1, len(targets))) as executor:
+        providers.extend(executor.map(_generic_inventory, targets))
+    rates = _benchmark_rates()
+    rows = []
+    for provider in providers:
+        backend = str(provider["provider"])
+        for model in provider.get("models") or []:
+            model_id = str(model.get("name") or model.get("id") or "")
+            details = model.get("details") if isinstance(model.get("details"), dict) else {}
+            measured = rates.get((backend, model_id)) or rates.get((backend, str(model.get("profile") or "")))
+            rows.append(
+                {
+                    "model": model_id,
+                    "provider": backend,
+                    "publisher": model.get("owned_by") or details.get("family"),
+                    "parameters": details.get("parameter_size"),
+                    "quant": details.get("quantization_level"),
+                    "context": model.get("context_length"),
+                    "digest": model.get("digest"),
+                    "installed": True,
+                    "tokens_per_second": measured.get("tokens_per_second") if measured else None,
+                    "benchmark_samples": measured.get("sample_count") if measured else 0,
+                    "base_url": provider["base_url"],
+                }
+            )
+    return {"success": True, "providers": providers, "models": rows}
 
 
 class CheckUpdatesRequest(BaseModel):
@@ -120,6 +246,10 @@ def _list_hf(
             items.append(
                 {
                     "id": mid,
+                    "provider": "huggingface",
+                    "publisher": str(mid).split("/", 1)[0] if mid and "/" in str(mid) else None,
+                    "pipeline_tag": getattr(model, "pipeline_tag", None),
+                    "tags": list(getattr(model, "tags", None) or []),
                     "last_modified": (str(getattr(model, "lastModified", "")) or None),
                     "downloads": downloads,
                     "likes": likes,

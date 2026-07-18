@@ -37,12 +37,24 @@ def test_run_benchmark_reports_mixed_for_multiple_profiles(monkeypatch) -> None:
     assert result["backend"] == "mixed"
 
 
-def test_embeddings_returns_501() -> None:
-    response = client.post("/v1/embeddings", json={"input": "hello", "model": "any"})
-    assert response.status_code == 501
+def test_embeddings_returns_openai_shape(monkeypatch) -> None:
+    monkeypatch.setattr(
+        api_server,
+        "embed_ollama",
+        lambda base_url, model, inputs, timeout: {
+            "embeddings": [[0.25, -0.5] for _ in inputs],
+            "prompt_eval_count": 2,
+        },
+    )
+    response = client.post(
+        "/v1/embeddings",
+        json={"input": ["hello", "world"], "model": "gemma3_4b_ollama_safe"},
+    )
+    assert response.status_code == 200
     body = response.json()
-    assert body["error"]["code"] == "embeddings_not_implemented"
-    assert "ollama" in body["error"]["message"].lower()
+    assert body["object"] == "list"
+    assert body["data"][0] == {"object": "embedding", "embedding": [0.25, -0.5], "index": 0}
+    assert body["usage"]["total_tokens"] == 2
 
 
 def test_v1_models_lists_enabled_profiles() -> None:

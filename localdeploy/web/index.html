@@ -4,8 +4,8 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>LocalDeploy</title>
-    <link rel="icon" type="image/png" href="favicon.png?v=20260717-ui20" />
-    <link rel="stylesheet" href="styles.css?v=20260717-ui20" />
+    <link rel="icon" type="image/png" href="favicon.png?v=20260717-ui21" />
+    <link rel="stylesheet" href="styles.css?v=20260717-ui21" />
     <script>
       // Applied synchronously, before CSS renders, so a saved preference never flashes the other theme.
       try {
@@ -19,7 +19,7 @@
   <body>
     <header class="topbar">
       <button class="brand brand-button" id="brand-home" type="button" title="Go to setup">
-        <img class="brand-icon" src="logo.svg?v=20260717-ui20" alt="" />
+        <img class="brand-icon" src="logo.svg?v=20260717-ui21" alt="" />
         <span>LocalDeploy</span>
       </button>
       <nav class="tabs" role="tablist">
@@ -108,7 +108,7 @@
           </div>
           <div class="segmented" role="tablist" aria-label="How to find a model">
             <button class="seg-btn active" data-seg="recommended" role="tab" aria-selected="true">★ Recommended</button>
-            <button class="seg-btn" data-seg="hf" role="tab" aria-selected="false">⌕ Search Hugging Face</button>
+            <button class="seg-btn" data-seg="hf" role="tab" aria-selected="false">⌕ Model catalog</button>
             <button class="seg-btn" data-seg="manual" role="tab" aria-selected="false">↓ Pull by name</button>
             <button class="seg-btn" data-seg="quant" role="tab" aria-selected="false">⚖ Quant advisor</button>
           </div>
@@ -122,6 +122,15 @@
           </div>
 
           <div class="seg-panel hidden" data-seg-panel="hf">
+            <div class="section-title">
+              <div>
+                <h3 class="sub">Local provider inventory</h3>
+                <p class="muted small">Models exposed by Ollama, LM Studio, vLLM, Docker Model Runner, llama.cpp, and configured OpenAI-compatible runtimes.</p>
+              </div>
+              <button class="btn" id="btn-provider-refresh">Refresh providers</button>
+            </div>
+            <div id="provider-catalog-body" class="muted">Provider inventory has not been loaded yet.</div>
+            <h3 class="sub" style="margin-top:1rem">Find GGUF models</h3>
             <div class="row gap wrap" style="margin-bottom: 0.5rem">
               <label class="field grow">
                 <span>Search (blank = auto-detect from installed)</span>
@@ -454,6 +463,10 @@
               <span>Timeout (s)</span>
               <input type="number" id="bench-timeout" value="240" min="1" />
             </label>
+            <label class="field" title="Run each test repeatedly so the report can include latency and token-rate variance.">
+              <span>Repetitions</span>
+              <input type="number" id="bench-repetitions" value="3" min="1" max="10" />
+            </label>
             <button class="btn primary" id="btn-run">Run benchmark suite</button>
             <button class="btn" id="btn-clear-runs" title="Clear local benchmark history">Clear history</button>
           </div>
@@ -575,6 +588,6 @@
     </main>
 
     <div id="toasts" class="toasts" aria-live="polite"></div>
-    <script src="app.js?v=20260717-ui20"></script>
+    <script src="app.js?v=20260717-ui21"></script>
   </body>
 </html>
