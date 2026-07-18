@@ -127,7 +127,7 @@ Reports land in `reports/benchmark_<timestamp>.json` and `.md`.
 
 ## Profiles in `config.example.json`
 
-All new profiles ship **disabled**. To use one: edit `config.json`, flip `enabled: true`, run the `ollama pull` command (or set the GGUF `model_id` path for llama.cpp), then restart the API.
+Your live `config.json` starts **empty** and fills itself in: pulling a model through the UI (or `POST /models/pull`) auto-creates a sensible profile for it. `config.example.json` is a *reference* showing every profile field with hand-tuned values — copy an entry into `config.json` only if you want to start from one of these recipes instead. To use a copied entry: flip `enabled: true`, run the `ollama pull` command (or set the GGUF `model_id` path for llama.cpp), then restart the API.
 
 ### Text profiles
 

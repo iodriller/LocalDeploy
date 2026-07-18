@@ -15,6 +15,10 @@ const state = {
   vramFreeMb: null,
   vramBudgetMb: null,
   installedByName: {},
+  // False until /registry/installed has answered once — before that we can't
+  // tell "nothing pulled" from "not checked yet", so nothing gets hidden.
+  installedLoaded: false,
+  benchShowUnpulled: false,
   servedModels: [],
   runningDetails: [],
   runningPlacements: {},
@@ -691,16 +695,7 @@ async function loadProfiles() {
     state.profileModels = {};
     state.profiles.forEach((name) => (state.profileModels[name] = profiles[name]?.model_id || name));
     state.defaultProfile = data.default_profile || state.profiles[0] || null;
-    const options = state.profiles
-      .map((name) => {
-        const p = profiles[name] || {};
-        const label = p.model_id ? `${name} — ${p.model_id}` : name;
-        const sel = name === state.defaultProfile ? " selected" : "";
-        return `<option value="${esc(name)}"${sel}>${esc(label)}</option>`;
-      })
-      .join("");
-    $("#profile-select").innerHTML = options;
-    $("#bench-profile-select").innerHTML = options;
+    renderProfileSelectOptions();
     renderBenchmarkProfileChips();
     updateBenchmarkSummary();
     renderBenchmarkWorkspace();
@@ -711,6 +706,29 @@ async function loadProfiles() {
     setProfileActionsEnabled(false);
     toast(`Could not load profiles: ${err.message}`, "error");
   }
+}
+
+// (Re)build both profile <select>s, annotating profiles whose model isn't
+// pulled so a dropdown never silently offers a model that can't deploy.
+// Called again after the installed list loads, preserving the selection.
+function renderProfileSelectOptions() {
+  const build = (current) =>
+    state.profiles
+      .map((name) => {
+        const p = state.profileData[name] || {};
+        let label = p.model_id ? `${name} — ${p.model_id}` : name;
+        if (profileIsUnpulled(name)) {
+          label += ` (${installedStatusForProfile(name).label})`;
+        }
+        const selectedName = current && state.profiles.includes(current) ? current : state.defaultProfile;
+        const sel = name === selectedName ? " selected" : "";
+        return `<option value="${esc(name)}"${sel}>${esc(label)}</option>`;
+      })
+      .join("");
+  ["#profile-select", "#bench-profile-select"].forEach((sel) => {
+    const el = $(sel);
+    if (el) el.innerHTML = build(el.value);
+  });
 }
 
 // Guard actions that need a profile so they can't fire a blank profile name.
@@ -735,6 +753,12 @@ function selectedBenchProfiles() {
 }
 
 function installedStatusForProfile(profileName) {
+  const p = state.profileData[profileName] || {};
+  if ((p.backend || "ollama") === "llamacpp") {
+    // GGUF file profiles: presence is reported by the server (model_file_exists).
+    if (p.model_file_exists === false) return { label: "file missing", cls: "off" };
+    return { label: "gguf on disk", cls: "on" };
+  }
   const model = state.profileModels[profileName] || profileName;
   if (state.installedByName[model]) return { label: "pulled", cls: "on" };
   const base = model.split(":")[0];
@@ -742,11 +766,21 @@ function installedStatusForProfile(profileName) {
   return hit ? { label: "variant pulled", cls: "tight" } : { label: "not pulled", cls: "off" };
 }
 
+// A profile is hidden by default when its model isn't actually on the machine:
+// an Ollama profile whose model isn't pulled, or a llama.cpp profile whose
+// GGUF file the server reports missing.
+function profileIsUnpulled(name) {
+  const p = state.profileData[name] || {};
+  if ((p.backend || "ollama") === "llamacpp") return p.model_file_exists === false;
+  if (!state.installedLoaded) return false;
+  return installedStatusForProfile(name).label === "not pulled";
+}
+
 function renderBenchmarkProfileChips() {
   const body = $("#bench-profile-chips");
   if (!body) return;
   if (!state.profiles.length) {
-    body.innerHTML = `<div class="muted">No saved profiles loaded.</div>`;
+    body.innerHTML = `<div class="empty-state">No profiles yet. Pull a model in <b>Setup &amp; Deploy → Get a model</b> and it appears here automatically.</div>`;
     return;
   }
   const currentlySelected = new Set(selectedBenchProfiles());
@@ -759,12 +793,29 @@ function renderBenchmarkProfileChips() {
     }
   }
   const filter = ($("#bench-profile-filter")?.value || "").trim().toLowerCase();
-  const visibleProfiles = state.profiles.filter((name) => {
+  const matchesFilter = (name) => {
     const model = state.profileModels[name] || name;
     return !filter || name.toLowerCase().includes(filter) || model.toLowerCase().includes(filter);
-  });
+  };
+  // Not-pulled profiles stay hidden unless revealed (or already selected —
+  // never hide something the user has checked).
+  const candidates = state.profiles.filter(matchesFilter);
+  const hidden = state.benchShowUnpulled
+    ? []
+    : candidates.filter((name) => profileIsUnpulled(name) && !currentlySelected.has(name));
+  const visibleProfiles = candidates.filter((name) => !hidden.includes(name));
+  const toggleHtml = hidden.length || state.benchShowUnpulled
+    ? `<button class="link-btn" id="bench-toggle-unpulled" type="button">${
+        state.benchShowUnpulled
+          ? "Hide profiles without a pulled model"
+          : `Show ${hidden.length} hidden (model not pulled)`
+      }</button>`
+    : "";
   if (!visibleProfiles.length) {
-    body.innerHTML = `<div class="empty-state">No profiles match this filter.</div>`;
+    body.innerHTML = filter
+      ? `<div class="empty-state">No profiles match this filter.${toggleHtml ? ` ${toggleHtml}` : ""}</div>`
+      : `<div class="empty-state">No pulled models to benchmark yet. Pull one in <b>Setup &amp; Deploy</b> first.${toggleHtml ? ` ${toggleHtml}` : ""}</div>`;
+    wireUnpulledToggle(body);
     return;
   }
   body.innerHTML = visibleProfiles
@@ -786,8 +837,8 @@ function renderBenchmarkProfileChips() {
         </span>
       </label>`;
     })
-    .join("");
-  $$("input", body).forEach((input) => {
+    .join("") + (toggleHtml ? `<div class="chip-grid-footer">${toggleHtml}</div>` : "");
+  $$('input[type="checkbox"]', body).forEach((input) => {
     input.addEventListener("change", () => {
       const selected = new Set(state.benchmarkSelectedProfiles);
       if (input.checked) selected.add(input.value);
@@ -798,6 +849,14 @@ function renderBenchmarkProfileChips() {
       if (first) $("#bench-profile-select").value = first;
       updateBenchmarkSummary();
     });
+  });
+  wireUnpulledToggle(body);
+}
+
+function wireUnpulledToggle(root) {
+  $("#bench-toggle-unpulled", root)?.addEventListener("click", () => {
+    state.benchShowUnpulled = !state.benchShowUnpulled;
+    renderBenchmarkProfileChips();
   });
 }
 
@@ -1192,20 +1251,25 @@ async function refreshInstalled() {
     const data = await getJSON("/registry/installed");
     if (!data.success) {
       state.installedByName = {};
+      state.installedLoaded = false; // unknown, so nothing gets hidden as "not pulled"
       renderBenchmarkProfileChips();
+      renderProfileSelectOptions();
       body.innerHTML = `<div class="muted">${esc(data.error || "Ollama unreachable.")}</div>`;
       return;
     }
     state.installedByName = {};
+    state.installedLoaded = true;
     if (!data.installed.length) {
       renderBenchmarkProfileChips();
-      body.innerHTML = `<div class="muted">No models pulled yet.</div>`;
+      renderProfileSelectOptions();
+      body.innerHTML = `<div class="muted">No models pulled yet — grab one from <b>Get a model</b> above.</div>`;
       return;
     }
     data.installed.forEach((m) => {
       if (m.name) state.installedByName[m.name] = m;
     });
     renderBenchmarkProfileChips();
+    renderProfileSelectOptions();
     body.innerHTML =
       `<div class="mlist">` +
       data.installed
@@ -1398,6 +1462,43 @@ async function scanConfiguredFits() {
   } catch (err) {
     body.innerHTML = `<div class="muted">Scan failed.</div>`;
     toast(`Fit scan failed: ${err.message}`, "error");
+  } finally {
+    busy(btn, false);
+  }
+}
+
+// One-click cleanup: delete every Ollama profile whose model isn't pulled.
+// Keeps config.json an honest mirror of what's actually on the machine.
+async function cleanOrphanProfiles(btn) {
+  if (!state.installedLoaded) await refreshInstalled();
+  const orphans = state.profiles.filter((name) => {
+    const p = state.profileData[name] || {};
+    if ((p.backend || "ollama") === "llamacpp") return p.model_file_exists === false;
+    if (!state.installedLoaded) return false;
+    return !findInstalledModel(p.model_id || name);
+  });
+  if (!orphans.length) {
+    toast("No orphan profiles — every profile's model is pulled.", "success");
+    return;
+  }
+  const preview = orphans.slice(0, 12).join("\n  ");
+  const more = orphans.length > 12 ? `\n  …and ${orphans.length - 12} more` : "";
+  if (!window.confirm(`Remove ${orphans.length} profile(s) whose model is not pulled?\n\n  ${preview}${more}\n\n(Models on disk are not touched; profiles are recreated automatically if you pull the model again.)`)) return;
+  busy(btn, true);
+  let removed = 0;
+  try {
+    for (const profile of orphans) {
+      const res = await postJSON("/profiles/delete", { profile });
+      if (res.success) removed += 1;
+      else toast(res.error || `Could not delete ${profile}.`, "error");
+    }
+    toast(`Removed ${removed} orphan profile(s).`, "success");
+    await loadProfiles();
+    if (!$("#fit-finder-body").textContent.includes("have not been scanned")) {
+      await scanConfiguredFits();
+    }
+  } catch (err) {
+    toast(`Cleanup failed: ${err.message}`, "error");
   } finally {
     busy(btn, false);
   }
@@ -3313,6 +3414,7 @@ $("#btn-installed").addEventListener("click", refreshInstalled);
 $("#btn-updates")?.addEventListener("click", (e) => checkUpdates(e));
 $("#btn-hf-search")?.addEventListener("click", (e) => checkUpdates(e));
 $("#btn-fit-profiles")?.addEventListener("click", scanConfiguredFits);
+$("#btn-clean-orphans")?.addEventListener("click", (e) => cleanOrphanProfiles(e.currentTarget));
 $("#btn-starter-pack")?.addEventListener("click", (e) => starterPack(e));
 $("#btn-free").addEventListener("click", freeMemory);
 $("#btn-pull").addEventListener("click", () => pullModel());

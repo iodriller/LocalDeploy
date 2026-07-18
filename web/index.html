@@ -4,8 +4,8 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>LocalDeploy</title>
-    <link rel="icon" type="image/png" href="favicon.png?v=20260711-ui18" />
-    <link rel="stylesheet" href="styles.css?v=20260711-ui18" />
+    <link rel="icon" type="image/png" href="favicon.png?v=20260717-ui19" />
+    <link rel="stylesheet" href="styles.css?v=20260717-ui19" />
     <script>
       // Applied synchronously, before CSS renders, so a saved preference never flashes the other theme.
       try {
@@ -19,7 +19,7 @@
   <body>
     <header class="topbar">
       <button class="brand brand-button" id="brand-home" type="button" title="Go to setup">
-        <img class="brand-icon" src="favicon.png?v=20260711-ui18" alt="" />
+        <img class="brand-icon" src="logo.svg?v=20260717-ui19" alt="" />
         <span>LocalDeploy</span>
       </button>
       <nav class="tabs" role="tablist">
@@ -293,6 +293,7 @@
                 </select>
               </label>
               <button class="btn primary" id="btn-fit-profiles" data-icon="⌕">Scan saved profiles</button>
+              <button class="btn" id="btn-clean-orphans" data-icon="✕" title="Delete every profile whose Ollama model is not pulled. Models on disk are not touched.">Remove not-pulled profiles</button>
             </div>
             <div id="fit-finder-body" class="muted">Saved profiles have not been scanned against the model fit budget yet.</div>
           </div>
@@ -502,6 +503,6 @@
     </main>
 
     <div id="toasts" class="toasts" aria-live="polite"></div>
-    <script src="app.js?v=20260711-ui18"></script>
+    <script src="app.js?v=20260717-ui19"></script>
   </body>
 </html>

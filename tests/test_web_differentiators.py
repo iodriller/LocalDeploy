@@ -122,11 +122,36 @@ def test_set_default_unknown_profile():
 def test_set_default_writes_config(monkeypatch, tmp_path):
     import json
 
+    # A fresh install has zero profiles (no more example fallback), so seed one
+    # the way a pull would before pointing the default at it.
     cfg = tmp_path / "config.json"
+    cfg.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "default_profile": None,
+                "profiles": {"gemma3_4b_ollama_safe": {"backend": "ollama", "model_id": "gemma3:4b", "enabled": True}},
+            }
+        ),
+        encoding="utf-8",
+    )
     monkeypatch.setenv("CONFIG_PATH", str(cfg))
     body = client.post("/system/set-default", json={"profile": "gemma3_4b_ollama_safe"}).json()
     assert body["success"] is True
     assert json.loads(cfg.read_text())["default_profile"] == "gemma3_4b_ollama_safe"
+
+
+def test_fresh_install_has_no_phantom_profiles(monkeypatch, tmp_path):
+    """A missing config.json must yield zero profiles — never the example's
+    sample profiles (the pre-0.4 fallback showed models nobody pulled)."""
+    monkeypatch.setenv("CONFIG_PATH", str(tmp_path / "config.json"))
+    body = client.get("/profiles").json()
+    assert body["success"] is True
+    assert body["profiles"] == {}
+
+    chat = client.post("/chat", json={"prompt": "hi"}).json()
+    assert chat["success"] is False
+    assert "No model profiles configured yet" in chat["error"]
 
 
 def test_rank_candidates_pure():
