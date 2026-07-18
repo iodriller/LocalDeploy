@@ -27,24 +27,16 @@ OUT_DIR = ROOT / "docs" / "screenshots"
 
 
 def _best_chat_profile(base: str) -> str | None:
-    """A profile whose Ollama model is actually installed (smallest first), so
-    the chat scene works no matter which models exist on this machine."""
+    """The smallest installed Ollama model name — the chat model picker lists
+    installed models directly, so the scene works whatever is on the machine."""
     import urllib.request, json as _json
 
-    def _get(path):
-        with urllib.request.urlopen(f"{base}{path}", timeout=10) as r:
-            return _json.load(r)
-
     try:
-        installed = {m["name"]: m.get("size") or 0 for m in _get("/registry/installed").get("installed", [])}
-        profiles = _get("/profiles").get("profiles", {})
+        with urllib.request.urlopen(f"{base}/registry/installed", timeout=10) as r:
+            installed = _json.load(r).get("installed", [])
     except Exception:
         return None
-    candidates = [
-        (installed[p.get("model_id")], name)
-        for name, p in profiles.items()
-        if p.get("model_id") in installed and (p.get("backend") or "ollama") == "ollama"
-    ]
+    candidates = [(m.get("size") or 0, m["name"]) for m in installed if m.get("name")]
     return min(candidates)[1] if candidates else None
 
 
@@ -159,6 +151,22 @@ def main() -> int:
                 capture("dark", [("", "setup-deploy.png"), ("Benchmark & Compare", "benchmark-compare.png")])
                 capture("light", [("", "setup-deploy-light.png")])
 
+                # Model catalog with live results (needs internet; skipped offline).
+                page = browser.new_page(viewport={"width": 1440, "height": 960})
+                page.add_init_script('window.localStorage.setItem("localdeploy_theme", "dark");')
+                page.goto(f"{base}/ui", wait_until="networkidle")
+                try:
+                    page.click('.seg-btn[data-seg="hf"]')
+                    page.wait_for_selector(".catalog-table tbody tr", timeout=45000)
+                    page.fill("#hf-search", "qwen")
+                    page.wait_for_timeout(2500)
+                    page.locator("#get-model-card").screenshot(path=str(OUT_DIR / "model-catalog.png"))
+                    print(f"wrote {OUT_DIR / 'model-catalog.png'}")
+                except Exception as exc:
+                    print(f"skipped model-catalog.png (no network? {exc})")
+                finally:
+                    page.close()
+
                 # Chat playground with a real streamed reply. Needs a model that
                 # can answer, so this shot is skipped (not failed) without Ollama.
                 page = browser.new_page(viewport={"width": 1440, "height": 960})
@@ -167,9 +175,12 @@ def main() -> int:
                 page.get_by_role("tab", name="Chat").click()
                 page.wait_for_timeout(500)
                 try:
-                    chat_profile = _best_chat_profile(base)
-                    if chat_profile:
-                        page.select_option("#chat-profile", chat_profile)
+                    chat_model = _best_chat_profile(base)
+                    if not chat_model:
+                        raise RuntimeError("no installed model to chat with")
+                    page.select_option("#chat-model", chat_model)
+                    page.click("#btn-chat-session")  # explicit Load model step
+                    page.wait_for_selector(".chat-session-state.ready", timeout=120000)
                     page.fill("#chat-input", "In one short sentence: why run AI models locally?")
                     page.click("#btn-chat-send")
                     page.wait_for_selector(".chat-row.assistant .chat-bubble-meta:not(:empty)", timeout=60000)

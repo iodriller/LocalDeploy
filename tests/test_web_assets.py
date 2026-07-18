@@ -59,7 +59,7 @@ def test_new_ui_controls_have_safe_bindings() -> None:
     html = (WEB_DIR / "index.html").read_text(encoding="utf-8")
     js = (WEB_DIR / "app.js").read_text(encoding="utf-8")
     for dom_id in (
-        "btn-hf-search", "btn-fit-profiles", "fit-filter", "hf-fit-filter", "vram-budget-gb",
+        "btn-hf-search", "btn-fit-profiles", "fit-filter", "catalog-source-status", "vram-budget-gb",
         # chat playground
         "chat-model", "chat-keep-alive", "btn-chat-session", "chat-session-state",
         "btn-chat-send", "btn-chat-clear", "chat-input", "chat-images",
@@ -73,7 +73,7 @@ def test_new_ui_controls_have_safe_bindings() -> None:
         "btn-provider-refresh", "provider-catalog-body", "bench-repetitions",
     ):
         assert f'id="{dom_id}"' in html, dom_id
-    assert '$("#btn-hf-search")?.addEventListener("click", (e) => checkUpdates(e))' in js
+    assert '$("#btn-hf-search")?.addEventListener("click", (e) => searchUnifiedModels(e))' in js
     assert '$("#btn-fit-profiles")?.addEventListener("click", scanConfiguredFits)' in js
     for binding in ("sendChatMessage", "quantAdvise", "bulkDeleteSelected", "initServerHistoryToggle"):
         assert binding in js, binding

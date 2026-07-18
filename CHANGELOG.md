@@ -2,7 +2,24 @@
 
 All notable changes to this project should be documented here.
 
-## 0.5.1 - 2026-07-17
+## 0.5.1 - 2026-07-18
+
+- **One search, every source.** The Model catalog no longer asks you to pick a source:
+  one query hits the Ollama library and Hugging Face GGUF repos in parallel
+  (`POST /registry/search-models`) and renders a single table where the source is just a
+  column. Results update as you type (debounced), size chips are per-tag fit-checked
+  pulls, exact tags (`gemma3:4b`, `hf.co/org/repo`) get a verbatim "Pull exactly" row,
+  and ⚖ on any row opens the quant advisor pre-filled.
+- **Chat upgrades**: attach text files (contents ride along as fenced blocks the model
+  can read — and render as code blocks in your bubble), a 5-minute keep-loaded option,
+  and `keep_alive` now rides every chat request so Ollama stops silently resetting the
+  session's keep-loaded choice to its 5-minute default after the first message.
+  Assistant replies render lightweight markdown (headings, bullets, bold/italic, inline
+  code, links) — still escape-first, no HTML injection possible.
+- **Buttons look like buttons everywhere**: one uniform shape/height/alignment for all
+  buttons (emoji and icon labels now center properly), squared-off attach control.
+
+### Earlier on 0.5.1 (2026-07-17)
 
 UX overhaul across the whole UI.
 
