@@ -4,6 +4,19 @@ All notable changes to this project should be documented here.
 
 ## 0.5.1 - 2026-07-18
 
+- **The catalog answers "will it fit?" at a glance.** Since your hardware is already
+  detected, every size chip in the results is colored by fit — green fits your GPU,
+  yellow is tight/CPU-only, red won't fit — via one batched estimate per search
+  (`POST /system/fit-batch`); Hugging Face rows get a row-level fit badge parsed from
+  the repo name. Descriptions clamp to two lines and capability tags sit inline, so
+  the model column stops being a wall of text.
+- **Pulling a specific quant is now one click on a real tag.** The quant advisor
+  fetches the family's actual published tags from ollama.com
+  (`POST /registry/library-tags`), adds a "Pull it" column with the true download size
+  (e.g. `↓ 3.0GB` for `qwen2.5:7b-instruct-q5_K_M`), marks unpublished quants honestly
+  as "not published", flags already-pulled ones, and offers an expandable list of every
+  published tag — no more guessing tag-name conventions.
+
 - **One search, every source.** The Model catalog no longer asks you to pick a source:
   one query hits the Ollama library and Hugging Face GGUF repos in parallel
   (`POST /registry/search-models`) and renders a single table where the source is just a

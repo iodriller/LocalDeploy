@@ -165,3 +165,55 @@ def test_unified_search_orders_library_before_hf(monkeypatch):
     body = client.post("/registry/search-models", json={"query": "a"}).json()
     assert [r["source"] for r in body["results"]] == ["ollama", "huggingface"]
     assert body["results"][1]["pull_name"] == "hf.co/z-org/a-hf"
+
+
+# --- library tags (/registry/library-tags) ------------------------------------
+
+_TAGS_FIXTURE = """
+<a href="/library/qwen2.5:latest"><p>4.7GB</p><p>32K</p></a>
+<a href="/library/qwen2.5:7b"></a>
+<a href="/library/qwen2.5:7b"><p>4.7GB</p><p>32K</p></a>
+<a href="/library/qwen2.5:7b-instruct-q5_K_M"><p>5.4GB</p><p>32K</p></a>
+"""
+
+
+def test_tags_parser_prefers_sized_occurrence():
+    from localdeploy.control.registry import parse_ollama_library_tags
+
+    tags = parse_ollama_library_tags(_TAGS_FIXTURE)
+    by = {t["tag"]: t for t in tags}
+    assert by["7b"]["size"] == "4.7GB"  # second occurrence carried the size
+    assert by["7b-instruct-q5_K_M"] == {"tag": "7b-instruct-q5_K_M", "size": "5.4GB", "context": "32K"}
+    assert [t["tag"] for t in tags] == ["latest", "7b", "7b-instruct-q5_K_M"]
+
+
+def test_tags_endpoint_offline_and_bad_name(monkeypatch):
+    monkeypatch.setenv("OFFLINE", "true")
+    body = client.post("/registry/library-tags", json={"model": "qwen2.5:7b"}).json()
+    assert body["success"] is True and body["online"] is False
+    assert body["family"] == "qwen2.5"
+    bad = client.post("/registry/library-tags", json={"model": "###"}).json()
+    assert bad["success"] is False
+
+
+# --- batch fit (/system/fit-batch) ---------------------------------------------
+
+
+def test_fit_batch_classifies_and_dedupes():
+    body = client.post(
+        "/system/fit-batch",
+        json={"params_b": [0.27, 4, 4, 27, 70], "free_vram_mb": 8192},
+    ).json()
+    assert body["success"] is True
+    by = {item["params_b"]: item for item in body["items"]}
+    assert len(body["items"]) == 4  # deduped
+    assert by[0.27]["severity"] == "ok"
+    assert by[4]["severity"] == "ok"
+    assert by[70]["severity"] in ("soft", "hard")  # CPU-only at best on 8 GB
+    assert all(item["required_gb"] > 0 for item in body["items"])
+
+
+def test_fit_batch_rejects_bad_inputs():
+    assert client.post("/system/fit-batch", json={"params_b": [4], "context": -1}).status_code == 422
+    body = client.post("/system/fit-batch", json={"params_b": [0], "free_vram_mb": 8192}).json()
+    assert body["success"] is False

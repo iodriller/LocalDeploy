@@ -58,6 +58,121 @@ const state = {
 const BENCHMARK_RUNS_KEY = "localdeploy.benchmarkRuns.v1";
 const BENCH_HISTORY_SERVER_KEY = "localdeploy.benchHistoryServer.v1";
 
+function initTooltips() {
+  const tooltip = $("#ui-tooltip");
+  if (!tooltip) return;
+
+  let activeTrigger = null;
+  let pinned = false;
+  let positionFrame = null;
+
+  const triggerFor = (node) => (node instanceof Element ? node.closest("[data-tooltip]") : null);
+
+  const positionTooltip = () => {
+    positionFrame = null;
+    if (activeTrigger && !activeTrigger.isConnected) {
+      hideTooltip();
+      return;
+    }
+    if (!activeTrigger || !tooltip.classList.contains("is-visible")) return;
+
+    const gap = 8;
+    const edge = 10;
+    const triggerRect = activeTrigger.getBoundingClientRect();
+    const tooltipRect = tooltip.getBoundingClientRect();
+    let top = triggerRect.top - tooltipRect.height - gap;
+    if (top < edge) top = triggerRect.bottom + gap;
+    if (top + tooltipRect.height > window.innerHeight - edge) {
+      top = Math.max(edge, triggerRect.top - tooltipRect.height - gap);
+    }
+    const centered = triggerRect.left + triggerRect.width / 2 - tooltipRect.width / 2;
+    const left = Math.max(edge, Math.min(centered, window.innerWidth - tooltipRect.width - edge));
+    tooltip.style.left = `${Math.round(left)}px`;
+    tooltip.style.top = `${Math.round(top)}px`;
+  };
+
+  const schedulePosition = () => {
+    if (positionFrame == null) positionFrame = requestAnimationFrame(positionTooltip);
+  };
+
+  const hideTooltip = () => {
+    if (positionFrame != null) cancelAnimationFrame(positionFrame);
+    positionFrame = null;
+    activeTrigger?.classList.remove("tooltip-open");
+    if (activeTrigger?.hasAttribute("aria-expanded")) activeTrigger.setAttribute("aria-expanded", "false");
+    activeTrigger = null;
+    pinned = false;
+    tooltip.classList.remove("is-visible");
+    tooltip.setAttribute("aria-hidden", "true");
+  };
+
+  const showTooltip = (trigger, shouldPin = false) => {
+    const text = trigger?.dataset.tooltip?.trim();
+    if (!text) return;
+    const keepPinned = activeTrigger === trigger && pinned;
+    if (activeTrigger && activeTrigger !== trigger) {
+      activeTrigger.classList.remove("tooltip-open");
+      if (activeTrigger.hasAttribute("aria-expanded")) activeTrigger.setAttribute("aria-expanded", "false");
+    }
+    activeTrigger = trigger;
+    pinned = shouldPin || keepPinned;
+    tooltip.textContent = text;
+    tooltip.classList.add("is-visible");
+    tooltip.setAttribute("aria-hidden", "false");
+    trigger.classList.add("tooltip-open");
+    if (trigger.hasAttribute("aria-expanded")) trigger.setAttribute("aria-expanded", "true");
+    positionTooltip();
+  };
+
+  document.addEventListener("pointerover", (event) => {
+    const trigger = triggerFor(event.target);
+    if (!trigger || trigger.contains(event.relatedTarget)) return;
+    showTooltip(trigger);
+  });
+  document.addEventListener("pointerout", (event) => {
+    const trigger = triggerFor(event.target);
+    if (!trigger || trigger !== activeTrigger || trigger.contains(event.relatedTarget) || pinned || trigger.matches(":focus")) return;
+    hideTooltip();
+  });
+  document.addEventListener("focusin", (event) => {
+    const trigger = triggerFor(event.target);
+    if (trigger) showTooltip(trigger);
+  });
+  document.addEventListener("focusout", (event) => {
+    const trigger = triggerFor(event.target);
+    if (trigger === activeTrigger && !pinned && !trigger.matches(":hover")) hideTooltip();
+  });
+  document.addEventListener("click", (event) => {
+    const trigger = triggerFor(event.target);
+    if (!trigger) {
+      if (pinned) hideTooltip();
+      return;
+    }
+    if (trigger.classList.contains("help-tip")) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+    if (trigger === activeTrigger && pinned) hideTooltip();
+    else showTooltip(trigger, true);
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && activeTrigger) {
+      hideTooltip();
+      return;
+    }
+    const trigger = triggerFor(event.target);
+    if (!trigger || (event.key !== "Enter" && event.key !== " ")) return;
+    event.preventDefault();
+    if (trigger === activeTrigger && pinned) hideTooltip();
+    else showTooltip(trigger, true);
+  });
+  window.addEventListener("resize", schedulePosition);
+  window.addEventListener("scroll", schedulePosition, true);
+  new MutationObserver(() => {
+    if (activeTrigger && !activeTrigger.isConnected) hideTooltip();
+  }).observe(document.body, { childList: true, subtree: true });
+}
+
 function downloadFile(filename, content, mime) {
   const blob = new Blob([content], { type: mime });
   const url = URL.createObjectURL(blob);
@@ -1105,7 +1220,7 @@ function quantExplanation(value) {
 function quantLabelHtml(value, className = "badge") {
   if (!value) return `<span class="muted">—</span>`;
   const explanation = quantExplanation(value);
-  return `<span class="${esc(className)} quant-label tooltip-target" tabindex="0" title="${esc(explanation)}" data-tooltip="${esc(explanation)}" aria-label="${esc(value)}: ${esc(explanation)}">${esc(value)}<span class="quant-info" aria-hidden="true">?</span></span>`;
+  return `<span class="${esc(className)} quant-label tooltip-target" tabindex="0" role="button" aria-expanded="false" data-tooltip="${esc(explanation)}" aria-label="${esc(value)}: ${esc(explanation)}">${esc(value)}<span class="quant-info" aria-hidden="true">?</span></span>`;
 }
 
 function ollamaModelNamesMatch(left, right) {
@@ -2237,12 +2352,28 @@ function sourceBadge(source) {
     : `<span class="badge src-ollama" title="Official Ollama library">🦙 Ollama</span>`;
 }
 
+// "270m" / "0.8b" / "7b" -> billions of parameters (null when unparseable).
+function paramsFromSizeToken(token) {
+  const m = String(token || "").toLowerCase().match(/^([\d.]+)\s*([mb])$/);
+  if (!m) return null;
+  const value = parseFloat(m[1]);
+  if (!Number.isFinite(value)) return null;
+  return m[2] === "m" ? value / 1000 : value;
+}
+
 function unifiedResultRow(model) {
   const installed = model.installed_match ? `<span class="badge on" title="You already have a model from this family">✓</span>` : "";
   const sizes = (model.sizes || [])
-    .map((s) => `<button class="btn compact size-pull-btn" data-model="${esc(model.name)}:${esc(s)}" title="Pull ${esc(model.name)}:${esc(s)} (fit-checked first)">${esc(s)}</button>`)
+    .map((s) => {
+      const params = paramsFromSizeToken(s);
+      return `<button class="btn compact size-pull-btn" data-model="${esc(model.name)}:${esc(s)}"${params ? ` data-params="${params}"` : ""} title="Pull ${esc(model.name)}:${esc(s)} (fit-checked first)">${esc(s)}</button>`;
+    })
     .join("");
+  // Unified rows carry `name` (inventory rows carry `model`), so parse directly.
+  const nameMatch = String(model.name || "").toLowerCase().match(/(\d+(?:\.\d+)?)\s*b(?![a-z0-9])/);
+  const nameParams = nameMatch ? parseFloat(nameMatch[1]) : null;
   const caps = (model.capabilities || [])
+    .slice(0, 3)
     .map((c) => `<span class="badge${c === "cloud" ? " off" : ""}">${esc(c)}</span>`)
     .join(" ");
   const action = model.pullable === false
@@ -2254,9 +2385,8 @@ function unifiedResultRow(model) {
   const quantBtn = `<button class="btn compact quant-jump-btn" data-model="${esc(quantTarget)}" title="Which quantization of this fits your GPU?">⚖</button>`;
   return `<tr>
     <td class="catalog-model-cell">
-      <div class="catalog-result-title"><a href="${esc(model.url)}" target="_blank" rel="noopener">${esc(model.name)}</a>${installed}</div>
-      ${model.description ? `<div class="muted small catalog-description">${esc(model.description)}</div>` : ""}
-      ${caps ? `<div class="catalog-caps">${caps}</div>` : ""}
+      <div class="catalog-result-title"><a href="${esc(model.url)}" target="_blank" rel="noopener">${esc(model.name)}</a>${installed}${caps}<span class="row-fit-slot"${!model.sizes?.length && nameParams ? ` data-params="${nameParams}"` : ""}></span></div>
+      ${model.description ? `<div class="muted small catalog-description" title="${esc(model.description)}">${esc(model.description)}</div>` : ""}
     </td>
     <td>${sourceBadge(model.source)}</td>
     <td class="catalog-sizes">${sizes || `<span class="muted">—</span>`}</td>
@@ -2303,12 +2433,49 @@ async function searchUnifiedModels(source) {
     $$(".quant-jump-btn", body).forEach((qBtn) =>
       qBtn.addEventListener("click", () => openQuantAdvisor(qBtn.dataset.model))
     );
+    void applyCatalogFitBadges(body);
   } catch (err) {
     if (seq !== state.unifiedSearchSeq) return;
     body.innerHTML = `<div class="empty-state">Model search failed.</div>`;
     toast(`Model search failed: ${err.message}`, "error");
   } finally {
     busy(btn, false);
+  }
+}
+
+// Your hardware is already detected — so say, per size, whether it fits. One
+// batched request classifies every distinct parameter count on the page and
+// colors the size chips (green fits / yellow tight or CPU / red won't fit).
+async function applyCatalogFitBadges(body) {
+  const targets = $$("[data-params]", body);
+  if (!targets.length) return;
+  const unique = [...new Set(targets.map((el) => Number(el.dataset.params)))].filter((n) => n > 0);
+  if (!unique.length) return;
+  try {
+    const res = await postJSON("/system/fit-batch", { params_b: unique, free_vram_mb: targetVram() });
+    if (!res.success) return;
+    const byParams = {};
+    (res.items || []).forEach((item) => (byParams[item.params_b] = item));
+    const label = { ok: "fits your GPU", soft: "tight fit or CPU-only", hard: "won't fit this machine", unknown: "fit unknown" };
+    targets.forEach((el) => {
+      const item = byParams[Number(el.dataset.params)];
+      if (!item) return;
+      if (el.classList.contains("row-fit-slot")) {
+        el.innerHTML = `<span class="badge ${item.severity === "ok" ? "fits" : item.severity === "soft" ? "tight" : item.severity === "hard" ? "wont" : "unknown"}" title="Needs ~${esc(item.required_gb)} GB VRAM (default quant estimate)">${esc(label[item.severity] || "?")}</span>`;
+      } else {
+        el.classList.add(`fit-${item.severity}`);
+        el.title = `Pull ${el.dataset.model} — needs ~${item.required_gb} GB VRAM, ${label[item.severity] || "?"}`;
+      }
+    });
+    const status = $("#catalog-source-status");
+    if (status && !$("#catalog-fit-legend")) {
+      status.insertAdjacentHTML(
+        "beforeend",
+        `<span id="catalog-fit-legend" class="muted small catalog-fit-legend">size chips: <span class="chip-swatch fit-ok"></span> fits · <span class="chip-swatch fit-soft"></span> tight/CPU · <span class="chip-swatch fit-hard"></span> won't fit</span>`
+      );
+    }
+  } catch {
+    /* fit badges are progressive enhancement — the table works without them */
   }
 }
 
@@ -2669,6 +2836,56 @@ function quantBadge(v) {
   return `<span class="badge ${cls}">${esc(label)}</span>`;
 }
 
+// Fill the "Pull it" column with real, published tags for this family+size,
+// so pulling a specific quant is one click on a tag that actually exists —
+// no guessing tag-name conventions.
+async function attachQuantPullButtons(res) {
+  const family = res.model?.family;
+  const paramsB = res.model?.params_b;
+  const cells = $$(".quant-pull-cell");
+  const extra = $("#quant-tags-extra");
+  if (!family || !cells.length) {
+    cells.forEach((c) => (c.innerHTML = `<span class="muted small" title="Not an Ollama library model — pull it by its own name">—</span>`));
+    return;
+  }
+  let data;
+  try {
+    data = await postJSON("/registry/library-tags", { model: family });
+  } catch {
+    data = null;
+  }
+  if (!data?.success || !data.online || !(data.tags || []).length) {
+    cells.forEach((c) => (c.innerHTML = `<span class="muted small" title="${esc(data?.message || "Tag list unavailable")}">—</span>`));
+    return;
+  }
+  const sizeToken = `${String(paramsB).replace(/\.0$/, "")}b`;
+  const norm = (s) => String(s).toLowerCase().replace(/[-_]/g, "");
+  const sizeTags = data.tags.filter((tag) => norm(tag.tag).includes(norm(sizeToken)));
+  cells.forEach((cell) => {
+    const quant = cell.dataset.quant;
+    const match = sizeTags.find((tag) => norm(tag.tag).includes(norm(quant)));
+    if (!match) {
+      cell.innerHTML = `<span class="muted small" title="ollama.com publishes no ${esc(sizeToken)} tag with ${esc(quant)}">not published</span>`;
+      return;
+    }
+    cell.innerHTML = match.installed
+      ? `<span class="badge on" title="${esc(match.full)} is already pulled">✓ pulled</span>`
+      : `<button class="btn primary compact quant-pull-btn" data-model="${esc(match.full)}" title="Pull ${esc(match.full)}${match.size ? ` (${esc(match.size)} download)` : ""} — fit-checked first">↓ ${esc(match.size || "Pull")}</button>`;
+  });
+  if (extra) {
+    const chips = data.tags
+      .slice(0, 80)
+      .map((tag) =>
+        tag.installed
+          ? `<span class="badge on" title="already pulled">${esc(tag.tag)}</span>`
+          : `<button class="btn compact quant-pull-btn" data-model="${esc(tag.full)}" title="Pull ${esc(tag.full)}${tag.size ? ` (${esc(tag.size)} download)` : ""}">${esc(tag.tag)}${tag.size ? ` · ${esc(tag.size)}` : ""}</button>`
+      )
+      .join("");
+    extra.innerHTML = `<details class="quant-all-tags"><summary>All ${data.tags.length} published ${esc(family)} tags (click any to pull)</summary><div class="quant-tag-grid">${chips}</div></details>`;
+  }
+  $$(".quant-pull-btn").forEach((b) => b.addEventListener("click", () => pullModel(b.dataset.model, b)));
+}
+
 async function quantAdvise(btn) {
   const modelId = $("#quant-model").value.trim();
   const body = $("#quant-body");
@@ -2699,6 +2916,7 @@ async function quantAdvise(btn) {
           <td class="num">${esc(margin)}</td>
           <td>${quantBadge(v)}</td>
           <td class="muted small">${esc(v.quality)}</td>
+          <td class="quant-pull-cell" data-quant="${esc(v.quant)}"><span class="muted small">…</span></td>
         </tr>`;
       })
       .join("");
@@ -2709,11 +2927,13 @@ async function quantAdvise(btn) {
       <div class="next-action" style="margin-bottom:0.6rem"><b>${esc(res.recommendation)}</b></div>
       <div class="muted small" style="margin-bottom:0.5rem">${esc(res.model.params_b)}B parameters · ${esc(res.model.context)} context · ${esc(budget)}</div>
       <div class="table-wrap"><table class="results quant-table">
-        <thead><tr><th title="Lower precision uses less memory but can reduce quality">Quant</th><th class="num" title="Estimated model weight size">Weights</th><th class="num" title="Estimated weights, KV cache, and runtime overhead">Needs</th><th class="num" title="Memory budget remaining after the estimate">Headroom</th><th>Fit</th><th>Quality</th></tr></thead>
+        <thead><tr><th title="Lower precision uses less memory but can reduce quality">Quant</th><th class="num" title="Estimated model weight size">Weights</th><th class="num" title="Estimated weights, KV cache, and runtime overhead">Needs</th><th class="num" title="Memory budget remaining after the estimate">Headroom</th><th>Fit</th><th>Quality</th><th class="quant-pull-col">Pull it</th></tr></thead>
         <tbody>${rows}</tbody>
       </table></div>
+      <div id="quant-tags-extra"></div>
       <p class="muted small quant-legend"><b>Reading quant names:</b> the number is the approximate bit class, <code>K</code> is the newer K-quant family, and <code>M</code> is its medium mixed-precision variant. Hover or focus a quant for its tradeoff.</p>
       <p class="muted small" style="margin-top:0.5rem">${esc(res.note)} ${link}</p>`;
+    void attachQuantPullButtons(res);
   } catch (err) {
     body.innerHTML = `<div class="muted">Estimate failed.</div>`;
     toast(`Quant advisor failed: ${err.message}`, "error");
@@ -4781,6 +5001,7 @@ function wireGetModelSegments() {
 }
 
 (async function init() {
+  initTooltips();
   wireGetModelSegments();
   loadBenchmarkRuns();
   clearChat();

@@ -87,11 +87,18 @@ servers) with search, runtime/size filters, sorting (including measured tok/s fr
 saved benchmark runs), and pagination. Reachability chips explain how to enable each runtime;
 one click creates a run profile for any listed model (`GET /registry/providers`).
 
+The catalog's size chips are colored by fit against your detected hardware (green fits
+the GPU, yellow tight/CPU-only, red won't fit; one batched `POST /system/fit-batch`
+per search), and Hugging Face rows carry a row-level fit badge when the repo name
+encodes a parameter count.
+
 **Quant advisor** (Get a model → ⚖ Quant advisor) fit-checks every common GGUF quantization
 (Q2_K → F16) of one model size against your budget using the same estimator as fit checks, and says
 when there's headroom for a higher-quality tag than the usual Q4 default
-(`POST /system/quant-advisor`). Exact tag availability varies per family, so it links to the
-family's tags page on ollama.com rather than guessing pull names.
+(`POST /system/quant-advisor`). Each quant row's **Pull it** column shows the family's real published
+tag with its true download size (fetched from ollama.com via
+`POST /registry/library-tags`); quants with no published tag say so, and an expandable
+list offers every published tag as a one-click pull.
 
 **Disk usage** lives in the Your models card: a `N models · X GB on disk` summary, a sort control
 (largest / recently updated / name), and per-row checkboxes that reveal a bulk **Delete selected**
