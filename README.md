@@ -55,7 +55,13 @@ Runtime state (`config.json`, `.env`, `logs/`, `reports/`) lives in `~/.localdep
 
 ### Windows
 
-Prerequisites: [Python 3.10+](https://www.python.org/downloads/) and [Ollama](https://ollama.com/download) — `start.ps1` offers to install both via winget if missing.
+One paste into PowerShell — nothing needs to be preinstalled (it offers to install Python and Ollama via winget as it goes):
+
+```powershell
+irm https://raw.githubusercontent.com/iodriller/LocalDeploy/main/scripts/install.ps1 | iex
+```
+
+Or from a clone:
 
 ```powershell
 git clone https://github.com/iodriller/localdeploy.git

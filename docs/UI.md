@@ -81,6 +81,12 @@ Profiles whose model is gone (never pulled, or deleted outside the UI) are annot
 can be removed in one click with **Advanced → All run profiles → Remove not-pulled profiles**. For
 llama.cpp profiles the server checks whether the GGUF file still exists on disk.
 
+**Model catalog** (Get a model → ⌕ Model catalog) inventories every model your local
+runtimes expose (Ollama, LM Studio, vLLM, Docker Model Runner, llama.cpp, OpenAI-compatible
+servers) with search, runtime/size filters, sorting (including measured tok/s from your own
+saved benchmark runs), and pagination. Reachability chips explain how to enable each runtime;
+one click creates a run profile for any listed model (`GET /registry/providers`).
+
 **Quant advisor** (Get a model → ⚖ Quant advisor) fit-checks every common GGUF quantization
 (Q2_K → F16) of one model size against your budget using the same estimator as fit checks, and says
 when there's headroom for a higher-quality tag than the usual Q4 default
@@ -93,7 +99,7 @@ bar with the total gigabytes being freed.
 
 ## Tab — Chat playground
 
-A minimal streaming chat over the server's own OpenAI-compatible endpoint
+A full chat surface over the server's own OpenAI-compatible endpoint
 (`POST /v1/chat/completions` with `stream: true`) — pick a profile, type, and tokens render as they
 arrive. Conversation state lives in the page (nothing is stored); **Clear** resets it.
 
@@ -103,7 +109,12 @@ arrive. Conversation state lives in the page (nothing is stored); **Clear** rese
 - **Images** can be attached to a message when the selected profile is marked vision-capable
   (`supports_vision` — editable via Edit tuning). Attachments preview as thumbnails and are sent as
   data-URI `image_url` parts, the same shape any OpenAI client would use.
-- An optional **system prompt** (collapsed by default) is sent with every turn.
+- An optional **system prompt** (⚙ System in the header) is sent with every turn.
+- The welcome screen offers clickable suggestion prompts; replies render fenced code
+  blocks with a language tag and copy button; each reply's meta line shows 🕒 elapsed,
+  first-token latency, and ⚡ tok/s.
+- Every *served* model's card (Setup & Deploy → Currently serving) shows the full API
+  endpoint with ⧉ copy buttons for the URL and a ready-to-run curl.
 - **Enter** sends, **Shift+Enter** inserts a newline, and the Send button becomes **Stop** while a
   reply is streaming.
 
