@@ -127,5 +127,5 @@ def test_ui_does_not_guess_unattributed_vram_sources() -> None:
     assert "LocalDeploy cannot attribute" not in js
     assert "Ollama reports" not in js
     assert "Ollama model VRAM" in js
-    assert "Unload from Served model card" in js
+    assert "Unload from Currently serving" in js
     assert "downloads not reported" in js

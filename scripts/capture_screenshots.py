@@ -26,6 +26,28 @@ sys.path.insert(0, str(ROOT))
 OUT_DIR = ROOT / "docs" / "screenshots"
 
 
+def _best_chat_profile(base: str) -> str | None:
+    """A profile whose Ollama model is actually installed (smallest first), so
+    the chat scene works no matter which models exist on this machine."""
+    import urllib.request, json as _json
+
+    def _get(path):
+        with urllib.request.urlopen(f"{base}{path}", timeout=10) as r:
+            return _json.load(r)
+
+    try:
+        installed = {m["name"]: m.get("size") or 0 for m in _get("/registry/installed").get("installed", [])}
+        profiles = _get("/profiles").get("profiles", {})
+    except Exception:
+        return None
+    candidates = [
+        (installed[p.get("model_id")], name)
+        for name, p in profiles.items()
+        if p.get("model_id") in installed and (p.get("backend") or "ollama") == "ollama"
+    ]
+    return min(candidates)[1] if candidates else None
+
+
 def _free_port() -> int:
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     s.bind(("127.0.0.1", 0))
@@ -145,10 +167,9 @@ def main() -> int:
                 page.get_by_role("tab", name="Chat").click()
                 page.wait_for_timeout(500)
                 try:
-                    try:
-                        page.select_option("#chat-profile", "llama32_3b_ollama")
-                    except Exception:
-                        pass
+                    chat_profile = _best_chat_profile(base)
+                    if chat_profile:
+                        page.select_option("#chat-profile", chat_profile)
                     page.fill("#chat-input", "In one short sentence: why run AI models locally?")
                     page.click("#btn-chat-send")
                     page.wait_for_selector(".chat-row.assistant .chat-bubble-meta:not(:empty)", timeout=60000)
