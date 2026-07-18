@@ -16,7 +16,7 @@ from typing import Any, Dict, Optional
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
-from .hardware import detect_hardware
+from .hardware import detect_hardware, estimate_gpu_placement
 
 router = APIRouter()
 
@@ -90,6 +90,18 @@ def _parse_quant(text: Optional[str]) -> Optional[str]:
 
 def _round(value: float) -> float:
     return round(value, 2)
+
+
+def _detected_vram_pool_mb(hw: Dict[str, Any]) -> Optional[int]:
+    summary = hw.get("gpu_summary") or {}
+    pool = summary.get("best_pool_free_mb")
+    if pool is not None:
+        return int(pool)
+    if hw.get("gpu_available") and hw.get("gpus"):
+        gpu = hw["gpus"][0]
+        value = gpu.get("vram_free_mb") or gpu.get("vram_total_mb")
+        return int(value) if value is not None else None
+    return None
 
 
 def _classify(
@@ -225,8 +237,8 @@ def quant_advisor(req: QuantAdviceRequest) -> Dict[str, Any]:
 
     hw = detect_hardware()
     free_vram_mb = req.free_vram_mb
-    if free_vram_mb is None and hw["gpu_available"] and hw["gpus"]:
-        free_vram_mb = hw["gpus"][0].get("vram_free_mb")
+    if free_vram_mb is None:
+        free_vram_mb = _detected_vram_pool_mb(hw)
     free_vram_gb = (free_vram_mb / 1024.0) if free_vram_mb is not None else None
     ram_available_mb = (hw.get("system") or {}).get("ram_available_mb")
     ram_available_gb = (ram_available_mb / 1024.0) if ram_available_mb is not None else None
@@ -248,6 +260,7 @@ def quant_advisor(req: QuantAdviceRequest) -> Dict[str, Any]:
                 "tier": cls["tier"],
                 "severity": cls["severity"],
                 "cpu_deployable": cls["cpu_deployable"],
+                "placement": estimate_gpu_placement(required_gb, hw.get("gpus") or []),
             }
         )
 
@@ -349,8 +362,8 @@ def fit_check(req: FitRequest) -> Dict[str, Any]:
     # tell "won't fit GPU but runs on CPU" apart from "too big for this machine".
     hw = detect_hardware()
     free_vram_mb = req.free_vram_mb
-    if free_vram_mb is None and hw["gpu_available"] and hw["gpus"]:
-        free_vram_mb = hw["gpus"][0].get("vram_free_mb")
+    if free_vram_mb is None:
+        free_vram_mb = _detected_vram_pool_mb(hw)
     ram_available_mb = (hw.get("system") or {}).get("ram_available_mb")
 
     estimate = {
@@ -369,6 +382,21 @@ def fit_check(req: FitRequest) -> Dict[str, Any]:
     free_vram_gb = (free_vram_mb / 1024.0) if free_vram_mb is not None else None
     ram_available_gb = (ram_available_mb / 1024.0) if ram_available_mb is not None else None
     cls = _classify(required_gb, free_vram_gb, ram_available_gb)
+    placement = estimate_gpu_placement(required_gb, hw.get("gpus") or [])
+    if req.free_vram_mb is not None and cls["verdict"] == "FITS" and not placement["supported"]:
+        placement = {
+            "mode": "manual_budget",
+            "supported": True,
+            "required_mb": int(required_gb * 1024),
+            "available_mb": req.free_vram_mb,
+            "gpu_indexes": [],
+            "allocations": [],
+            "utilization_pct": round(required_gb * 1024 / max(1, req.free_vram_mb) * 100, 1),
+            "note": "The supplied manual budget fits; automatic GPU placement could not be verified.",
+        }
+    if placement["mode"] == "multi_gpu_split" and cls["verdict"] == "FITS":
+        cls["tier"] = "multi_gpu"
+        cls["headline"] = "Fits only by splitting the model across compatible GPUs."
 
     suggestions = []
     if cls["severity"] in ("soft", "hard") and cls["tier"] != "tight":
@@ -392,6 +420,8 @@ def fit_check(req: FitRequest) -> Dict[str, Any]:
         "free_vram_gb": _round(free_vram_gb) if free_vram_gb is not None else None,
         "ram_available_gb": _round(ram_available_gb) if ram_available_gb is not None else None,
         "margin_gb": _round(free_vram_gb - required_gb) if free_vram_gb is not None else None,
+        "placement": placement,
+        "gpu_summary": hw.get("gpu_summary") or {},
         "note": note,
         "suggestions": suggestions,
     }

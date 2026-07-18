@@ -85,7 +85,7 @@ cd localdeploy
 docker compose up --build -d
 ```
 
-Then open `http://localhost:8000/ui`. Stop with `docker compose down`. Named volumes preserve both Ollama models and LocalDeploy profiles/history across container recreation. The container binds to `127.0.0.1` only; to reach it from other devices see the LAN-mode comments in `docker-compose.yml` and [SECURITY.md](SECURITY.md). For NVIDIA GPU passthrough, uncomment the `deploy.resources` block in `docker-compose.yml` (requires the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html)).
+Then open `http://localhost:8000/ui`. Stop with `docker compose down`. Named volumes preserve both Ollama models and LocalDeploy profiles/history across container recreation. The host port binds to `127.0.0.1` only. For NVIDIA GPU passthrough, uncomment the `deploy.resources` block in `docker-compose.yml` (requires the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html)).
 
 ## Your First 3 Minutes
 
@@ -102,7 +102,7 @@ No terminal flags, no VRAM math, no trial-and-error pulls. Full UI guide: [docs/
 
 ### Current hardware scope
 
-Automatic GPU and memory detection currently supports NVIDIA GPUs through `nvidia-smi` and Apple Silicon unified memory. AMD and Intel GPUs can still run through Ollama, but LocalDeploy may treat them as CPU-only; enter a manual fit budget before relying on model recommendations. Fit estimates use one GPU and do not yet plan model placement across multiple GPUs.
+Automatic GPU and memory detection supports NVIDIA, AMD, Intel, and Apple Silicon through vendor tools and operating-system telemetry. Fit checks estimate single-GPU placement, compatible multi-GPU splits, and CPU offload. Mixed vendors or incompatible runtimes are never summed into a fictional VRAM pool, and estimated adapter memory is labeled as such.
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/iodriller/LocalDeploy/main/docs/screenshots/setup-deploy.png" alt="Setup &amp; Deploy tab: hardware detection, live VRAM, fit budget" width="800" />
@@ -119,6 +119,7 @@ More screenshots (including light theme): [docs/SCREENSHOTS.md](docs/SCREENSHOTS
 The benchmark tab is a local experiment workspace:
 
 - Runs execute sequentially to avoid VRAM contention, with per-test results streaming in live.
+- Repeated runs record native generation tok/s, variance, Ollama version, full model digest, quant, context, warm/cold state, and a hardware snapshot.
 - CPU, GPU, Auto, and CPU + GPU comparison modes for Ollama profiles.
 - Leaderboard, category heatmap, speed/quality scatter, and detailed per-test rows.
 - Completed runs live in browser `localStorage` and export as self-contained HTML/JSON report cards. An opt-in toggle also mirrors history to plain JSON files on the server; no database is required.
@@ -132,7 +133,7 @@ The benchmark tab is a local experiment workspace:
 
 - **No telemetry.** The server only talks to local inference backends; backend URLs are enforced loopback-only in code.
 - The one internet-touching feature (Hugging Face model search) runs only when you click it. Set `OFFLINE=true` to block it too, and verify with `python scripts/egress_selftest.py`.
-- The API binds to `127.0.0.1` by default. Before any LAN exposure, set `API_TOKEN` — see [SECURITY.md](SECURITY.md) for the threat model.
+- The API is for one local user and binds to `127.0.0.1` by default. `API_TOKEN` is one shared token, not internet authentication; LocalDeploy has no TLS or multi-user isolation. Do not expose it directly to the internet, a public tunnel, or an untrusted LAN. See [SECURITY.md](SECURITY.md).
 
 ## For Developers
 
@@ -141,7 +142,8 @@ The benchmark tab is a local experiment workspace:
 ```
 
 - OpenAPI docs at `http://127.0.0.1:8000/docs`.
-- **OpenAI-compatible endpoints**: `/v1/chat/completions` (with streaming) and `/v1/models` — point compatible clients at `http://127.0.0.1:8000/v1`. Any API key works when auth is disabled; when `API_TOKEN` is set, use that value as the bearer API key. `/v1/embeddings` is not implemented and returns a clear error pointing at Ollama's native embeddings API.
+- **OpenAI-compatible endpoints**: `/v1/chat/completions` (streaming and tool calls), `/v1/responses`, `/v1/embeddings`, and `/v1/models` at `http://127.0.0.1:8000/v1`. Tool calls are returned to the client and never executed by LocalDeploy. When `API_TOKEN` is set, use it as the bearer API key.
+- **Local runtime providers**: inventory and create profiles for Ollama, llama.cpp, LM Studio, vLLM, Docker Model Runner, and other configured loopback OpenAI-compatible servers. The model catalog combines provider metadata with saved benchmark tok/s.
 - Model profiles live in `config.json`. It starts empty and mirrors your machine: pulling a model creates its profile automatically, and the UI can remove profiles whose model is gone. `config.example.json` is a reference for every profile field.
 - Terminal chat and model comparison: [docs/CLI.md](docs/CLI.md)
 - Full API request schema and limits: [docs/API_OPTIONS.md](docs/API_OPTIONS.md)

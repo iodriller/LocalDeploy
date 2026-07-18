@@ -100,6 +100,42 @@ def test_upsert_same_model_twice_reuses_profile(live_config):
     assert len(_read(live_config)["profiles"]) == 1
 
 
+def test_upsert_creates_loopback_provider_profile(live_config):
+    body = client.post(
+        "/profiles/upsert",
+        json={
+            "model_id": "local/model",
+            "backend": "lmstudio",
+            "base_url": "http://127.0.0.1:1234",
+        },
+    ).json()
+    assert body["success"] is True
+    saved = _read(live_config)["profiles"][body["profile"]]
+    assert saved["backend"] == "lmstudio"
+    assert saved["base_url"] == "http://127.0.0.1:1234"
+
+
+def test_upsert_rejects_remote_provider_url(live_config):
+    body = client.post(
+        "/profiles/upsert",
+        json={"model_id": "remote", "backend": "openai", "base_url": "https://api.example.com"},
+    ).json()
+    assert body["success"] is False
+    assert "localhost" in body["error"]
+
+
+def test_same_provider_model_on_different_loopback_ports_gets_distinct_profiles(live_config):
+    first = client.post(
+        "/profiles/upsert",
+        json={"model_id": "shared/model", "backend": "openai", "base_url": "http://127.0.0.1:8001"},
+    ).json()
+    second = client.post(
+        "/profiles/upsert",
+        json={"model_id": "shared/model", "backend": "openai", "base_url": "http://127.0.0.1:8002"},
+    ).json()
+    assert first["profile"] != second["profile"]
+
+
 def test_upsert_requires_profile_or_model(live_config):
     body = client.post("/profiles/upsert", json={}).json()
     assert body["success"] is False

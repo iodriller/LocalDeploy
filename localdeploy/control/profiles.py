@@ -15,6 +15,7 @@ from typing import Any, Dict, Optional
 from fastapi import APIRouter
 from pydantic import BaseModel
 
+from ..utils import is_loopback_url, strip_trailing_slash
 from ._config import default_profile_for, refuse_example, slugify_profile_name, write_config_atomic
 
 router = APIRouter()
@@ -54,6 +55,8 @@ class UpsertProfileRequest(BaseModel):
     # Either edit an existing profile by name, or create one for a model_id.
     profile: Optional[str] = None
     model_id: Optional[str] = None
+    backend: Optional[str] = None
+    base_url: Optional[str] = None
     fields: Dict[str, Any] = {}
 
 
@@ -72,8 +75,16 @@ def upsert_profile(req: UpsertProfileRequest) -> Dict[str, Any]:
         return {"success": False, "error": refusal}
     config = load_config()
     profiles = config.setdefault("profiles", {})
+    requested_backend = str(req.backend or "ollama").strip().lower()
+    supported = {"ollama", "llamacpp", "lmstudio", "vllm", "docker", "openai"}
+    if requested_backend not in supported:
+        return {"success": False, "error": f"Unsupported backend '{requested_backend}'."}
+    if req.base_url and not is_loopback_url(req.base_url):
+        return {"success": False, "error": "Provider base_url must use localhost, 127.0.0.1, or ::1."}
 
     if req.profile:
+        if req.backend or req.base_url:
+            return {"success": False, "error": "backend and base_url can only be set when creating a profile."}
         prof = profiles.get(req.profile)
         if not prof:
             return {"success": False, "error": f"Unknown profile '{req.profile}'."}
@@ -81,7 +92,17 @@ def upsert_profile(req: UpsertProfileRequest) -> Dict[str, Any]:
     elif req.model_id:
         # Reuse an existing profile for this exact model if present, else create.
         name = next(
-            (p for p, v in profiles.items() if v.get("model_id") == req.model_id),
+            (
+                p
+                for p, v in profiles.items()
+                if v.get("model_id") == req.model_id
+                and str(v.get("backend") or "ollama").lower() == requested_backend
+                and (
+                    not req.base_url
+                    or strip_trailing_slash(str(v.get("base_url") or ""))
+                    == strip_trailing_slash(req.base_url)
+                )
+            ),
             None,
         )
         if name is None:
@@ -92,6 +113,9 @@ def upsert_profile(req: UpsertProfileRequest) -> Dict[str, Any]:
                     suffix += 1
                 name = f"{name}_{suffix}"
             profiles[name] = default_profile_for(req.model_id)
+            profiles[name]["backend"] = requested_backend
+            if req.base_url:
+                profiles[name]["base_url"] = strip_trailing_slash(req.base_url)
         prof = profiles[name]
     else:
         return {"success": False, "error": "Pass 'profile' (to edit) or 'model_id' (to create)."}

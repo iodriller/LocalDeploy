@@ -217,16 +217,22 @@ function normalizeRunRecord(input, source = "current-run") {
   const modelId = input.modelId || input.model_id || profile || null;
   const requestedDevice = input.requestedDevice || input.device || null;
   const actualDevice = input.actualDevice || input.device || requestedDevice || null;
+  const profileProvenance = (input.provenance?.profiles || {})[profile] || {};
   return {
     id: input.id || runId(),
     createdAt: input.createdAt || input.generated_at || new Date().toISOString(),
     profile,
     modelId,
+    backend: input.backend || profileProvenance.backend || null,
     requestedDevice,
     actualDevice,
     questionSetName: input.questionSetName || "Imported report card",
     questionSetHash: input.questionSetHash || null,
     hardware: input.hardware || {},
+    provenance: input.provenance || {},
+    variance: input.variance || summary.variance || {},
+    aggregates: input.aggregates || [],
+    repetitions: input.repetitions || summary.repetitions || 1,
     tests,
     summary,
     category_summary: input.category_summary || input.categorySummary || categorySummary(tests),
@@ -517,8 +523,10 @@ function updateHwChip(hw) {
   const ram = hw?.system?.ram_total_mb ? ` · ${fmtMb(hw.system.ram_total_mb)} RAM` : "";
   if (hw && hw.gpu_available && hw.gpus?.[0]) {
     const g = hw.gpus[0];
-    const mem = g.unified_memory ? "unified memory" : `${fmtMb(g.vram_total_mb)} VRAM`;
-    chip.innerHTML = `<span class="dot"></span>${esc(g.name)} · ${mem}${ram}`;
+    const pool = hw.gpu_summary?.best_pool_total_mb ?? g.vram_total_mb;
+    const count = hw.gpu_summary?.gpu_count || hw.gpus.length;
+    const mem = g.unified_memory ? "unified memory" : `${fmtMb(pool)} compatible VRAM`;
+    chip.innerHTML = `<span class="dot"></span>${count > 1 ? `${count} GPUs` : esc(g.name)} · ${mem}${ram}`;
   } else {
     chip.innerHTML = `<span class="dot none"></span>CPU only${ram}`;
   }
@@ -527,8 +535,8 @@ function updateHwChip(hw) {
 
 function syncHardwareState(hw) {
   const g = hw?.gpus?.[0];
-  state.vramTotalMb = g?.vram_total_mb ?? null;
-  state.vramFreeMb = g?.vram_free_mb ?? null;
+  state.vramTotalMb = hw?.gpu_summary?.best_pool_total_mb ?? g?.vram_total_mb ?? null;
+  state.vramFreeMb = hw?.gpu_summary?.best_pool_free_mb ?? g?.vram_free_mb ?? null;
   if (state.vramBudgetMb == null && state.vramTotalMb != null) {
     state.vramBudgetMb = state.vramTotalMb;
     const input = $("#vram-budget-gb");
@@ -991,7 +999,7 @@ async function checkHardware() {
     if (!hw.gpu_available) {
       state.vramTotalMb = null;
       state.vramFreeMb = null;
-      state.lastHardware = { gpu: null, vram_total_mb: null, vram_free_mb: null, system: hw.system };
+      state.lastHardware = { ...hw, gpu: null, vram_total_mb: null, vram_free_mb: null };
       body.innerHTML = `<div class="muted" style="margin-bottom:.5rem">${esc(hw.message || "No GPU detected.")}</div>
         <div class="kv">${cpuRamRows(hw.system)}</div>`;
       updateVramBudgetUI();
@@ -1003,23 +1011,28 @@ async function checkHardware() {
       return;
     }
     state.lastHardware = {
+      ...hw,
       gpu: g.name,
-      vram_total_mb: g.vram_total_mb,
-      vram_free_mb: g.vram_free_mb,
-      system: hw.system,
+      vram_total_mb: hw.gpu_summary?.best_pool_total_mb ?? g.vram_total_mb,
+      vram_free_mb: hw.gpu_summary?.best_pool_free_mb ?? g.vram_free_mb,
     };
-    // Apple Silicon (Metal) has no separate VRAM — show the unified-memory note
-    // and any hardware message instead of "? total · ? free".
-    const vramLine = g.unified_memory
-      ? `Unified memory (shared with system RAM)`
-      : `${fmtMb(g.vram_total_mb)} total · ${fmtMb(g.vram_free_mb)} free · ${fmtMb(g.vram_used_mb)} used`;
     const note = hw.message
       ? `<div class="muted small" style="margin-bottom:.5rem">${esc(hw.message)}</div>`
       : "";
+    const gpuRows = (hw.gpus || []).map((gpu, index) => {
+      const memory = gpu.unified_memory
+        ? "Unified memory"
+        : `${fmtMb(gpu.vram_total_mb)} total · ${fmtMb(gpu.vram_free_mb)} free`;
+      const source = gpu.vram_estimated ? "estimated" : (gpu.memory_source || gpu.backend || "detected");
+      return `<span class="k">GPU ${index + 1}</span><span>${esc(gpu.name)} · ${esc(gpu.vendor || "unknown")} / ${esc(gpu.backend || "unknown")}</span>
+        <span class="k">Memory</span><span>${memory} · ${esc(source)}</span>`;
+    }).join("");
+    const pool = hw.gpu_summary?.best_pool_total_mb
+      ? `<span class="k">Fit pool</span><span>${fmtMb(hw.gpu_summary.best_pool_total_mb)} total · ${fmtMb(hw.gpu_summary.best_pool_free_mb)} free compatible memory</span>`
+      : "";
     body.innerHTML = `${note}<div class="kv">
-      <span class="k">GPU</span><span>${esc(g.name)}</span>
-      <span class="k">VRAM</span><span>${vramLine}</span>
-      <span class="k">Driver</span><span>${esc(g.driver_version ?? "?")}</span>
+      ${gpuRows}
+      ${pool}
       ${cpuRamRows(hw.system)}
     </div>`;
   } catch (err) {
@@ -1076,10 +1089,10 @@ async function refreshStatus() {
     if (s.hardware) {
       syncHardwareState(s.hardware);
       state.lastHardware = {
+        ...s.hardware,
         gpu: s.hardware.gpus?.[0]?.name ?? null,
-        vram_total_mb: s.hardware.gpus?.[0]?.vram_total_mb ?? null,
-        vram_free_mb: s.hardware.gpus?.[0]?.vram_free_mb ?? null,
-        system: s.hardware.system,
+        vram_total_mb: s.hardware.gpu_summary?.best_pool_total_mb ?? s.hardware.gpus?.[0]?.vram_total_mb ?? null,
+        vram_free_mb: s.hardware.gpu_summary?.best_pool_free_mb ?? s.hardware.gpus?.[0]?.vram_free_mb ?? null,
       };
     }
     // Record each running model's *measured* placement so a benchmark can tag
@@ -1913,6 +1926,58 @@ async function starterPack(source) {
 // ---------------------------------------------------------------------------
 // Tab 1 — Hugging Face model search
 // ---------------------------------------------------------------------------
+async function loadProviderCatalog(source) {
+  const btn = source?.currentTarget || source || $("#btn-provider-refresh");
+  const body = $("#provider-catalog-body");
+  busy(btn, true);
+  body.innerHTML = `<div class="muted"><span class="spin-inline"></span> Checking local providers…</div>`;
+  try {
+    const data = await getJSON("/registry/providers");
+    const statuses = (data.providers || [])
+      .map((provider) => `<span class="badge ${provider.reachable ? "on" : "off"}" title="${esc(provider.error || provider.base_url)}">${esc(provider.provider)}</span>`)
+      .join(" ");
+    const rows = [...(data.models || [])]
+      .sort((a, b) => (b.tokens_per_second || -1) - (a.tokens_per_second || -1) || a.model.localeCompare(b.model))
+      .map((model) => `<tr>
+        <td><b>${esc(model.model)}</b></td>
+        <td>${esc(model.provider)}</td>
+        <td>${esc(model.publisher || "—")}</td>
+        <td class="num">${esc(model.parameters || "—")}</td>
+        <td>${esc(model.quant || "—")}</td>
+        <td class="num" title="${model.benchmark_samples ? `${esc(model.benchmark_samples)} saved samples` : "No saved benchmark samples"}">${model.tokens_per_second != null ? esc(model.tokens_per_second) : "—"}</td>
+        <td class="num">${model.context != null ? esc(model.context) : "—"}</td>
+        <td><button class="btn compact provider-profile-btn" data-model="${esc(model.model)}" data-provider="${esc(model.provider)}" data-base-url="${esc(model.base_url)}">Add profile</button></td>
+      </tr>`)
+      .join("");
+    body.innerHTML = `<div class="provider-statuses">${statuses || '<span class="muted">No providers configured.</span>'}</div>
+      <div class="table-wrap provider-table-wrap"><table class="results provider-table">
+        <thead><tr><th>Model</th><th>Runtime</th><th>Publisher</th><th class="num">Params</th><th>Quant</th><th class="num">tok/s</th><th class="num">Context</th><th></th></tr></thead>
+        <tbody>${rows || '<tr><td colspan="8" class="muted">No local provider models found.</td></tr>'}</tbody>
+      </table></div>`;
+    $$(".provider-profile-btn", body).forEach((profileBtn) => profileBtn.addEventListener("click", async () => {
+      busy(profileBtn, true);
+      try {
+        const result = await postJSON("/profiles/upsert", {
+          model_id: profileBtn.dataset.model,
+          backend: profileBtn.dataset.provider,
+          base_url: profileBtn.dataset.baseUrl,
+        });
+        if (!result.success) throw new Error(result.error || "Profile creation failed.");
+        await loadProfiles();
+        toast(`Profile ${result.profile} is ready.`, "success");
+      } catch (err) {
+        toast(`Could not add provider profile: ${err.message}`, "error");
+      } finally {
+        busy(profileBtn, false);
+      }
+    }));
+  } catch (err) {
+    body.innerHTML = `<div class="muted">Provider inventory failed: ${esc(err.message)}</div>`;
+  } finally {
+    busy(btn, false);
+  }
+}
+
 function fmtNum(n) {
   if (n == null) return null;
   const value = Number(n);
@@ -2750,6 +2815,11 @@ function collectTest(evt) {
     error: evt.error || null,
     warning: evt.warning || null,
     response_preview: evt.response_preview || "",
+    repetition: evt.repetition || 1,
+    repetitions: evt.repetitions || 1,
+    metrics: evt.metrics || {},
+    tokens_per_second_source: evt.tokens_per_second_source || "estimated",
+    warm_state: evt.warm_state || null,
   };
 }
 
@@ -2762,12 +2832,14 @@ function appendResultRow(tbody, evt, runName = "") {
     ? ` <span class="muted small" title="${esc(evt.error)}">${esc(evt.error.slice(0, 50))}${evt.error.length > 50 ? "…" : ""}</span>`
     : "";
   const warnBadge = evt.warning ? ` <span class="warn-badge" title="${esc(evt.warning)}">⚠</span>` : "";
-  const tpsCell = tps != null ? `${tps.toFixed(1)}` : `<span class="muted">—</span>`;
+  const rateTitle = evt.tokens_per_second_source === "backend" ? "Measured by the inference backend" : "Estimated from response length";
+  const tpsCell = tps != null ? `<span title="${rateTitle}">${tps.toFixed(1)}</span>` : `<span class="muted">—</span>`;
+  const testName = evt.repetitions > 1 ? `${evt.name} · r${evt.repetition}` : evt.name;
   const hasPreview = !!evt.response_preview;
 
   const tr = document.createElement("tr");
   tr.innerHTML = `<td>${esc(runName)}</td>
-    <td>${esc(evt.name)}</td>
+    <td>${esc(testName)}</td>
     <td>${esc(evt.category)}</td>
     <td>${resultBadge}${errSnippet}${warnBadge}</td>
     <td class="num">${esc(evt.elapsed_seconds)}s</td>
@@ -2952,9 +3024,9 @@ function moveQueuedRun(id, delta) {
   renderRunQueue(queue);
 }
 
-async function runQueueItem(item, questionInfo, timeout, controller) {
+async function runQueueItem(item, questionInfo, timeout, repetitions, controller) {
   const summary = $("#run-summary");
-  const body = { profiles: [item.profile], timeout };
+  const body = { profiles: [item.profile], timeout, repetitions };
   if (item.requestedDevice && item.requestedDevice !== "auto") body.device = item.requestedDevice;
   if (questionInfo.questions) body.questions = questionInfo.questions;
 
@@ -2983,12 +3055,16 @@ async function runQueueItem(item, questionInfo, timeout, controller) {
       total = evt.test_count || 0;
       item.total = total;
       item.current = `0 / ${total} tests`;
+      item.provenance = evt.provenance || {};
+      item.repetitions = evt.repetitions || repetitions;
       setProgress(0);
       setActiveRun(item, 0, total);
     } else if (evt.event === "profile_start") {
       item.status = "running";
       item.current = "Model warm-up";
       setActiveRun(item, done, total);
+    } else if (evt.event === "test_aggregate") {
+      (item.aggregates ||= []).push(evt);
     } else if (evt.event === "test_start") {
       item.status = "running";
       item.current = `Running ${evt.name || "test"}`;
@@ -3012,6 +3088,11 @@ async function runQueueItem(item, questionInfo, timeout, controller) {
       removeLiveBenchmarkRun(item.id);
     } else if (evt.event === "profile_end") {
       if (evt.actual_device) item.actualDevice = evt.actual_device;
+      item.variance = {
+        latency_stdev_seconds: evt.summary?.latency_stdev_seconds ?? 0,
+        tokens_per_second_stdev: evt.summary?.tokens_per_second_stdev ?? 0,
+        by_test: item.aggregates || [],
+      };
       item.current = "Benchmark complete";
       setActiveRun(item, done || total, total);
       syncLiveBenchmarkRun(item, true);
@@ -3088,7 +3169,7 @@ async function runQueueItem(item, questionInfo, timeout, controller) {
   const run = normalizeRunRecord(
     {
       ...item,
-      hardware: state.lastHardware || {},
+      hardware: item.provenance?.hardware || state.lastHardware || {},
       source: "current-run",
       summary: summaryFromTests(item.tests),
       category_summary: categorySummary(item.tests),
@@ -3146,6 +3227,7 @@ async function runBenchmark() {
   cancelBtn.addEventListener("click", onCancel);
   const completed = [];
   const timeout = Number($("#bench-timeout").value) || 240;
+  const repetitions = Math.max(1, Math.min(10, Number($("#bench-repetitions")?.value) || 1));
   const activeTimer = setInterval(() => {
     const active = queue.find((q) => ["deploying", "running"].includes(q.status));
     if (active) setActiveRun(active, active.done || 0, active.total || 0);
@@ -3163,7 +3245,7 @@ async function runBenchmark() {
       // this run while the queue keeps going.
       const itemController = new AbortController();
       state.activeController = itemController;
-      const run = await runQueueItem(item, questionInfo, timeout, itemController);
+      const run = await runQueueItem(item, questionInfo, timeout, repetitions, itemController);
       state.activeController = null;
       if (run) {
         completed.push(run);
@@ -3857,6 +3939,7 @@ $("#btn-switch").addEventListener("click", switchModel);
 $("#btn-installed").addEventListener("click", refreshInstalled);
 $("#btn-updates")?.addEventListener("click", (e) => checkUpdates(e));
 $("#btn-hf-search")?.addEventListener("click", (e) => checkUpdates(e));
+$("#btn-provider-refresh")?.addEventListener("click", (e) => loadProviderCatalog(e));
 $("#btn-fit-profiles")?.addEventListener("click", scanConfiguredFits);
 $("#btn-clean-orphans")?.addEventListener("click", (e) => cleanOrphanProfiles(e.currentTarget));
 $("#btn-quant-advise")?.addEventListener("click", (e) => quantAdvise(e.currentTarget));
@@ -4057,6 +4140,9 @@ function wireGetModelSegments() {
       $$(".seg-panel").forEach((p) =>
         p.classList.toggle("hidden", p.dataset.segPanel !== seg)
       );
+      if (seg === "hf" && $("#provider-catalog-body")?.textContent.includes("not been loaded")) {
+        loadProviderCatalog();
+      }
     })
   );
 }

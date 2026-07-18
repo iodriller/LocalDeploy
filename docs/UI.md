@@ -60,7 +60,7 @@ A newcomer can go end-to-end without reading anything else:
 
 | Control | What it does | Endpoint |
 |---|---|---|
-| Check hardware | GPU name + VRAM (NVIDIA) or **Apple Silicon (Metal, unified memory)**, **CPU model, cores, and system RAM** | `GET /system/hardware` |
+| Check hardware | NVIDIA/AMD/Intel/Apple GPU inventory, compatible VRAM pools, CPU, cores, and RAM | `GET /system/hardware` |
 | Refresh status | Loaded model(s), Ollama health, VRAM, **GPU/CPU placement** | `GET /system/status` |
 | Deploy to (Auto/GPU/CPU) | Force where the model runs (`num_gpu`: 0 = CPU, max = GPU) | `POST /models/serve` |
 | Deploy / unload / replace | Load / unload / replace the selected profile | `POST /models/{serve,stop,switch}` |
@@ -69,6 +69,7 @@ A newcomer can go end-to-end without reading anything else:
 | Delete | Remove a model from disk (frees space) | `POST /models/delete` |
 | Free memory | Unload all models from memory/VRAM | `POST /models/free` |
 | Search Hugging Face | Newer or matching GGUF models on Hugging Face | `POST /registry/check-updates` |
+| Refresh providers | Models from local Ollama/OpenAI-compatible runtimes with params, quant, context, and saved tok/s | `GET /registry/providers` |
 | Refresh installed | Models already pulled locally | `GET /registry/installed` |
 
 The **Model fit budget** is auto-filled from the hardware probe and is used by installed-model
@@ -123,7 +124,7 @@ the UI also deletes its server copy.
   (`POST /benchmark/validate`).
 - **Benchmark runner** replaces the old single-profile form. Select one or more saved profiles as
   chips, review the built-in/custom test-set summary, choose **Auto**, **CPU**, **GPU**, or
-  **CPU + GPU**, then click **Run benchmark suite**. Profiles whose model isn't on the machine are
+  **CPU + GPU**, choose 1-10 repetitions, then click **Run benchmark suite**. Profiles whose model isn't on the machine are
   hidden by default behind a "Show N hidden (model not pulled)" toggle, so the picker only offers
   models that can actually run.
 - **Run queue** creates one row per model/device variant and runs sequentially by default to avoid
@@ -142,6 +143,9 @@ the UI also deletes its server copy.
   `/system/status` — so nothing is mislabeled and a reasonable device choice doesn't fail outright.
 - Benchmark deployments are temporary. After each benchmarked Ollama profile finishes, the server
   unloads the benchmark model so the benchmark tab does not become a permanent deployment action.
+- Each run records Ollama version, full model digest, quant, context, initial warm/cold state,
+  LocalDeploy version, and the complete hardware snapshot. Repetitions add latency, accuracy, and
+  token-rate variance; native backend tok/s is used when available.
 - **Results Dashboard** is the main analysis surface as soon as results start streaming:
   - Leaderboard sorted by pass count, average accuracy, then average latency.
   - Winner badges for most accurate, fastest, and best tokens/second.
@@ -210,6 +214,9 @@ Requires the API + Ollama running.
 By default the API has no auth. If the server sets `API_TOKEN`, open the UI once at
 `/ui?token=<secret>` — the token is stored locally and sent on every request (`X-API-Token`). If a
 request is rejected (401), the UI prompts you for the token and remembers it.
+
+This is one shared local token over HTTP. There is no TLS, per-user identity, or tenant isolation.
+Keep LocalDeploy on loopback and do not expose it through a public tunnel or internet-facing proxy.
 
 ## Offline mode
 

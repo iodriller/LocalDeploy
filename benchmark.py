@@ -1060,6 +1060,10 @@ class TestResult:
     error: Optional[str] = None
     warning: Optional[str] = None
     approx_tokens_per_second: Optional[float] = None
+    repetition: int = 1
+    metrics: Dict[str, Any] = field(default_factory=dict)
+    tokens_per_second_source: str = "estimated"
+    warm_state: Optional[str] = None
 
 
 @dataclass
@@ -1168,6 +1172,8 @@ def execute_test(
     test: TestCase,
     timeout: int,
     num_gpu: Optional[int] = None,
+    repetition: int = 1,
+    warm_state: Optional[str] = None,
 ) -> TestResult:
     """Run one test against one profile and grade it.
 
@@ -1188,7 +1194,13 @@ def execute_test(
     except Exception as exc:  # grader bug should not crash the run
         accuracy = 0.0
         print(f"  WARN grader for {test.name} raised: {exc}", flush=True)
-    approx_tps = ((len(response_text) / 4) / elapsed) if success and elapsed > 0 else None
+    metrics = data.get("metrics") if isinstance(data.get("metrics"), dict) else {}
+    native_tps = metrics.get("tokens_per_second")
+    try:
+        native_tps = float(native_tps) if native_tps is not None else None
+    except (TypeError, ValueError):
+        native_tps = None
+    approx_tps = native_tps or (((len(response_text) / 4) / elapsed) if success and elapsed > 0 else None)
 
     return TestResult(
         name=test.name,
@@ -1201,6 +1213,10 @@ def execute_test(
         error=data.get("error"),
         warning=data.get("warning"),
         approx_tokens_per_second=round(approx_tps, 2) if approx_tps is not None else None,
+        repetition=repetition,
+        metrics=metrics,
+        tokens_per_second_source="backend" if native_tps is not None else "estimated",
+        warm_state=warm_state,
     )
 
 
@@ -1265,6 +1281,8 @@ def iter_run(
     tests: List[TestCase],
     timeout: int,
     num_gpu: Optional[int] = None,
+    repetitions: int = 1,
+    provenance: Optional[Dict[str, Any]] = None,
 ) -> Iterator[Dict[str, Any]]:
     """Stream a benchmark run as a sequence of event dicts.
 
@@ -1277,40 +1295,114 @@ def iter_run(
     yield {
         "event": "run_start",
         "profiles": list(selected),
-        "test_count": len(tests),
+        "test_count": len(tests) * repetitions,
+        "unique_test_count": len(tests),
+        "repetitions": repetitions,
         "tests": [t.name for t in tests],
         "categories": sorted({t.category for t in tests}),
+        "provenance": provenance or {},
     }
     started = time.perf_counter()
     overall: List[Dict[str, Any]] = []
     for name in selected:
         profile = profiles_map[name]
-        yield {"event": "profile_start", "profile": name, "model_id": profile.get("model_id")}
+        profile_provenance = ((provenance or {}).get("profiles") or {}).get(name, {})
+        warm_state = profile_provenance.get("warm_state")
+        yield {
+            "event": "profile_start",
+            "profile": name,
+            "model_id": profile.get("model_id"),
+            "provenance": profile_provenance,
+        }
         consecutive_fail = 0
         prof: List[TestResult] = []
+        abort = False
         for test in tests:
-            yield {"event": "test_start", "profile": name, "name": test.name, "category": test.category}
-            item = execute_test(base_url, name, profile, test, timeout, num_gpu=num_gpu)
-            prof.append(item)
-            event = asdict(item)
-            event["event"] = "test_result"
-            event["profile"] = name
-            yield event
+            repeated: List[TestResult] = []
+            for repetition in range(1, repetitions + 1):
+                yield {
+                    "event": "test_start",
+                    "profile": name,
+                    "name": test.name,
+                    "category": test.category,
+                    "repetition": repetition,
+                    "repetitions": repetitions,
+                }
+                item = execute_test(
+                    base_url,
+                    name,
+                    profile,
+                    test,
+                    timeout,
+                    num_gpu=num_gpu,
+                )
+                item.repetition = repetition
+                item.warm_state = warm_state if repetition == 1 else "warm"
+                prof.append(item)
+                repeated.append(item)
+                event = asdict(item)
+                event["event"] = "test_result"
+                event["profile"] = name
+                event["repetitions"] = repetitions
+                yield event
 
-            if not item.success:
-                consecutive_fail += 1
-                if _is_not_pulled(item.error):
-                    yield {"event": "profile_aborted", "profile": name, "reason": f"model not pulled: {item.error}"}
-                    break
-                if consecutive_fail >= 4:
-                    yield {"event": "profile_aborted", "profile": name, "reason": "4 consecutive failures"}
-                    break
-            else:
-                consecutive_fail = 0
+                if not item.success:
+                    consecutive_fail += 1
+                    if _is_not_pulled(item.error):
+                        yield {
+                            "event": "profile_aborted",
+                            "profile": name,
+                            "reason": f"model not pulled: {item.error}",
+                        }
+                        abort = True
+                        break
+                    if consecutive_fail >= 4:
+                        yield {"event": "profile_aborted", "profile": name, "reason": "4 consecutive failures"}
+                        abort = True
+                        break
+                else:
+                    consecutive_fail = 0
+            successful = [item for item in repeated if item.success]
+            rates = [item.approx_tokens_per_second for item in successful if item.approx_tokens_per_second is not None]
+            yield {
+                "event": "test_aggregate",
+                "profile": name,
+                "name": test.name,
+                "runs": len(repeated),
+                "successful_runs": len(successful),
+                "mean_latency_seconds": round(statistics.mean([item.elapsed_seconds for item in successful]), 3)
+                if successful
+                else None,
+                "latency_stdev_seconds": round(statistics.stdev([item.elapsed_seconds for item in successful]), 3)
+                if len(successful) > 1
+                else 0.0,
+                "mean_tokens_per_second": round(statistics.mean(rates), 2) if rates else None,
+                "tokens_per_second_stdev": round(statistics.stdev(rates), 2) if len(rates) > 1 else 0.0,
+                "accuracy_stdev": round(statistics.stdev([item.accuracy for item in repeated]), 3)
+                if len(repeated) > 1
+                else 0.0,
+            }
+            if abort:
+                break
 
         passed = sum(1 for t in prof if t.success)
         avg_acc = round(statistics.mean([t.accuracy for t in prof]), 3) if prof else 0.0
+        successful_rates = [t.approx_tokens_per_second for t in prof if t.success and t.approx_tokens_per_second is not None]
+        successful_latencies = [t.elapsed_seconds for t in prof if t.success]
         summary = {"tests": len(prof), "passed": passed, "avg_accuracy": avg_acc}
+        if repetitions > 1 or provenance is not None:
+            summary.update(
+                {
+                    "unique_tests": len({t.name for t in prof}),
+                    "repetitions": repetitions,
+                    "latency_stdev_seconds": round(statistics.stdev(successful_latencies), 3)
+                    if len(successful_latencies) > 1
+                    else 0.0,
+                    "tokens_per_second_stdev": round(statistics.stdev(successful_rates), 2)
+                    if len(successful_rates) > 1
+                    else 0.0,
+                }
+            )
         overall.append({"profile": name, **summary})
         yield {"event": "profile_end", "profile": name, "summary": summary}
 

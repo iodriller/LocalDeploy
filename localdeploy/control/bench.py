@@ -13,11 +13,12 @@ from __future__ import annotations
 
 import dataclasses
 import json
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 router = APIRouter()
 
@@ -72,6 +73,7 @@ class RunRequest(BaseModel):
     timeout: int = 240
     skip_categories: Optional[List[str]] = None
     include_categories: Optional[List[str]] = None
+    repetitions: int = Field(default=1, ge=1, le=10)
 
 
 @router.post("/benchmark/run")
@@ -196,6 +198,53 @@ def benchmark_run(req: RunRequest):
             except Exception:
                 pre_existing = set()
 
+            from localdeploy import __version__
+            from . import _ollama
+            from .hardware import detect_hardware
+
+            installed, _ = _ollama.list_installed()
+            installed_by_name = {str(item.get("name") or ""): item for item in installed}
+            ollama_version, _ = _ollama.version()
+            profile_provenance: Dict[str, Any] = {}
+            for profile_name in selected:
+                profile = profiles_map[profile_name]
+                backend = str(profile.get("backend") or "ollama").lower()
+                model_id = str(profile.get("model_id") or profile_name)
+                installed_item = next(
+                    (
+                        item
+                        for installed_name, item in installed_by_name.items()
+                        if backend == "ollama" and matches_running(model_id, installed_name)
+                    ),
+                    {},
+                )
+                details = installed_item.get("details") or {}
+                shown: Dict[str, Any] = {}
+                if backend == "ollama":
+                    shown_result, _ = _ollama.show_model(model_id)
+                    shown = shown_result or {}
+                shown_details = shown.get("details") if isinstance(shown.get("details"), dict) else {}
+                profile_provenance[profile_name] = {
+                    "backend": backend,
+                    "backend_version": ollama_version if backend == "ollama" else None,
+                    "model": model_id,
+                    "model_digest": installed_item.get("digest"),
+                    "quant": details.get("quantization_level")
+                    or shown_details.get("quantization_level")
+                    or profile.get("quantization"),
+                    "context": profile.get("context_limit"),
+                    "warm_state": "warm"
+                    if backend == "ollama" and any(matches_running(model_id, name) for name in pre_existing)
+                    else "cold",
+                }
+            provenance = {
+                "recorded_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                "localdeploy_version": __version__,
+                "hardware": detect_hardware(),
+                "providers": {"ollama": {"version": ollama_version}},
+                "profiles": profile_provenance,
+            }
+
             # For a forced CPU/GPU run, pin the same num_gpu on every inference
             # call (not just the warm-up) so the benchmark measures the requested
             # device end-to-end instead of whatever Ollama re-places it onto.
@@ -220,7 +269,16 @@ def benchmark_run(req: RunRequest):
                         )
                         return
 
-            for event in bench.iter_run(base_url, profiles_map, selected, tests, req.timeout, num_gpu=forced_num_gpu):
+            for event in bench.iter_run(
+                base_url,
+                profiles_map,
+                selected,
+                tests,
+                req.timeout,
+                num_gpu=forced_num_gpu,
+                repetitions=req.repetitions,
+                provenance=provenance,
+            ):
                 if force_deploy and event.get("event") == "profile_start":
                     # Deploy just this profile's model right before its tests run
                     # (instead of deploying every selected profile up front) so a
