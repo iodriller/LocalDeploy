@@ -39,7 +39,7 @@ def main(argv: list[str] | None = None) -> int:
 
     import uvicorn
 
-    from api_server import app  # noqa: PLC0415 — import after env is settled
+    from localdeploy.server import app  # noqa: PLC0415 — import after env is settled
 
     host = os.getenv("API_HOST", "127.0.0.1")
     port = int(os.getenv("API_PORT", "8000"))

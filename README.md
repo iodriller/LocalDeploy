@@ -65,6 +65,8 @@ cd localdeploy
 
 That creates `.env`, `config.json`, and a `.venv` on first run, starts Ollama if it's installed, launches the API in the background, and opens the UI at `http://localhost:8000/ui`. Stop with `.\scripts\stop.ps1`.
 
+No terminal? **Double-click `start.bat`** in the repo folder — it runs the same script, works on a plain ZIP download, and offers to install Python and Ollama via winget when they're missing. After a `git pull`, run `.\scripts\start.ps1 -Restart` to pick up the new version (changed dependencies install automatically).
+
 ### macOS / Linux
 
 Prerequisites: Python 3.10+ and [Ollama](https://ollama.com/download) running.
