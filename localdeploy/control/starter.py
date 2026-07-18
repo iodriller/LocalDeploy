@@ -114,8 +114,10 @@ def _resolve_budget(
     """Return (raw_budget_gb, margin_budget_gb, source, hardware)."""
     hw = detect_hardware()
     vram_mb = free_vram_mb
+    if vram_mb is None:
+        vram_mb = (hw.get("gpu_summary") or {}).get("best_pool_free_mb")
     if vram_mb is None and hw["gpu_available"] and hw["gpus"]:
-        vram_mb = hw["gpus"][0].get("vram_free_mb")
+        vram_mb = hw["gpus"][0].get("vram_free_mb") or hw["gpus"][0].get("vram_total_mb")
     if vram_mb is not None:
         raw = vram_mb / 1024.0
         return raw, max(raw - margin_gb, 0.0), "vram", hw

@@ -44,11 +44,40 @@ def list_installed() -> Tuple[List[Dict[str, Any]], Optional[str]]:
                 "name": item.get("name"),
                 "size": item.get("size"),
                 "modified_at": item.get("modified_at"),
-                "digest": (item.get("digest") or "")[:12] or None,
+                "digest": item.get("digest") or None,
+                "digest_short": (item.get("digest") or "")[:12] or None,
                 "details": item.get("details", {}),
             }
         )
     return out, None
+
+
+def version() -> Tuple[Optional[str], Optional[str]]:
+    """Return the exact Ollama server version when the local daemon is reachable."""
+    try:
+        base = base_url()
+        response = requests.get(f"{base}/api/version", timeout=3)
+        response.raise_for_status()
+        value = response.json().get("version")
+        return (str(value) if value else None), None
+    except requests.ConnectionError:
+        return None, f"Ollama is not reachable at {base if 'base' in locals() else 'localhost'}."
+    except (BackendCallError, requests.RequestException, ValueError) as exc:
+        return None, str(exc)
+
+
+def show_model(model: str) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+    """Return Ollama's model metadata, including quant and context parameters."""
+    try:
+        base = base_url()
+        response = requests.post(f"{base}/api/show", json={"model": model}, timeout=10)
+        response.raise_for_status()
+        data = response.json()
+        return data if isinstance(data, dict) else None, None
+    except requests.ConnectionError:
+        return None, f"Ollama is not reachable at {base if 'base' in locals() else 'localhost'}."
+    except (BackendCallError, requests.RequestException, ValueError) as exc:
+        return None, str(exc)
 
 
 def list_running() -> Tuple[List[Dict[str, Any]], Optional[str]]:

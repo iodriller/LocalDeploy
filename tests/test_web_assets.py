@@ -68,6 +68,8 @@ def test_new_ui_controls_have_safe_bindings() -> None:
         "installed-sort", "models-disk-summary", "btn-bulk-delete", "btn-bulk-clear",
         # server-side history + orphan cleanup
         "bench-history-server", "btn-clean-orphans",
+        # provider catalog + repeated benchmark variance
+        "btn-provider-refresh", "provider-catalog-body", "bench-repetitions",
     ):
         assert f'id="{dom_id}"' in html, dom_id
     assert '$("#btn-hf-search")?.addEventListener("click", (e) => checkUpdates(e))' in js

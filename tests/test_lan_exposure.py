@@ -52,11 +52,13 @@ def test_non_loopback_host_without_token_warns_but_starts():
     assert "API_TOKEN" in result.stderr
 
 
-def test_non_loopback_host_with_token_stays_quiet():
+def test_non_loopback_host_with_token_still_warns_about_local_only_boundary():
     result = _run({"API_HOST": "0.0.0.0", "API_TOKEN": "secret", "REQUIRE_TOKEN_ON_LAN": ""})
     assert result.returncode == 0
     assert "IMPORT_OK" in result.stdout
-    assert "WARNING" not in result.stderr
+    assert "WARNING" in result.stderr
+    assert "shared token" in result.stderr
+    assert "TLS" in result.stderr
 
 
 def test_require_token_on_lan_hard_fails_without_token():

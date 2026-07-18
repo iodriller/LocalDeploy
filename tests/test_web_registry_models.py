@@ -137,6 +137,51 @@ def test_check_updates_surfaces_pull_name(monkeypatch) -> None:
     assert candidate["pull_name"] == "hf.co/x/y-GGUF"
 
 
+def test_provider_inventory_combines_runtime_metadata_and_benchmark_rate(monkeypatch) -> None:
+    monkeypatch.setattr(
+        registry._ollama,
+        "list_installed",
+        lambda: (
+            [
+                {
+                    "name": "gemma3:4b",
+                    "digest": "sha256:full",
+                    "details": {"family": "gemma3", "parameter_size": "4.3B", "quantization_level": "Q4_K_M"},
+                }
+            ],
+            None,
+        ),
+    )
+    monkeypatch.setattr(registry._ollama, "version", lambda: ("0.12.0", None))
+    monkeypatch.setattr(registry._ollama, "base_url", lambda: "http://127.0.0.1:11434")
+    monkeypatch.setattr(
+        registry,
+        "_provider_targets",
+        lambda: [{"provider": "lmstudio", "base_url": "http://127.0.0.1:1234", "profiles": []}],
+    )
+    monkeypatch.setattr(
+        registry,
+        "_generic_inventory",
+        lambda target: {
+            **target,
+            "reachable": True,
+            "models": [{"id": "publisher/model", "owned_by": "publisher"}],
+            "error": None,
+        },
+    )
+    monkeypatch.setattr(
+        registry,
+        "_benchmark_rates",
+        lambda: {("ollama", "gemma3:4b"): {"tokens_per_second": 42.5, "sample_count": 6}},
+    )
+    body = client.get("/registry/providers").json()
+    assert body["success"] is True
+    assert {row["provider"] for row in body["models"]} == {"ollama", "lmstudio"}
+    ollama_row = next(row for row in body["models"] if row["provider"] == "ollama")
+    assert ollama_row["quant"] == "Q4_K_M"
+    assert ollama_row["tokens_per_second"] == 42.5
+
+
 # --- Step 5: pull ------------------------------------------------------------
 
 

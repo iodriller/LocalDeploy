@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import base64
 import json
+import struct
 from typing import Any, Dict, Iterator, List, Optional, Tuple
 
 import requests
@@ -43,6 +45,113 @@ def options_payload(prepared: Dict[str, Any]) -> Dict[str, Any]:
     return options
 
 
+def _message_content_for_ollama(content: Any) -> Tuple[str, List[str]]:
+    if isinstance(content, str):
+        return content, []
+    if not isinstance(content, list):
+        return str(content or ""), []
+    text: List[str] = []
+    images: List[str] = []
+    for part in content:
+        if not isinstance(part, dict):
+            continue
+        if part.get("type") in {"text", "input_text"}:
+            text.append(str(part.get("text") or ""))
+        elif part.get("type") in {"image_url", "input_image"}:
+            image = part.get("image_url") or part.get("image")
+            url = image.get("url") if isinstance(image, dict) else image
+            if isinstance(url, str):
+                images.append(url.split(",", 1)[1] if url.startswith("data:") and "," in url else url)
+    return "\n".join(value for value in text if value), images
+
+
+def _ollama_messages(prepared: Dict[str, Any]) -> List[Dict[str, Any]]:
+    supplied = prepared.get("messages") or []
+    if supplied:
+        messages: List[Dict[str, Any]] = []
+        tool_names: Dict[str, str] = {}
+        for raw in supplied:
+            if not isinstance(raw, dict):
+                continue
+            content, images = _message_content_for_ollama(raw.get("content"))
+            message: Dict[str, Any] = {"role": str(raw.get("role") or "user"), "content": content}
+            if images:
+                message["images"] = images
+            if raw.get("tool_calls"):
+                normalized_calls = []
+                for call in raw["tool_calls"]:
+                    if not isinstance(call, dict):
+                        continue
+                    normalized = dict(call)
+                    function = dict(call.get("function") or {})
+                    if isinstance(function.get("arguments"), str):
+                        try:
+                            function["arguments"] = json.loads(function["arguments"])
+                        except ValueError:
+                            pass
+                    normalized["function"] = function
+                    normalized_calls.append(normalized)
+                    if call.get("id") and function.get("name"):
+                        tool_names[str(call["id"])] = str(function["name"])
+                message["tool_calls"] = normalized_calls
+            if raw.get("tool_call_id"):
+                call_id = str(raw.get("tool_call_id"))
+                message["tool_name"] = raw.get("name") or tool_names.get(call_id) or call_id
+            messages.append(message)
+        return messages
+
+    messages = []
+    if prepared["system_prompt"]:
+        messages.append({"role": "system", "content": prepared["system_prompt"]})
+    user_message: Dict[str, Any] = {"role": "user", "content": prepared["prompt"]}
+    if prepared["images_base64"]:
+        user_message["images"] = prepared["images_base64"]
+    messages.append(user_message)
+    return messages
+
+
+def _selected_tools(prepared: Dict[str, Any]) -> List[Dict[str, Any]]:
+    tools = [item for item in (prepared.get("tools") or []) if isinstance(item, dict)]
+    choice = prepared.get("tool_choice")
+    if choice == "none":
+        return []
+    if isinstance(choice, dict):
+        function = choice.get("function") or {}
+        selected_name = function.get("name")
+        if selected_name:
+            selected = [item for item in tools if (item.get("function") or {}).get("name") == selected_name]
+            return selected or tools
+    return tools
+
+
+def ollama_metrics(data: Dict[str, Any]) -> Dict[str, Any]:
+    def seconds(name: str) -> Optional[float]:
+        value = data.get(name)
+        return round(float(value) / 1_000_000_000, 6) if value is not None else None
+
+    eval_count = _safe_int(data.get("eval_count"))
+    prompt_count = _safe_int(data.get("prompt_eval_count"))
+    eval_seconds = seconds("eval_duration")
+    prompt_seconds = seconds("prompt_eval_duration")
+    return {
+        "total_duration_seconds": seconds("total_duration"),
+        "load_duration_seconds": seconds("load_duration"),
+        "prompt_eval_count": prompt_count,
+        "prompt_eval_duration_seconds": prompt_seconds,
+        "prompt_tokens_per_second": round(prompt_count / prompt_seconds, 3) if prompt_count and prompt_seconds else None,
+        "eval_count": eval_count,
+        "eval_duration_seconds": eval_seconds,
+        "tokens_per_second": round(eval_count / eval_seconds, 3) if eval_count and eval_seconds else None,
+    }
+
+
+def _safe_int(value: Any) -> Optional[int]:
+    try:
+        return int(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
 def ollama_error_message(response: requests.Response, model_id: str) -> str:
     body = response.text.strip()
     try:
@@ -58,25 +167,20 @@ def ollama_error_message(response: requests.Response, model_id: str) -> str:
     return f"Ollama request failed with HTTP {response.status_code}. Details: {body}"
 
 
-def call_ollama(prepared: Dict[str, Any]) -> str:
+def call_ollama_detailed(prepared: Dict[str, Any]) -> Dict[str, Any]:
     if require_gpu_only():
         raise BackendCallError("GPU-only mode is enabled; refusing to call Ollama.")
     profile = prepared["profile"]
     base_url = get_backend_base_url(profile, "ollama")
-    messages: List[Dict[str, Any]] = []
-    if prepared["system_prompt"]:
-        messages.append({"role": "system", "content": prepared["system_prompt"]})
-    user_message: Dict[str, Any] = {"role": "user", "content": prepared["prompt"]}
-    if prepared["images_base64"]:
-        user_message["images"] = prepared["images_base64"]
-    messages.append(user_message)
-
     payload = {
         "model": prepared["model"],
-        "messages": messages,
+        "messages": _ollama_messages(prepared),
         "stream": False,
         "options": options_payload(prepared),
     }
+    tools = _selected_tools(prepared)
+    if tools:
+        payload["tools"] = tools
     native_format = ollama_format(prepared.get("response_format"))
     if native_format is not None:
         payload["format"] = native_format
@@ -102,33 +206,35 @@ def call_ollama(prepared: Dict[str, Any]) -> str:
     except Exception as exc:
         raise BackendCallError(f"Ollama returned invalid JSON: {response.text[:500]}") from exc
 
-    if isinstance(data.get("message"), dict):
-        return str(data["message"].get("content", ""))
-    if "response" in data:
-        return str(data.get("response", ""))
-    return json.dumps(data, ensure_ascii=False)
+    message = data.get("message") if isinstance(data.get("message"), dict) else {}
+    content = str(message.get("content", data.get("response", "")))
+    return {
+        "content": content,
+        "tool_calls": message.get("tool_calls") or [],
+        "metrics": ollama_metrics(data),
+        "done_reason": data.get("done_reason"),
+    }
 
 
-def stream_ollama(prepared: Dict[str, Any]) -> Iterator[str]:
-    """Yield successive content chunks from an Ollama streaming chat call."""
+def call_ollama(prepared: Dict[str, Any]) -> str:
+    return str(call_ollama_detailed(prepared).get("content") or "")
+
+
+def stream_ollama_events(prepared: Dict[str, Any]) -> Iterator[Dict[str, Any]]:
+    """Yield native content/tool/metrics events from an Ollama chat call."""
     if require_gpu_only():
         raise BackendCallError("GPU-only mode is enabled; refusing to call Ollama.")
     profile = prepared["profile"]
     base_url = get_backend_base_url(profile, "ollama")
-    messages: List[Dict[str, Any]] = []
-    if prepared["system_prompt"]:
-        messages.append({"role": "system", "content": prepared["system_prompt"]})
-    user_message: Dict[str, Any] = {"role": "user", "content": prepared["prompt"]}
-    if prepared["images_base64"]:
-        user_message["images"] = prepared["images_base64"]
-    messages.append(user_message)
-
     payload = {
         "model": prepared["model"],
-        "messages": messages,
+        "messages": _ollama_messages(prepared),
         "stream": True,
         "options": options_payload(prepared),
     }
+    tools = _selected_tools(prepared)
+    if tools:
+        payload["tools"] = tools
     native_format = ollama_format(prepared.get("response_format"))
     if native_format is not None:
         payload["format"] = native_format
@@ -162,17 +268,82 @@ def stream_ollama(prepared: Dict[str, Any]) -> Iterator[str]:
                     data = json.loads(line)
                 except Exception:
                     continue
-                chunk = ""
-                if isinstance(data.get("message"), dict):
-                    chunk = str(data["message"].get("content", ""))
-                elif "response" in data:
-                    chunk = str(data.get("response", ""))
-                if chunk:
-                    yield chunk
+                message = data.get("message") if isinstance(data.get("message"), dict) else {}
+                event = {
+                    "content": str(message.get("content", data.get("response", ""))),
+                    "tool_calls": message.get("tool_calls") or [],
+                    "done": bool(data.get("done")),
+                    "done_reason": data.get("done_reason"),
+                    "metrics": ollama_metrics(data) if data.get("done") else None,
+                }
+                if event["content"] or event["tool_calls"] or event["done"]:
+                    yield event
                 if data.get("done"):
                     break
         except requests.exceptions.RequestException as exc:
             raise BackendCallError(f"Ollama connection was lost mid-response: {exc}") from exc
+
+
+def stream_ollama(prepared: Dict[str, Any]) -> Iterator[str]:
+    """Backward-compatible content-only stream."""
+    for event in stream_ollama_events(prepared):
+        if event.get("content"):
+            yield str(event["content"])
+
+
+def embed_ollama(base_url: str, model: str, inputs: List[str], timeout: int = 180) -> Dict[str, Any]:
+    if require_gpu_only():
+        raise BackendCallError("GPU-only mode is enabled; refusing to call Ollama.")
+    if not is_loopback_url(base_url):
+        raise BackendCallError(f"Refusing non-local Ollama URL: {base_url}")
+    base_url = strip_trailing_slash(base_url)
+    try:
+        response = requests.post(
+            f"{base_url}/api/embed",
+            json={"model": model, "input": inputs, "truncate": True},
+            timeout=timeout,
+        )
+    except requests.Timeout as exc:
+        raise BackendCallError(f"Ollama embedding request timed out after {timeout} seconds.") from exc
+    except requests.ConnectionError as exc:
+        raise BackendCallError(f"Ollama is not running or is unreachable at {base_url}.") from exc
+    if response.status_code == 404:
+        embeddings = []
+        counts = 0
+        for value in inputs:
+            try:
+                fallback = requests.post(
+                    f"{base_url}/api/embeddings",
+                    json={"model": model, "prompt": value},
+                    timeout=timeout,
+                )
+            except (requests.Timeout, requests.ConnectionError) as exc:
+                raise BackendCallError(f"Ollama legacy embedding request failed at {base_url}.") from exc
+            if not fallback.ok:
+                raise BackendCallError(ollama_error_message(fallback, model))
+            try:
+                body = fallback.json()
+            except ValueError as exc:
+                raise BackendCallError("Ollama returned invalid JSON for a legacy embedding request.") from exc
+            embeddings.append(body.get("embedding") or [])
+            counts += max(1, len(value) // 4)
+        return {"embeddings": embeddings, "prompt_eval_count": counts, "metrics": {}}
+    if not response.ok:
+        raise BackendCallError(ollama_error_message(response, model))
+    try:
+        data = response.json()
+    except ValueError as exc:
+        raise BackendCallError("Ollama returned invalid JSON for an embedding request.") from exc
+    return {
+        "embeddings": data.get("embeddings") or [],
+        "prompt_eval_count": _safe_int(data.get("prompt_eval_count")),
+        "metrics": ollama_metrics(data),
+    }
+
+
+def encode_embedding_base64(values: List[float]) -> str:
+    packed = struct.pack(f"<{len(values)}f", *(float(value) for value in values))
+    return base64.b64encode(packed).decode("ascii")
 
 
 def ollama_models(base_url: str) -> Tuple[List[str], Optional[str]]:

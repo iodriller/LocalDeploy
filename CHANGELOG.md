@@ -2,6 +2,14 @@
 
 All notable changes to this project should be documented here.
 
+## 0.5.0 - 2026-07-17
+
+- Detect NVIDIA, AMD, Intel, and Apple GPUs and estimate compatible multi-GPU placement without combining mixed runtime pools.
+- Add a dense local-provider model catalog for Ollama, llama.cpp, LM Studio, vLLM, Docker Model Runner, and configured loopback OpenAI-compatible runtimes, including saved benchmark tok/s.
+- Record repeated-run variance and benchmark provenance: LocalDeploy/Ollama versions, full model digest, quant, context, initial warm/cold state, native backend metrics, and hardware snapshot.
+- Add OpenAI-compatible tool calling, `/v1/responses`, and `/v1/embeddings` with float/base64 output. LocalDeploy returns tool calls but never executes them.
+- Clarify the single-user local-only security boundary: one shared token, no TLS, no multi-user isolation, and no claim of internet-facing readiness.
+
 ## 0.4.0 - 2026-07-17
 
 Public-launch release: a chat playground, quant advisor, disk usage tools, durable

@@ -5,39 +5,35 @@
 LocalDeploy is built for a **single local user on a trusted workstation**. The default configuration assumes:
 
 - The API binds to loopback (`127.0.0.1`), not to a LAN address or `0.0.0.0`.
-- Only the local user submits requests; there is no authentication on the HTTP API.
-- The backend services (Ollama at `:11434`, llama.cpp at `:8080`) are themselves loopback-only.
+- Only the local user submits requests. An optional `API_TOKEN` is one shared secret, not a user identity or tenant boundary.
+- Inference backends are loopback-only. Supported runtimes include Ollama, llama.cpp, LM Studio, vLLM, Docker Model Runner, and configured OpenAI-compatible services.
 - Prompts, images, and benchmark outputs are private data; nothing leaves the machine.
 
 The following are **explicitly out of scope** of LocalDeploy's defenses:
 
-- Multi-tenant or shared-host deployments. There is no per-user rate limiting, quota accounting, or auth layer.
+- Multi-tenant or shared-host deployments. There is no per-user authentication, isolation, rate limiting, quota accounting, or audit trail.
 - Untrusted prompts (e.g., scraped web content fed into the model). No input sanitization beyond pydantic validation and size caps.
 - Untrusted model output reaching other systems. Responses are not filtered for PII, credentials, or jailbreak markers.
-- Network exposure beyond loopback. Binding to a non-loopback address removes the only meaningful access control.
+- Network exposure beyond loopback. There is no TLS server configuration, and a shared bearer token does not make direct internet exposure safe.
 
-If your use case violates any of these assumptions, treat LocalDeploy as a starting point and add the missing controls (rate limiting, auth, output filtering, transport security) before exposing it.
+LocalDeploy must not be presented or deployed as an internet-facing server. Do not publish it through a public reverse proxy, tunnel, port-forward, or public container port. A production gateway with TLS, real identity, authorization, isolation, rate limiting, and audit logging is a separate system outside this project's security claim.
 
 ## Local-Only Boundary
 
 LocalDeploy is designed to call only local inference backends:
 
 - `http://localhost:11434` for Ollama
-- `http://localhost:8080` for llama.cpp
+- loopback ports for llama.cpp and OpenAI-compatible local runtimes
 
 The server rejects non-local backend URLs in code (`localdeploy/utils.py::is_loopback_url`). Do not remove this guard without an explicit security review.
 
-`API_HOST` defaults to `127.0.0.1` in `.env.example`. If you change it, document why and pair it with at least:
-
-- A firewall rule limiting access to known clients.
-- `API_TOKEN` set, so the control-plane isn't wide open (see below).
-- TLS termination in front of the API.
+`API_HOST` defaults to `127.0.0.1` in `.env.example`. Keep that default. `API_TOKEN` can reduce accidental access by another local process or trusted-LAN client, but it is a single shared token sent over plain HTTP and is not sufficient for internet exposure.
 
 **Runtime guard:** at startup, `api_server.py` checks whether `API_HOST` resolves to a
-non-loopback address with no `API_TOKEN` set. If so it prints a loud warning
-listing the exposed control-plane endpoints. Set `REQUIRE_TOKEN_ON_LAN=true` to
-turn that warning into a hard failure (the server refuses to start) instead of
-just logging it. Inside Docker the container always binds `0.0.0.0` internally
+non-loopback address. It prints a loud warning even when `API_TOKEN` is set,
+because the token adds neither TLS nor user isolation. The legacy
+`REQUIRE_TOKEN_ON_LAN=true` switch turns a tokenless non-loopback bind into a
+hard failure. Inside Docker the container always binds `0.0.0.0` internally
 by design — what actually controls exposure is the *host* port mapping in
 `docker-compose.yml` — so the warning there is informational unless you also
 opened that host port to your LAN.
@@ -60,7 +56,8 @@ These are deliberate trade-offs for the single-user, local-only design. They bec
 
 | Gap | Why it exists | When it becomes risky |
 |---|---|---|
-| No HTTP auth *by default* | Loopback-only assumption; opt-in `API_TOKEN` available | Binding to LAN without setting `API_TOKEN`, or exposing via tunnel / shared host |
+| One shared HTTP token, optional | Loopback-only single-user assumption | Any public exposure, shared host, or need for revocation/accountability per user |
+| No TLS | Local loopback HTTP does not cross a network | LAN, tunnel, proxy, or internet exposure |
 | No rate limiting | Single-user workload | More than one client / shared host / a misbehaving script loop |
 | No concurrency cap on backend calls | 8 GB VRAM serves ~1 in-flight request anyway | If you increase VRAM and add parallel callers |
 | No prompt-injection filter | Operator-supplied prompts assumed trusted | Feeding the model with untrusted external content |

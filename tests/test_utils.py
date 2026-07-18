@@ -62,7 +62,11 @@ class TestIsLoopbackUrl:
 class TestGetBackendBaseUrl:
     def test_rejects_unknown_backend(self) -> None:
         with pytest.raises(BackendCallError):
-            get_backend_base_url({}, "vllm")
+            get_backend_base_url({}, "cloud")
+
+    def test_local_provider_backends_use_loopback_defaults(self) -> None:
+        assert get_backend_base_url({}, "lmstudio") == "http://127.0.0.1:1234"
+        assert get_backend_base_url({}, "vllm") == "http://127.0.0.1:8001"
 
     def test_rejects_non_local_override(self) -> None:
         with pytest.raises(BackendCallError):
