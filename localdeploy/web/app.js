@@ -41,6 +41,7 @@ const state = {
   chatMessages: [],
   chatImages: [],
   chatController: null,
+  chatSessionBusy: false,
   // Your-models list sort + bulk selection.
   installedSort: "default",
   installedSelection: new Set(),
@@ -49,6 +50,7 @@ const state = {
   benchHistoryServer: false,
   // Provider catalog (fetched once, filtered/sorted/paged client-side).
   catalog: { rows: [], providers: [], loaded: false, page: 0 },
+  remoteCatalogLoaded: false,
 };
 
 const BENCHMARK_RUNS_KEY = "localdeploy.benchmarkRuns.v1";
@@ -705,7 +707,7 @@ function scheduleFitRefresh() {
   state.fitRefreshTimer = setTimeout(() => {
     $$(".mrow[data-model]", $("#installed-body")).forEach((row) => fitCheckRow(row));
     if (!$("#fit-finder-body")?.textContent.includes("not been scanned")) scanConfiguredFits();
-    if (!$("#updates-body")?.textContent.includes("No Hugging Face search")) checkUpdates();
+    if (state.remoteCatalogLoaded && $("#catalog-source")?.value === "hf") checkUpdates();
   }, 350);
 }
 
@@ -757,8 +759,7 @@ function activateTab(name) {
   } else if (name === "bench") {
     void refreshStatus();
   } else if (name === "chat") {
-    updateChatProfileState();
-    $("#chat-input")?.focus();
+    void refreshLiveModelState(true).then(() => $("#chat-input")?.focus());
   }
 }
 
@@ -777,6 +778,7 @@ async function loadProfiles() {
     state.profiles.forEach((name) => (state.profileModels[name] = profiles[name]?.model_id || name));
     state.defaultProfile = data.default_profile || state.profiles[0] || null;
     renderProfileSelectOptions();
+    renderChatModelOptions();
     renderBenchmarkProfileChips();
     updateBenchmarkSummary();
     renderBenchmarkWorkspace();
@@ -789,7 +791,7 @@ async function loadProfiles() {
   }
 }
 
-// (Re)build both profile <select>s, annotating profiles whose model isn't
+// (Re)build profile <select>s, annotating profiles whose model isn't
 // pulled so a dropdown never silently offers a model that can't deploy.
 // Called again after the installed list loads, preserving the selection.
 function renderProfileSelectOptions() {
@@ -806,11 +808,10 @@ function renderProfileSelectOptions() {
         return `<option value="${esc(name)}"${sel}>${esc(label)}</option>`;
       })
       .join("");
-  ["#profile-select", "#bench-profile-select", "#chat-profile"].forEach((sel) => {
+  ["#profile-select", "#bench-profile-select"].forEach((sel) => {
     const el = $(sel);
     if (el) el.innerHTML = build(el.value);
   });
-  updateChatProfileState();
 }
 
 // Guard actions that need a profile so they can't fire a blank profile name.
@@ -1153,9 +1154,13 @@ async function refreshStatus() {
     );
     wireCopyButtons(body);
   } catch (err) {
+    state.servedModels = [];
+    state.runningDetails = [];
+    state.runningPlacements = {};
     toast(`Status failed: ${err.message}`, "error");
   } finally {
     busy(btn, false);
+    renderChatModelOptions();
     updateProgressRail();
   }
 }
@@ -1357,9 +1362,11 @@ async function refreshInstalled() {
     state.fitCache = {};
     if (!data.success) {
       state.installedByName = {};
+      state.installedList = [];
       state.installedLoaded = false; // unknown, so nothing gets hidden as "not pulled"
       renderBenchmarkProfileChips();
       renderProfileSelectOptions();
+      renderChatModelOptions();
       body.innerHTML = `<div class="muted">${esc(data.error || "Ollama unreachable.")}</div>`;
       return;
     }
@@ -1372,6 +1379,7 @@ async function refreshInstalled() {
     if (!data.installed.length) {
       renderBenchmarkProfileChips();
       renderProfileSelectOptions();
+      renderChatModelOptions();
       updateDiskSummary();
       body.innerHTML = `<div class="muted">No models pulled yet — grab one from <b>Get a model</b> above.</div>`;
       return;
@@ -1381,8 +1389,13 @@ async function refreshInstalled() {
     });
     renderBenchmarkProfileChips();
     renderProfileSelectOptions();
+    renderChatModelOptions();
     renderInstalledList();
   } catch (err) {
+    state.installedByName = {};
+    state.installedList = [];
+    state.installedLoaded = false;
+    renderChatModelOptions();
     toast(`Installed list failed: ${err.message}`, "error");
   } finally {
     busy(btn, false);
@@ -1507,7 +1520,7 @@ async function bulkDeleteSelected(btn) {
       }
     }
     toast(`Deleted ${deleted} model(s).`, "success");
-    await refreshInstalled();
+    await refreshLiveModelState(true);
   } catch (err) {
     toast(`Bulk delete failed: ${err.message}`, "error");
   } finally {
@@ -2146,23 +2159,93 @@ function hfStatsHtml(candidate) {
   return `<span class="meta hf-stats" title="Hugging Face downloads and likes; the search API does not return a quality rating.">${esc(items.join(" · "))}</span>`;
 }
 
-async function checkUpdates(source) {
-  const btn = source?.currentTarget || source || $("#btn-hf-search");
-  busy(btn, true);
+function updateRemoteCatalogSourceUI() {
+  const source = $("#catalog-source")?.value || "library";
+  $("#hf-options")?.classList.toggle("hidden", source !== "hf");
+  const input = $("#hf-search");
+  if (input) {
+    input.placeholder = source === "hf"
+      ? "gemma, qwen, coder, vision… (blank = popular GGUF repos)"
+      : "gemma, qwen, coder, vision… (blank = popular Ollama models)";
+  }
+}
+
+function remoteCatalogSearchButton(source) {
+  const candidate = source?.currentTarget || source;
+  return candidate?.id === "btn-hf-search" ? candidate : $("#btn-hf-search");
+}
+
+async function searchOllamaLibrary(source) {
+  const btn = remoteCatalogSearchButton(source);
   const body = $("#updates-body");
-  body.innerHTML = `<div class="muted">Checking Hugging Face…</div>`;
+  busy(btn, true);
+  state.remoteCatalogLoaded = true;
+  body.innerHTML = `<div class="muted">Searching the Ollama model library…</div>`;
+  try {
+    const data = await postJSON("/registry/search-ollama-library", {
+      query: ($("#hf-search")?.value || "").trim(),
+      limit: 50,
+    });
+    if (!data.online && !(data.results || []).length) {
+      body.innerHTML = `<div class="empty-state">${esc(data.message || "Ollama's model library is unavailable.")}</div>`;
+      return;
+    }
+    const rows = (data.results || [])
+      .map((model) => {
+        const installed = model.installed_match ? `<span class="badge on">installed</span>` : "";
+        const sizes = (model.sizes || []).map((size) => `<span class="badge">${esc(size)}</span>`).join("");
+        const capabilities = (model.capabilities || [])
+          .map((cap) => `<span class="badge${cap === "cloud" ? " off" : ""}">${esc(cap)}</span>`)
+          .join("");
+        const meta = [model.pulls ? `${model.pulls} pulls` : null, model.updated].filter(Boolean).join(" · ");
+        const action = model.pullable === false
+          ? `<a class="btn compact" href="${esc(model.url)}" target="_blank" rel="noopener">View model</a>`
+          : `<button class="btn primary compact library-pull-btn" data-model="${esc(model.pull_name || model.name)}">Pull</button>`;
+        return `<div class="catalog-result-row">
+          <div class="catalog-result-main">
+            <div class="catalog-result-title"><a href="${esc(model.url)}" target="_blank" rel="noopener">${esc(model.name)}</a>${installed}</div>
+            ${model.description ? `<div class="muted small catalog-description">${esc(model.description)}</div>` : ""}
+            <div class="catalog-result-meta">${sizes}${capabilities}${meta ? `<span class="meta">${esc(meta)}</span>` : ""}</div>
+          </div>
+          ${action}
+        </div>`;
+      })
+      .join("");
+    body.innerHTML = rows
+      ? `<div class="catalog-results">${rows}</div>${data.message ? `<p class="muted small">${esc(data.message)}</p>` : ""}`
+      : `<div class="empty-state">${esc(data.message || "No Ollama models matched this search.")}</div>`;
+    $$(".library-pull-btn", body).forEach((pullBtn) =>
+      pullBtn.addEventListener("click", () => pullModel(pullBtn.dataset.model, pullBtn))
+    );
+  } catch (err) {
+    body.innerHTML = `<div class="empty-state">Ollama Library search failed.</div>`;
+    toast(`Ollama Library search failed: ${err.message}`, "error");
+  } finally {
+    busy(btn, false);
+  }
+}
+
+async function checkUpdates(source) {
+  if (($("#catalog-source")?.value || "library") === "library") {
+    return searchOllamaLibrary(source);
+  }
+  const btn = remoteCatalogSearchButton(source);
+  busy(btn, true);
+  state.remoteCatalogLoaded = true;
+  const body = $("#updates-body");
+  body.innerHTML = `<div class="muted">Searching Hugging Face…</div>`;
 
   // Build request from the search form (Phase 5).
   const searchRaw = ($("#hf-search")?.value || "").trim();
-  const limitVal = parseInt($("#hf-limit")?.value || "5", 10);
+  const limitVal = parseInt($("#hf-limit")?.value || "24", 10);
   const ggufOnly = $("#hf-gguf-only")?.checked !== false;
   const payload = {
-    limit: Number.isFinite(limitVal) && limitVal > 0 ? limitVal : 5,
+    limit: Number.isFinite(limitVal) && limitVal > 0 ? limitVal : 24,
     gguf_only: ggufOnly,
     fit_filter: $("#hf-fit-filter")?.value || "all",
     free_vram_mb: targetVram(),
   };
-  if (searchRaw) payload.queries = searchRaw.split(",").map((s) => s.trim()).filter(Boolean);
+  payload.queries = searchRaw ? searchRaw.split(",").map((s) => s.trim()).filter(Boolean) : [""];
 
   try {
     const data = await postJSON("/registry/check-updates", payload);
@@ -2192,7 +2275,8 @@ async function checkUpdates(source) {
             </div>`;
           })
           .join("");
-        return `<h3 class="sub">“${esc(group.query)}”</h3><div class="mlist">${rows || '<div class="muted">none</div>'}</div>`;
+        const heading = group.query ? `Results for “${esc(group.query)}”` : "Popular GGUF repositories";
+        return `<h3 class="sub">${heading}</h3><div class="mlist">${rows || '<div class="muted">none</div>'}</div>`;
       })
       .join("");
     const note = data.online ? "" : `<div class="muted small">${esc(data.message || "")}</div>`;
@@ -2475,7 +2559,7 @@ async function pullModel(modelArg, triggerBtn) {
     } else {
       append("done.");
       setPullProgress({ percent: 100, status: "Pulled successfully.", stats: "" });
-      await refreshInstalled();
+      await Promise.all([loadProfiles(), refreshLiveModelState(true)]);
       markModelInstalledInUI(model);
       showPullDone(model);
       highlightInstalledModel(model);
@@ -2533,7 +2617,7 @@ async function deleteModel(name, btn) {
     const res = await postJSON("/models/delete", { model: name });
     if (res.success) {
       toast(res.message || `Deleted ${name}.`, "success");
-      await refreshInstalled();
+      await refreshLiveModelState(true);
     } else {
       toast(res.error || res.message || "Could not delete.", "error");
     }
@@ -2611,42 +2695,171 @@ async function quantAdvise(btn) {
 }
 
 // ---------------------------------------------------------------------------
-// Tab: Chat playground — streaming chat over /v1/chat/completions
+// Tab: Chat playground — installed Ollama models with explicit load state
 // ---------------------------------------------------------------------------
+function chatSelectedModel() {
+  return $("#chat-model")?.value || "";
+}
+
+function profileForChatModel(model = chatSelectedModel(), enabledOnly = true) {
+  if (!model) return "";
+  return (
+    state.profiles.find((name) => {
+      const profile = state.profileData[name] || {};
+      return (
+        (profile.backend || "ollama") === "ollama" &&
+        profile.model_id === model &&
+        (!enabledOnly || profile.enabled === true)
+      );
+    }) || ""
+  );
+}
+
 function chatSelectedProfile() {
-  return $("#chat-profile")?.value || state.defaultProfile || "";
+  return profileForChatModel();
 }
 
-function chatProfileSupportsVision(profileName) {
-  return !!(state.profileData[profileName || chatSelectedProfile()] || {}).supports_vision;
+function runningChatModel(model = chatSelectedModel()) {
+  if (!model) return null;
+  return (state.runningDetails || []).find((item) => item.name === model) || null;
 }
 
-// Enable/disable the image-attach control and refresh the hint whenever the
-// selected chat profile changes (or the profile list reloads).
-function updateChatProfileState() {
-  const attach = $("#chat-attach-label");
-  const hint = $("#chat-hint");
-  if (!attach || !hint) return;
-  const profile = chatSelectedProfile();
-  if (!profile) {
-    hint.textContent = "No profiles yet — pull a model in Setup & Deploy first.";
-    attach.classList.add("disabled");
+function chatModelIsReady() {
+  return !!(runningChatModel() && chatSelectedProfile());
+}
+
+function chatProfileSupportsVision() {
+  const profile = state.profileData[chatSelectedProfile()] || {};
+  return !!profile.supports_vision;
+}
+
+function renderChatModelOptions() {
+  const select = $("#chat-model");
+  if (!select) return;
+  const current = select.value;
+  const models = state.installedList || [];
+  if (!state.installedLoaded) {
+    select.innerHTML = `<option value="">Checking installed models…</option>`;
+    select.disabled = true;
+    updateChatModelState();
     return;
   }
-  const vision = chatProfileSupportsVision(profile);
-  attach.classList.toggle("disabled", !vision);
-  attach.title = vision
+  if (!models.length) {
+    select.innerHTML = `<option value="">No installed models</option>`;
+    select.disabled = true;
+    updateChatModelState();
+    return;
+  }
+  const names = models.map((item) => item.name).filter(Boolean);
+  const defaultModel = state.profileModels[state.defaultProfile];
+  const preferred =
+    (names.includes(current) && current) ||
+    names.find((name) => state.servedModels.includes(name)) ||
+    (names.includes(defaultModel) && defaultModel) ||
+    names[0];
+  select.innerHTML = names
+    .map((name) => {
+      const loaded = state.servedModels.includes(name) ? " · loaded" : "";
+      return `<option value="${esc(name)}"${name === preferred ? " selected" : ""}>${esc(name + loaded)}</option>`;
+    })
+    .join("");
+  select.disabled = false;
+  updateChatModelState();
+}
+
+function updateChatModelState() {
+  const attach = $("#chat-attach-label");
+  const hint = $("#chat-hint");
+  const session = $("#chat-session-state");
+  const action = $("#btn-chat-session");
+  const duration = $("#chat-keep-alive");
+  const input = $("#chat-input");
+  const send = $("#btn-chat-send");
+  if (!attach || !hint || !session || !action || !duration || !input || !send) return;
+  const model = chatSelectedModel();
+  const running = runningChatModel(model);
+  const profile = chatSelectedProfile();
+  const ready = !!(model && running && profile);
+  const vision = chatProfileSupportsVision();
+  const canAttach = ready && vision;
+  attach.classList.toggle("disabled", !canAttach);
+  attach.title = canAttach
     ? "Attach images to your next message"
-    : "This profile is not marked as vision-capable (see Edit tuning)";
-  if (!vision && state.chatImages.length) {
+    : ready
+      ? "This model is not marked as vision-capable"
+      : "Load a vision-capable model before attaching images";
+  if (!canAttach && state.chatImages.length) {
     state.chatImages = [];
     renderChatAttachments();
   }
-  const p = state.profileData[profile] || {};
-  const bits = [p.model_id, vision ? "vision" : null, profileIsUnpulled(profile) ? "⚠ model not pulled" : null]
-    .filter(Boolean)
-    .join(" · ");
-  hint.textContent = bits ? `Chatting with ${bits}. The first message may take a moment while the model loads.` : "";
+  input.disabled = !ready;
+  send.disabled = !ready && !state.chatController;
+  input.placeholder = ready ? "Message this local model" : "Load an installed model to start chatting";
+  duration.disabled = ready || state.chatSessionBusy;
+  action.disabled = !model || state.chatSessionBusy || !!state.chatController;
+  session.className = `chat-session-state${ready ? " ready" : state.chatSessionBusy ? " loading" : ""}`;
+  if (!state.installedLoaded) {
+    hint.textContent = "Checking models installed in Ollama…";
+    session.lastElementChild.textContent = "Checking availability";
+    action.textContent = "Load model";
+  } else if (!model) {
+    hint.textContent = "No local models are installed. Pull one from Setup & Deploy to use Chat.";
+    session.lastElementChild.textContent = "Nothing installed";
+    action.textContent = "Load model";
+  } else if (state.chatSessionBusy) {
+    hint.textContent = `Loading ${model} into memory…`;
+    session.lastElementChild.textContent = "Loading";
+    action.textContent = "Loading…";
+  } else if (ready) {
+    hint.textContent = `${model} is ready in Ollama. ${formatExpires(running.expires_at)}.`;
+    session.lastElementChild.textContent = "Ready";
+    action.textContent = "Unload";
+  } else if (running) {
+    hint.textContent = `${model} is loaded, but its chat profile is not enabled yet.`;
+    session.lastElementChild.textContent = "Needs chat setup";
+    action.textContent = "Enable chat";
+  } else {
+    const durationLabel = duration.options[duration.selectedIndex]?.textContent || "60 minutes";
+    hint.textContent = `${model} is installed on disk. Load it to keep it ready for ${durationLabel}.`;
+    session.lastElementChild.textContent = "On disk";
+    action.textContent = "Load model";
+  }
+  if (!state.chatMessages.length) renderChatWelcome();
+}
+
+async function toggleChatSession() {
+  const model = chatSelectedModel();
+  const btn = $("#btn-chat-session");
+  if (!model || state.chatSessionBusy) return;
+  if (chatModelIsReady()) {
+    await killRunningModel(model, btn);
+    return;
+  }
+  state.chatSessionBusy = true;
+  updateChatModelState();
+  try {
+    const profileResult = await postJSON("/profiles/upsert", {
+      model_id: model,
+      backend: "ollama",
+      fields: { enabled: true },
+    });
+    if (!profileResult.success) throw new Error(profileResult.error || "Could not enable chat for this model.");
+    await loadProfiles();
+    const keepAlive = $("#chat-keep-alive")?.value || "60m";
+    const result = await postJSON("/models/serve", {
+      model,
+      keep_alive: keepAlive,
+      device: "auto",
+    });
+    if (!result.success) throw new Error(result.error || result.message || "Could not load the model.");
+    await refreshStatus();
+    toast(result.warning || `${model} is ready for chat.`, result.warning ? "info" : "success");
+  } catch (err) {
+    toast(`Could not start chat: ${err.message}`, "error");
+  } finally {
+    state.chatSessionBusy = false;
+    updateChatModelState();
+  }
 }
 
 function renderChatAttachments() {
@@ -2741,14 +2954,14 @@ function renderChatText(container, text) {
   }
 }
 
-// Build one message bubble with a role avatar.
+// Build one message bubble with a compact role marker.
 function appendChatBubble(role, text, images = []) {
   const list = $("#chat-messages");
   const row = document.createElement("div");
   row.className = `chat-row ${role}`;
   const avatar = document.createElement("div");
   avatar.className = "chat-avatar";
-  avatar.textContent = role === "user" ? "🧑" : "✨";
+  avatar.textContent = role === "user" ? "U" : "AI";
   row.appendChild(avatar);
   const bubble = document.createElement("div");
   bubble.className = "chat-bubble";
@@ -2806,8 +3019,8 @@ async function sendChatMessage() {
   }
   const text = input.value.trim();
   const profile = chatSelectedProfile();
-  if (!text || !profile) {
-    if (!profile) toast("Pull a model first — the chat needs a profile.", "error");
+  if (!text || !chatModelIsReady() || !profile) {
+    if (!chatModelIsReady()) toast("Load an installed model before sending a message.", "error");
     return;
   }
   const images = state.chatImages.slice();
@@ -2823,6 +3036,7 @@ async function sendChatMessage() {
 
   const controller = new AbortController();
   state.chatController = controller;
+  updateChatModelState();
   btn.textContent = "Stop";
   btn.classList.add("danger");
   const started = performance.now();
@@ -2858,6 +3072,7 @@ async function sendChatMessage() {
     btn.textContent = "Send";
     btn.classList.remove("danger");
     assistant.bubble.classList.remove("typing");
+    updateChatModelState();
   }
 
   const elapsed = (performance.now() - started) / 1000;
@@ -2891,13 +3106,47 @@ function clearChat() {
   state.chatMessages = [];
   state.chatImages = [];
   renderChatAttachments();
+  renderChatWelcome();
+}
+
+function renderChatWelcome() {
   const list = $("#chat-messages");
+  if (!list || state.chatMessages.length) return;
   list.innerHTML = "";
   const welcome = document.createElement("div");
   welcome.className = "chat-welcome";
-  welcome.innerHTML = `<div class="chat-welcome-logo">✨</div>
-    <h3>Talk to your local model</h3>
-    <p class="muted small">Streaming replies, straight from your own hardware. Try one of these:</p>`;
+  const ready = chatModelIsReady();
+  const model = chatSelectedModel();
+  if (!state.installedLoaded) {
+    welcome.innerHTML = `<div class="chat-welcome-mark">…</div>
+      <h3>Checking local models</h3>
+      <p class="muted small">Chat will show models that are actually installed in Ollama.</p>`;
+    list.appendChild(welcome);
+    return;
+  }
+  if (!model) {
+    welcome.innerHTML = `<div class="chat-welcome-mark">+</div>
+      <h3>No installed models</h3>
+      <p class="muted small">Pull a model from Setup &amp; Deploy, then return here to load it.</p>`;
+    const openCatalog = document.createElement("button");
+    openCatalog.type = "button";
+    openCatalog.className = "btn primary";
+    openCatalog.textContent = "Open model catalog";
+    openCatalog.addEventListener("click", () => activateTab("serve"));
+    welcome.appendChild(openCatalog);
+    list.appendChild(welcome);
+    return;
+  }
+  if (!ready) {
+    welcome.innerHTML = `<div class="chat-welcome-mark">${esc(model.slice(0, 1).toUpperCase())}</div>
+      <h3>${esc(model)} is installed</h3>
+      <p class="muted small">Use Load model above to warm it for the displayed keep-loaded duration.</p>`;
+    list.appendChild(welcome);
+    return;
+  }
+  welcome.innerHTML = `<div class="chat-welcome-mark">${esc(model.slice(0, 1).toUpperCase())}</div>
+    <h3>${esc(model)} is ready</h3>
+    <p class="muted small">Start with a prompt or choose one below.</p>`;
   const chips = document.createElement("div");
   chips.className = "chat-suggestion-chips";
   CHAT_SUGGESTIONS.forEach((text) => {
@@ -4166,6 +4415,17 @@ $("#btn-switch").addEventListener("click", switchModel);
 $("#btn-installed").addEventListener("click", refreshInstalled);
 $("#btn-updates")?.addEventListener("click", (e) => checkUpdates(e));
 $("#btn-hf-search")?.addEventListener("click", (e) => checkUpdates(e));
+$("#catalog-source")?.addEventListener("change", () => {
+  updateRemoteCatalogSourceUI();
+  state.remoteCatalogLoaded = false;
+  $("#updates-body").innerHTML = `<div class="muted">Search above, or leave it blank to browse popular models.</div>`;
+});
+$("#hf-search")?.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") {
+    e.preventDefault();
+    checkUpdates(e);
+  }
+});
 $("#btn-provider-refresh")?.addEventListener("click", (e) => loadProviderCatalog(e));
 $("#catalog-search")?.addEventListener("input", () => { state.catalog.page = 0; renderProviderCatalog(); });
 ["#catalog-provider", "#catalog-size", "#catalog-sort"].forEach((sel) =>
@@ -4195,15 +4455,17 @@ $("#btn-bulk-clear")?.addEventListener("click", () => {
 // Chat playground
 $("#btn-chat-send")?.addEventListener("click", sendChatMessage);
 $("#btn-chat-clear")?.addEventListener("click", clearChat);
-$("#chat-profile")?.addEventListener("change", updateChatProfileState);
+$("#chat-model")?.addEventListener("change", updateChatModelState);
+$("#chat-keep-alive")?.addEventListener("change", updateChatModelState);
+$("#btn-chat-session")?.addEventListener("click", toggleChatSession);
 $("#btn-chat-system-toggle")?.addEventListener("click", () => {
   const panel = $("#chat-system-panel");
   panel.classList.toggle("hidden");
   if (!panel.classList.contains("hidden")) $("#chat-system").focus();
 });
 $("#chat-images")?.addEventListener("change", (e) => {
-  if (!chatProfileSupportsVision()) {
-    toast("The selected profile isn't marked vision-capable.", "error");
+  if (!chatProfileSupportsVision() || !chatModelIsReady()) {
+    toast("Load a vision-capable model before attaching images.", "error");
   } else {
     addChatImages(e.target.files);
   }
@@ -4287,7 +4549,7 @@ $("#fit-filter")?.addEventListener("change", () => {
   if (!$("#fit-finder-body").textContent.includes("not been scanned")) scanConfiguredFits();
 });
 $("#hf-fit-filter")?.addEventListener("change", () => {
-  if (!$("#updates-body").textContent.includes("No Hugging Face search")) checkUpdates();
+  if (state.remoteCatalogLoaded && $("#catalog-source")?.value === "hf") checkUpdates();
 });
 $("#vram-budget-gb")?.addEventListener("input", () => {
   const raw = $("#vram-budget-gb").value.trim();
@@ -4383,15 +4645,14 @@ function wireGetModelSegments() {
       $$(".seg-panel").forEach((p) =>
         p.classList.toggle("hidden", p.dataset.segPanel !== seg)
       );
-      if (seg === "hf" && $("#provider-catalog-body")?.textContent.includes("not been loaded")) {
-        loadProviderCatalog();
-      }
+      if (seg === "hf") updateRemoteCatalogSourceUI();
     })
   );
 }
 
 (async function init() {
   wireGetModelSegments();
+  updateRemoteCatalogSourceUI();
   loadBenchmarkRuns();
   clearChat();
   initServerHistoryToggle();

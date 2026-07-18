@@ -61,7 +61,8 @@ def test_new_ui_controls_have_safe_bindings() -> None:
     for dom_id in (
         "btn-hf-search", "btn-fit-profiles", "fit-filter", "hf-fit-filter", "vram-budget-gb",
         # chat playground
-        "chat-profile", "btn-chat-send", "btn-chat-clear", "chat-input", "chat-images",
+        "chat-model", "chat-keep-alive", "btn-chat-session", "chat-session-state",
+        "btn-chat-send", "btn-chat-clear", "chat-input", "chat-images",
         # quant advisor
         "quant-model", "btn-quant-advise", "quant-body",
         # disk usage / bulk delete
@@ -77,6 +78,8 @@ def test_new_ui_controls_have_safe_bindings() -> None:
     for binding in ("sendChatMessage", "quantAdvise", "bulkDeleteSelected", "initServerHistoryToggle"):
         assert binding in js, binding
     assert '$("#vram-budget-gb")?.addEventListener("input", () => {' in js
+    assert '["#profile-select", "#bench-profile-select"]' in js
+    assert "#chat-profile" not in js
 
 
 def test_chat_tab_present() -> None:
