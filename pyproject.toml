@@ -66,3 +66,7 @@ include = ["localdeploy*"]
 
 [tool.setuptools.package-data]
 localdeploy = ["web/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
