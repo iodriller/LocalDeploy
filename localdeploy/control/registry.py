@@ -307,6 +307,144 @@ def search_ollama_library(req: LibrarySearchRequest) -> Dict[str, Any]:
     return {"success": True, "online": True, "results": results, "message": message}
 
 
+# --- unified remote search (Ollama library + Hugging Face, one query) --------
+
+
+class UnifiedSearchRequest(BaseModel):
+    query: str = ""
+    limit: int = 30  # per source
+
+
+def _library_rows(query: str, limit: int) -> Tuple[List[Dict[str, Any]], Optional[str]]:
+    """Ollama library results normalized for the unified table."""
+    import requests
+
+    try:
+        resp = requests.get(
+            "https://ollama.com/search",
+            params={"q": query},
+            headers={"User-Agent": "LocalDeploy (+https://github.com/iodriller/LocalDeploy)"},
+            timeout=15,
+        )
+        resp.raise_for_status()
+    except requests.RequestException as exc:
+        return [], f"Ollama library unreachable: {exc}"
+    rows = parse_ollama_library_search(resp.text)[: max(1, limit)]
+    for row in rows:
+        row["source"] = "ollama"
+    if not rows:
+        return [], "No Ollama library results parsed — the page layout may have changed."
+    return rows, None
+
+
+def _hf_rows(query: str, limit: int) -> Tuple[List[Dict[str, Any]], Optional[str]]:
+    """Hugging Face GGUF results normalized to the same shape as library rows.
+
+    A blank query returns the most-downloaded GGUF repos, so 'search everything'
+    works before the user types anything.
+    """
+    if offline_mode():
+        return [], "offline"
+    try:
+        from huggingface_hub import HfApi
+    except Exception as exc:  # pragma: no cover - dependency missing
+        return [], f"huggingface_hub unavailable: {exc}"
+    try:
+        api = HfApi()
+        kwargs: Dict[str, Any] = {"filter": "gguf", "limit": max(1, limit)}
+        if query:
+            kwargs["search"] = query
+            kwargs["sort"] = "downloads"
+        else:
+            kwargs["sort"] = "downloads"
+        rows: List[Dict[str, Any]] = []
+        for model in api.list_models(**kwargs):
+            mid = getattr(model, "id", None) or getattr(model, "modelId", None)
+            if not mid:
+                continue
+            downloads = getattr(model, "downloads", None)
+            modified = getattr(model, "lastModified", None)
+            rows.append(
+                {
+                    "source": "huggingface",
+                    "name": str(mid),
+                    "provider": "huggingface",
+                    "publisher": str(mid).split("/", 1)[0] if "/" in str(mid) else None,
+                    "description": None,
+                    "sizes": [],
+                    "capabilities": [],
+                    "pulls": _fmt_count(downloads),
+                    "updated": str(modified)[:10] if modified else None,
+                    "pullable": True,
+                    "pull_name": f"hf.co/{mid}",
+                    "url": f"https://huggingface.co/{mid}",
+                }
+            )
+        return rows, None
+    except Exception as exc:
+        return [], f"Hugging Face unreachable: {exc}"
+
+
+def _fmt_count(value: Any) -> Optional[str]:
+    try:
+        n = float(value)
+    except (TypeError, ValueError):
+        return None
+    if n >= 1_000_000:
+        return f"{n / 1_000_000:.1f}M"
+    if n >= 1_000:
+        return f"{n / 1_000:.1f}K"
+    return str(int(n))
+
+
+@router.post("/registry/search-models")
+def search_models(req: UnifiedSearchRequest) -> Dict[str, Any]:
+    """One query, every source: the Ollama library and Hugging Face GGUF repos,
+    fetched in parallel and returned as one normalized list (source is a field,
+    not a user decision)."""
+    if offline_mode():
+        return {
+            "success": True,
+            "online": False,
+            "results": [],
+            "sources": {},
+            "message": "offline mode (OFFLINE=true): remote model search skipped — no egress",
+        }
+    query = req.query.strip()
+    limit = max(1, min(req.limit, 50))
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        lib_future = executor.submit(_library_rows, query, limit)
+        hf_future = executor.submit(_hf_rows, query, limit)
+        lib_rows, lib_error = lib_future.result()
+        hf_rows, hf_error = hf_future.result()
+
+    installed, _ = _ollama.list_installed()
+    installed_bases = {(m.get("name") or "").split(":")[0] for m in installed}
+    signatures = [_installed_signature(m.get("name") or "") for m in installed if m.get("name")]
+    for row in lib_rows:
+        row["installed_match"] = row["name"] in installed_bases
+    for row in hf_rows:
+        row["installed_match"] = _candidate_matches_installed(row["name"], signatures)
+
+    results = lib_rows + hf_rows
+    online = not (lib_error and hf_error)
+    message = None
+    if lib_error and hf_error:
+        message = f"No source reachable. {lib_error} / {hf_error}"
+    elif lib_error or hf_error:
+        message = f"Partial results: {lib_error or hf_error}"
+    return {
+        "success": True,
+        "online": online,
+        "results": results,
+        "sources": {
+            "ollama": {"online": lib_error is None, "count": len(lib_rows), "error": lib_error},
+            "huggingface": {"online": hf_error is None, "count": len(hf_rows), "error": hf_error},
+        },
+        "message": message,
+    }
+
+
 class CheckUpdatesRequest(BaseModel):
     queries: Optional[List[str]] = None
     limit: int = 5

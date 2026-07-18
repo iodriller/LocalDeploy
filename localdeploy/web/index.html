@@ -122,36 +122,15 @@
           </div>
 
           <div class="seg-panel hidden" data-seg-panel="hf">
-            <p class="muted small" style="margin-bottom:0.5rem">Search remote model catalogs, not just models already on this machine. Local-deployable entries offer Pull; cloud-only entries are labeled and link to their source.</p>
             <div class="row gap wrap" style="margin-bottom: 0.5rem">
               <label class="field grow">
-                <span>Search models to pull</span>
+                <span>Search all sources — results update as you type</span>
                 <input type="search" id="hf-search" placeholder="gemma, qwen, coder, vision… (blank = most popular)" />
-              </label>
-              <label class="field">
-                <span>Source</span>
-                <select id="catalog-source">
-                  <option value="library" selected>🦙 Ollama library</option>
-                  <option value="hf">🤗 Hugging Face (GGUF)</option>
-                </select>
               </label>
               <button class="btn primary" id="btn-hf-search" data-icon="⌕">Search</button>
             </div>
-            <div class="row gap wrap hidden" id="hf-options" style="margin-bottom: 0.5rem">
-              <label class="field">
-                <span>Show</span>
-                <select id="hf-fit-filter">
-                  <option value="gpu">Fits GPU budget</option>
-                  <option value="runnable">Runnable on GPU or CPU</option>
-                  <option value="all">All results</option>
-                </select>
-              </label>
-              <label class="check" title="Limit to GGUF repos, which Ollama can pull directly via hf.co/&lt;id&gt;.">
-                <input type="checkbox" id="hf-gguf-only" checked />
-                <span>GGUF only ⓘ</span>
-              </label>
-            </div>
-            <div id="updates-body" class="muted">Search above, or leave it blank to see the most popular models.</div>
+            <div id="catalog-source-status" class="provider-statuses"></div>
+            <div id="updates-body" class="muted">One search covers the Ollama library and Hugging Face GGUF repos — the source shows as a column. Leave blank for the most popular models.</div>
             <p class="muted small" style="margin-top:0.6rem">Browse directly: <a href="https://ollama.com/search" target="_blank" rel="noopener">Ollama library ↗</a> · <a href="https://huggingface.co/models?library=gguf" target="_blank" rel="noopener">Hugging Face GGUF ↗</a></p>
           </div>
 
@@ -416,6 +395,7 @@
             <label class="field chat-duration-field">
               <span>Keep loaded</span>
               <select id="chat-keep-alive">
+                <option value="5m">5 minutes</option>
                 <option value="15m">15 minutes</option>
                 <option value="60m" selected>60 minutes</option>
                 <option value="4h">4 hours</option>
@@ -434,9 +414,9 @@
           <footer class="chat-composer">
             <div id="chat-attachments" class="chat-attachments hidden"></div>
             <div class="chat-input-row">
-              <label class="btn file chat-attach" id="chat-attach-label" title="Attach images (vision profiles only)">
-                🖼
-                <input type="file" id="chat-images" accept="image/png,image/jpeg,image/webp,image/gif" multiple hidden />
+              <label class="btn file chat-attach" id="chat-attach-label" title="Attach images (vision profiles) or text files — file contents are added to your message">
+                📎
+                <input type="file" id="chat-images" accept="image/png,image/jpeg,image/webp,image/gif,.txt,.md,.json,.csv,.py,.js,.ts,.html,.css,.yaml,.yml,.toml,.log,text/plain" multiple hidden />
               </label>
               <textarea id="chat-input" rows="1" spellcheck="false" placeholder="Load an installed model to start chatting" disabled></textarea>
               <button class="btn primary chat-send" id="btn-chat-send" title="Send (Enter)" disabled>Send</button>

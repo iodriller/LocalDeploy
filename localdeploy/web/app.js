@@ -51,6 +51,8 @@ const state = {
   // Provider catalog (fetched once, filtered/sorted/paged client-side).
   catalog: { rows: [], providers: [], loaded: false, page: 0 },
   remoteCatalogLoaded: false,
+  unifiedSearchSeq: 0,
+  chatFiles: [],
 };
 
 const BENCHMARK_RUNS_KEY = "localdeploy.benchmarkRuns.v1";
@@ -707,7 +709,6 @@ function scheduleFitRefresh() {
   state.fitRefreshTimer = setTimeout(() => {
     $$(".mrow[data-model]", $("#installed-body")).forEach((row) => fitCheckRow(row));
     if (!$("#fit-finder-body")?.textContent.includes("not been scanned")) scanConfiguredFits();
-    if (state.remoteCatalogLoaded && $("#catalog-source")?.value === "hf") checkUpdates();
   }, 350);
 }
 
@@ -2159,143 +2160,111 @@ function hfStatsHtml(candidate) {
   return `<span class="meta hf-stats" title="Hugging Face downloads and likes; the search API does not return a quality rating.">${esc(items.join(" · "))}</span>`;
 }
 
-function updateRemoteCatalogSourceUI() {
-  const source = $("#catalog-source")?.value || "library";
-  $("#hf-options")?.classList.toggle("hidden", source !== "hf");
-  const input = $("#hf-search");
-  if (input) {
-    input.placeholder = source === "hf"
-      ? "gemma, qwen, coder, vision… (blank = popular GGUF repos)"
-      : "gemma, qwen, coder, vision… (blank = popular Ollama models)";
-  }
-}
-
 function remoteCatalogSearchButton(source) {
   const candidate = source?.currentTarget || source;
   return candidate?.id === "btn-hf-search" ? candidate : $("#btn-hf-search");
 }
 
-async function searchOllamaLibrary(source) {
+// Looks like an exact pullable tag ("gemma3:4b", "hf.co/org/repo")? Then the
+// results offer pulling it verbatim, which absorbs the old "pull by name" flow.
+function exactTagQuery(query) {
+  if (/^hf\.co\//i.test(query)) return query;
+  if (/^[\w.\-]+(?:\/[\w.\-]+)?:[\w.\-]+$/.test(query)) return query;
+  return null;
+}
+
+function sourceBadge(source) {
+  return source === "huggingface"
+    ? `<span class="badge src-hf" title="Hugging Face — pulled through Ollama's hf.co/ shortcut">🤗 Hugging Face</span>`
+    : `<span class="badge src-ollama" title="Official Ollama library">🦙 Ollama</span>`;
+}
+
+function unifiedResultRow(model) {
+  const installed = model.installed_match ? `<span class="badge on" title="You already have a model from this family">✓</span>` : "";
+  const sizes = (model.sizes || [])
+    .map((s) => `<button class="btn compact size-pull-btn" data-model="${esc(model.name)}:${esc(s)}" title="Pull ${esc(model.name)}:${esc(s)} (fit-checked first)">${esc(s)}</button>`)
+    .join("");
+  const caps = (model.capabilities || [])
+    .map((c) => `<span class="badge${c === "cloud" ? " off" : ""}">${esc(c)}</span>`)
+    .join(" ");
+  const action = model.pullable === false
+    ? `<a class="btn compact" href="${esc(model.url)}" target="_blank" rel="noopener">View ↗</a>`
+    : `<button class="btn primary compact library-pull-btn" data-model="${esc(model.pull_name || model.name)}" title="Pull ${esc(model.pull_name || model.name)} (fit-checked first)">↓ Pull</button>`;
+  const quantTarget = (model.sizes || []).length
+    ? `${model.name}:${model.sizes[model.sizes.length - 1]}`
+    : model.name;
+  const quantBtn = `<button class="btn compact quant-jump-btn" data-model="${esc(quantTarget)}" title="Which quantization of this fits your GPU?">⚖</button>`;
+  return `<tr>
+    <td class="catalog-model-cell">
+      <div class="catalog-result-title"><a href="${esc(model.url)}" target="_blank" rel="noopener">${esc(model.name)}</a>${installed}</div>
+      ${model.description ? `<div class="muted small catalog-description">${esc(model.description)}</div>` : ""}
+      ${caps ? `<div class="catalog-caps">${caps}</div>` : ""}
+    </td>
+    <td>${sourceBadge(model.source)}</td>
+    <td class="catalog-sizes">${sizes || `<span class="muted">—</span>`}</td>
+    <td class="num" title="Pulls (Ollama) or downloads (Hugging Face)">${esc(model.pulls || "—")}</td>
+    <td class="muted small">${esc(model.updated || "—")}</td>
+    <td class="catalog-actions">${quantBtn}${action}</td>
+  </tr>`;
+}
+
+async function searchUnifiedModels(source) {
   const btn = remoteCatalogSearchButton(source);
   const body = $("#updates-body");
+  const statusSlot = $("#catalog-source-status");
+  const query = ($("#hf-search")?.value || "").trim();
+  const seq = ++state.unifiedSearchSeq;
   busy(btn, true);
   state.remoteCatalogLoaded = true;
-  body.innerHTML = `<div class="muted">Searching the Ollama model library…</div>`;
+  body.innerHTML = `<div class="muted"><span class="spin-inline"></span> Searching the Ollama library and Hugging Face…</div>`;
   try {
-    const data = await postJSON("/registry/search-ollama-library", {
-      query: ($("#hf-search")?.value || "").trim(),
-      limit: 50,
-    });
+    const data = await postJSON("/registry/search-models", { query, limit: 30 });
+    if (seq !== state.unifiedSearchSeq) return; // a newer keystroke superseded this
+    if (statusSlot) {
+      statusSlot.innerHTML = Object.entries(data.sources || {})
+        .map(([name, s]) => `<span class="badge ${s.online ? "on" : "off"}" title="${esc(s.error || `${s.count} results`)}">${s.online ? "●" : "○"} ${esc(name)}${s.online ? ` · ${s.count}` : ""}</span>`)
+        .join(" ");
+    }
     if (!data.online && !(data.results || []).length) {
-      body.innerHTML = `<div class="empty-state">${esc(data.message || "Ollama's model library is unavailable.")}</div>`;
+      body.innerHTML = `<div class="empty-state">${esc(data.message || "No model source is reachable.")}</div>`;
       return;
     }
-    const rows = (data.results || [])
-      .map((model) => {
-        const installed = model.installed_match ? `<span class="badge on">installed</span>` : "";
-        const sizes = (model.sizes || []).map((size) => `<span class="badge">${esc(size)}</span>`).join("");
-        const capabilities = (model.capabilities || [])
-          .map((cap) => `<span class="badge${cap === "cloud" ? " off" : ""}">${esc(cap)}</span>`)
-          .join("");
-        const meta = [model.pulls ? `${model.pulls} pulls` : null, model.updated].filter(Boolean).join(" · ");
-        const action = model.pullable === false
-          ? `<a class="btn compact" href="${esc(model.url)}" target="_blank" rel="noopener">View model</a>`
-          : `<button class="btn primary compact library-pull-btn" data-model="${esc(model.pull_name || model.name)}">Pull</button>`;
-        return `<div class="catalog-result-row">
-          <div class="catalog-result-main">
-            <div class="catalog-result-title"><a href="${esc(model.url)}" target="_blank" rel="noopener">${esc(model.name)}</a>${installed}</div>
-            ${model.description ? `<div class="muted small catalog-description">${esc(model.description)}</div>` : ""}
-            <div class="catalog-result-meta">${sizes}${capabilities}${meta ? `<span class="meta">${esc(meta)}</span>` : ""}</div>
-          </div>
-          ${action}
-        </div>`;
-      })
-      .join("");
+    const exact = exactTagQuery(query);
+    const exactRow = exact
+      ? `<div class="exact-pull-row">⌨ Looks like an exact tag — <button class="btn primary compact library-pull-btn" data-model="${esc(exact)}">↓ Pull ${esc(exact)}</button></div>`
+      : "";
+    const rows = (data.results || []).map(unifiedResultRow).join("");
     body.innerHTML = rows
-      ? `<div class="catalog-results">${rows}</div>${data.message ? `<p class="muted small">${esc(data.message)}</p>` : ""}`
-      : `<div class="empty-state">${esc(data.message || "No Ollama models matched this search.")}</div>`;
-    $$(".library-pull-btn", body).forEach((pullBtn) =>
+      ? `${exactRow}<div class="table-wrap"><table class="results catalog-table">
+          <thead><tr><th>Model</th><th>Source</th><th>Pull a size</th><th class="num">Popularity</th><th>Updated</th><th></th></tr></thead>
+          <tbody>${rows}</tbody></table></div>${data.message ? `<p class="muted small">${esc(data.message)}</p>` : ""}`
+      : `${exactRow || `<div class="empty-state">${esc(data.message || `No models matched “${query}”.`)}</div>`}`;
+    $$(".library-pull-btn, .size-pull-btn", body).forEach((pullBtn) =>
       pullBtn.addEventListener("click", () => pullModel(pullBtn.dataset.model, pullBtn))
     );
-  } catch (err) {
-    body.innerHTML = `<div class="empty-state">Ollama Library search failed.</div>`;
-    toast(`Ollama Library search failed: ${err.message}`, "error");
-  } finally {
-    busy(btn, false);
-  }
-}
-
-async function checkUpdates(source) {
-  if (($("#catalog-source")?.value || "library") === "library") {
-    return searchOllamaLibrary(source);
-  }
-  const btn = remoteCatalogSearchButton(source);
-  busy(btn, true);
-  state.remoteCatalogLoaded = true;
-  const body = $("#updates-body");
-  body.innerHTML = `<div class="muted">Searching Hugging Face…</div>`;
-
-  // Build request from the search form (Phase 5).
-  const searchRaw = ($("#hf-search")?.value || "").trim();
-  const limitVal = parseInt($("#hf-limit")?.value || "24", 10);
-  const ggufOnly = $("#hf-gguf-only")?.checked !== false;
-  const payload = {
-    limit: Number.isFinite(limitVal) && limitVal > 0 ? limitVal : 24,
-    gguf_only: ggufOnly,
-    fit_filter: $("#hf-fit-filter")?.value || "all",
-    free_vram_mb: targetVram(),
-  };
-  payload.queries = searchRaw ? searchRaw.split(",").map((s) => s.trim()).filter(Boolean) : [""];
-
-  try {
-    const data = await postJSON("/registry/check-updates", payload);
-    if (!data.online && (!data.results || !data.results.length)) {
-      body.innerHTML = `<div class="muted">${esc(data.message || "Offline.")}</div>`;
-      return;
-    }
-    const blocks = (data.results || [])
-      .map((group) => {
-        const rows = (group.candidates || [])
-          .map((c) => {
-            const flag = c.installed_match ? `<span class="badge on">installed</span>` : "";
-            const date = c.last_modified ? `<span class="meta">${esc(c.last_modified.slice(0, 10))}</span>` : "";
-            const pull = c.pullable && c.pull_name
-              ? `<button class="btn hf-pull-btn" data-model="${esc(c.pull_name)}">Pull</button>`
-              : "";
-            const fit = c.fit?.success
-              ? `<div class="hf-fit">${fitBadge(c.fit)}<span class="meta">~${esc(c.fit.estimate_gb?.required ?? "?")} GB / ${esc(c.fit.free_vram_gb ?? "?")} GB budget</span>${fitMeterHtml(c.fit)}</div>`
-              : "";
-            return `<div class="mrow">
-              <div class="model-row-main">
-                <a class="name" href="https://huggingface.co/${esc(c.id)}" target="_blank" rel="noopener">${esc(c.id)}</a>
-                <span class="model-row-meta">${date}${hfStatsHtml(c)}${flag}</span>
-                ${fit}
-              </div>
-              <span class="spacer"></span>${pull}
-            </div>`;
-          })
-          .join("");
-        const heading = group.query ? `Results for “${esc(group.query)}”` : "Popular GGUF repositories";
-        return `<h3 class="sub">${heading}</h3><div class="mlist">${rows || '<div class="muted">none</div>'}</div>`;
-      })
-      .join("");
-    const note = data.online ? "" : `<div class="muted small">${esc(data.message || "")}</div>`;
-    body.innerHTML = blocks + note;
-    // Wire the per-candidate Pull buttons (GGUF repos via Ollama's hf.co/ shortcut).
-    $$(".hf-pull-btn", body).forEach((b) =>
-      b.addEventListener("click", () => pullModel(b.dataset.model, b))
+    $$(".quant-jump-btn", body).forEach((qBtn) =>
+      qBtn.addEventListener("click", () => openQuantAdvisor(qBtn.dataset.model))
     );
   } catch (err) {
-    body.innerHTML = `<div class="muted">Check failed.</div>`;
-    toast(`Update check failed: ${err.message}`, "error");
+    if (seq !== state.unifiedSearchSeq) return;
+    body.innerHTML = `<div class="empty-state">Model search failed.</div>`;
+    toast(`Model search failed: ${err.message}`, "error");
   } finally {
     busy(btn, false);
   }
 }
 
-// ---------------------------------------------------------------------------
-// Tab 1 — Ollama install/start helper (shown when a pull can't reach Ollama)
-// ---------------------------------------------------------------------------
+// Jump to the quant advisor pre-filled with a model from the results table.
+function openQuantAdvisor(modelId) {
+  const input = $("#quant-model");
+  if (input) input.value = modelId;
+  $('.seg-btn[data-seg="quant"]')?.click();
+  quantAdvise($("#btn-quant-advise"));
+}
+
+// Back-compat alias: older wiring and tests refer to checkUpdates.
+const checkUpdates = searchUnifiedModels;
+
 function hideOllamaHelp() {
   $("#ollama-help")?.classList.add("hidden");
 }
@@ -2865,13 +2834,29 @@ async function toggleChatSession() {
 function renderChatAttachments() {
   const slot = $("#chat-attachments");
   if (!slot) return;
-  if (!state.chatImages.length) {
+  if (!state.chatImages.length && !state.chatFiles.length) {
     slot.classList.add("hidden");
     slot.innerHTML = "";
     return;
   }
   slot.classList.remove("hidden");
   slot.innerHTML = "";
+  state.chatFiles.forEach((file, i) => {
+    const chip = document.createElement("span");
+    chip.className = "chat-file-chip";
+    const label = document.createElement("span");
+    label.textContent = `📄 ${file.name}`;
+    const x = document.createElement("button");
+    x.type = "button";
+    x.textContent = "×";
+    x.title = "Remove file";
+    x.addEventListener("click", () => {
+      state.chatFiles.splice(i, 1);
+      renderChatAttachments();
+    });
+    chip.append(label, x);
+    slot.appendChild(chip);
+  });
   state.chatImages.forEach((dataUrl, i) => {
     const chip = document.createElement("span");
     chip.className = "chat-attach-chip";
@@ -2892,18 +2877,37 @@ function renderChatAttachments() {
 }
 
 function addChatImages(files) {
-  const maxBytes = 10 * 1024 * 1024;
+  const maxImageBytes = 10 * 1024 * 1024;
+  const maxTextBytes = 200 * 1024;
   Array.from(files || []).forEach((file) => {
-    if (file.size > maxBytes) {
-      toast(`${file.name} is over 10 MB — skipped.`, "error");
+    if (file.type.startsWith("image/")) {
+      if (!chatProfileSupportsVision()) {
+        toast("The selected profile isn't marked vision-capable — attach text files instead.", "error");
+        return;
+      }
+      if (file.size > maxImageBytes) {
+        toast(`${file.name} is over 10 MB — skipped.`, "error");
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = () => {
+        state.chatImages.push(String(reader.result));
+        renderChatAttachments();
+      };
+      reader.readAsDataURL(file);
+      return;
+    }
+    // Anything else is treated as text and embedded into the message.
+    if (file.size > maxTextBytes) {
+      toast(`${file.name} is over 200 KB — too large to embed as text.`, "error");
       return;
     }
     const reader = new FileReader();
     reader.onload = () => {
-      state.chatImages.push(String(reader.result));
+      state.chatFiles.push({ name: file.name, content: String(reader.result) });
       renderChatAttachments();
     };
-    reader.readAsDataURL(file);
+    reader.readAsText(file);
   });
 }
 
@@ -2916,11 +2920,7 @@ function renderChatText(container, text) {
   // split() with two capture groups yields [text, lang, code, text, lang, code, …]
   for (let i = 0; i < parts.length; i += 3) {
     const plain = parts[i];
-    if (plain) {
-      const span = document.createElement("span");
-      span.textContent = plain;
-      container.appendChild(span);
-    }
+    if (plain) appendMarkdownLite(container, plain);
     if (i + 2 < parts.length) {
       const code = parts[i + 2] ?? "";
       const wrap = document.createElement("div");
@@ -2954,6 +2954,65 @@ function renderChatText(container, text) {
   }
 }
 
+// Minimal, escape-first markdown for chat text: headings, bullets, inline
+// code/bold/italic and http(s) links. Everything is built with createElement +
+// textContent — model output can never inject markup.
+const _INLINE_MD = /(`[^`\n]+`|\*\*[^*\n]+\*\*|\*[^*\n]+\*|\[[^\]\n]+\]\(https?:\/\/[^\s)]+\))/g;
+
+function appendInlineMarkdown(parent, text) {
+  let last = 0;
+  for (const match of text.matchAll(_INLINE_MD)) {
+    if (match.index > last) parent.append(text.slice(last, match.index));
+    const token = match[0];
+    if (token.startsWith("`")) {
+      const code = document.createElement("code");
+      code.textContent = token.slice(1, -1);
+      parent.appendChild(code);
+    } else if (token.startsWith("**")) {
+      const b = document.createElement("b");
+      b.textContent = token.slice(2, -2);
+      parent.appendChild(b);
+    } else if (token.startsWith("*")) {
+      const i = document.createElement("i");
+      i.textContent = token.slice(1, -1);
+      parent.appendChild(i);
+    } else {
+      const m = token.match(/^\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)$/);
+      const a = document.createElement("a");
+      a.textContent = m ? m[1] : token;
+      if (m) {
+        a.href = m[2];
+        a.target = "_blank";
+        a.rel = "noopener";
+      }
+      parent.appendChild(a);
+    }
+    last = match.index + token.length;
+  }
+  if (last < text.length) parent.append(text.slice(last));
+}
+
+function appendMarkdownLite(container, text) {
+  for (const line of String(text).split("\n")) {
+    const el = document.createElement("div");
+    const heading = line.match(/^(#{1,3})\s+(.*)$/);
+    const bullet = line.match(/^\s*[-*]\s+(.*)$/);
+    if (heading) {
+      el.className = `md-h${heading[1].length}`;
+      appendInlineMarkdown(el, heading[2]);
+    } else if (bullet) {
+      el.className = "md-li";
+      el.append("• ");
+      appendInlineMarkdown(el, bullet[1]);
+    } else if (!line.trim()) {
+      el.className = "md-gap";
+    } else {
+      appendInlineMarkdown(el, line);
+    }
+    container.appendChild(el);
+  }
+}
+
 // Build one message bubble with a compact role marker.
 function appendChatBubble(role, text, images = []) {
   const list = $("#chat-messages");
@@ -2978,7 +3037,7 @@ function appendChatBubble(role, text, images = []) {
   }
   const body = document.createElement("div");
   body.className = "chat-bubble-text";
-  body.textContent = text;
+  if (text) renderChatText(body, text);
   bubble.appendChild(body);
   const meta = document.createElement("div");
   meta.className = "chat-bubble-meta muted small";
@@ -3006,7 +3065,14 @@ function chatMessagesForApi(profile) {
       messages.push({ role: m.role, content: m.text });
     }
   });
-  return { model: profile, messages, stream: true };
+  return {
+    model: profile,
+    messages,
+    stream: true,
+    // Without this, each generate call resets Ollama's keep-alive to its 5m
+    // default, silently undoing the session's "keep loaded" choice.
+    keep_alive: $("#chat-keep-alive")?.value || undefined,
+  };
 }
 
 async function sendChatMessage() {
@@ -3017,16 +3083,24 @@ async function sendChatMessage() {
     state.chatController.abort();
     return;
   }
-  const text = input.value.trim();
+  const typed = input.value.trim();
   const profile = chatSelectedProfile();
-  if (!text || !chatModelIsReady() || !profile) {
+  if ((!typed && !state.chatFiles.length) || !chatModelIsReady() || !profile) {
     if (!chatModelIsReady()) toast("Load an installed model before sending a message.", "error");
     return;
   }
+  // Attached text files ride along as fenced blocks: the model gets clear file
+  // boundaries and the bubble renders them as code blocks.
+  const fileBlocks = state.chatFiles
+    .map((f) => "\n\n[Attached file: " + f.name + "]\n```\n" + f.content + "\n```")
+    .join("");
+  const text = (typed || "Please look at the attached file(s).") + fileBlocks;
   const images = state.chatImages.slice();
   state.chatImages = [];
+  state.chatFiles = [];
   renderChatAttachments();
   input.value = "";
+  input.style.height = "auto";
 
   $("#chat-messages .chat-welcome")?.remove();
   state.chatMessages.push({ role: "user", text, images });
@@ -4413,18 +4487,18 @@ $("#btn-status").addEventListener("click", refreshStatus);
 $("#btn-serve").addEventListener("click", serveModel);
 $("#btn-switch").addEventListener("click", switchModel);
 $("#btn-installed").addEventListener("click", refreshInstalled);
-$("#btn-updates")?.addEventListener("click", (e) => checkUpdates(e));
-$("#btn-hf-search")?.addEventListener("click", (e) => checkUpdates(e));
-$("#catalog-source")?.addEventListener("change", () => {
-  updateRemoteCatalogSourceUI();
-  state.remoteCatalogLoaded = false;
-  $("#updates-body").innerHTML = `<div class="muted">Search above, or leave it blank to browse popular models.</div>`;
-});
+$("#btn-hf-search")?.addEventListener("click", (e) => searchUnifiedModels(e));
 $("#hf-search")?.addEventListener("keydown", (e) => {
   if (e.key === "Enter") {
     e.preventDefault();
-    checkUpdates(e);
+    clearTimeout(state.unifiedSearchTimer);
+    searchUnifiedModels(e);
   }
+});
+// Realtime: re-query both sources shortly after typing stops.
+$("#hf-search")?.addEventListener("input", () => {
+  clearTimeout(state.unifiedSearchTimer);
+  state.unifiedSearchTimer = setTimeout(() => searchUnifiedModels(), 650);
 });
 $("#btn-provider-refresh")?.addEventListener("click", (e) => loadProviderCatalog(e));
 $("#catalog-search")?.addEventListener("input", () => { state.catalog.page = 0; renderProviderCatalog(); });
@@ -4548,9 +4622,6 @@ $("#bench-profile-filter")?.addEventListener("input", renderBenchmarkProfileChip
 $("#fit-filter")?.addEventListener("change", () => {
   if (!$("#fit-finder-body").textContent.includes("not been scanned")) scanConfiguredFits();
 });
-$("#hf-fit-filter")?.addEventListener("change", () => {
-  if (state.remoteCatalogLoaded && $("#catalog-source")?.value === "hf") checkUpdates();
-});
 $("#vram-budget-gb")?.addEventListener("input", () => {
   const raw = $("#vram-budget-gb").value.trim();
   state.vramBudgetMb = raw ? targetVram() : null;
@@ -4645,14 +4716,13 @@ function wireGetModelSegments() {
       $$(".seg-panel").forEach((p) =>
         p.classList.toggle("hidden", p.dataset.segPanel !== seg)
       );
-      if (seg === "hf") updateRemoteCatalogSourceUI();
+      if (seg === "hf" && !state.remoteCatalogLoaded) searchUnifiedModels();
     })
   );
 }
 
 (async function init() {
   wireGetModelSegments();
-  updateRemoteCatalogSourceUI();
   loadBenchmarkRuns();
   clearChat();
   initServerHistoryToggle();
