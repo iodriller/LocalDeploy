@@ -1017,6 +1017,7 @@ table.results td.num, table.results th.num { text-align: right; font-variant-num
 .catalog-actions .btn { margin-left: 0.25rem; }
 .badge.src-ollama { border-color: rgba(52, 211, 153, 0.35); }
 .badge.src-hf { border-color: rgba(251, 191, 36, 0.35); }
+.source-dot { width: 0.42rem; height: 0.42rem; border-radius: 50%; background: currentColor; }
 .exact-pull-row {
   display: flex;
   align-items: center;
@@ -1782,3 +1783,188 @@ details[open] > .advanced-summary::before { transform: rotate(90deg); }
 .tuning-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.6rem 0.75rem; }
 .tuning-field { min-width: 0; }
 @media (max-width: 560px) { .tuning-grid { grid-template-columns: 1fr; } }
+
+/* ---- Model catalog: size-specific, filterable comparison table ---- */
+.catalog-search-row { margin-bottom: 0.65rem; align-items: end; }
+.catalog-filter-bar {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(120px, 1fr)) auto auto;
+  gap: 0.55rem;
+  align-items: end;
+  padding: 0.65rem;
+  margin-bottom: 0.55rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel-2);
+}
+.catalog-filter-bar .field { min-width: 0; }
+.catalog-filter-bar select { width: 100%; }
+.catalog-installed-filter { min-height: 2.45rem; align-self: end; white-space: nowrap; }
+.active-filter-row { display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; margin-bottom: 0.55rem; }
+.filter-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 1.65rem;
+  padding: 0.2rem 0.45rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel-2);
+  color: var(--text);
+  font-size: 0.75rem;
+}
+.catalog-result-count { display: flex; align-items: baseline; gap: 0.55rem; margin: 0.55rem 0; }
+.remote-catalog-wrap { max-height: 560px; border: 1px solid var(--border); }
+.remote-catalog-wrap .catalog-table { min-width: 980px; margin-top: 0; table-layout: fixed; }
+.remote-catalog-wrap .catalog-table th:nth-child(1) { width: 29%; }
+.remote-catalog-wrap .catalog-table th:nth-child(2) { width: 12%; }
+.remote-catalog-wrap .catalog-table th:nth-child(3) { width: 8%; }
+.remote-catalog-wrap .catalog-table th:nth-child(4) { width: 11%; }
+.remote-catalog-wrap .catalog-table th:nth-child(5) { width: 9%; }
+.remote-catalog-wrap .catalog-table th:nth-child(6) { width: 10%; }
+.remote-catalog-wrap .catalog-table th:nth-child(7) { width: 21%; }
+.catalog-sort-btn {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.catalog-sort-btn:hover { color: var(--text); }
+.catalog-action-stack { display: flex; justify-content: flex-end; gap: 0.35rem; flex-wrap: wrap; }
+.catalog-actions .btn { margin-left: 0; }
+.catalog-caps:empty { display: none; }
+.quant-size-switcher { display: flex; gap: 0.35rem; align-items: center; flex-wrap: wrap; margin: 0 0 0.65rem; }
+.quant-size-btn.active { color: var(--good); border-color: var(--good); }
+
+/* ---- Shared model-card vocabulary ---- */
+.model-card { border-radius: 8px; }
+.model-identity { display: flex; align-items: center; gap: 0.6rem; min-width: 0; }
+.model-mark {
+  width: 2rem;
+  height: 2rem;
+  flex: none;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(79, 134, 247, 0.45);
+  border-radius: 7px;
+  background: rgba(79, 134, 247, 0.12);
+  color: var(--accent);
+  font-size: 0.78rem;
+  font-weight: 750;
+}
+.model-mark.running { border-color: rgba(52, 211, 153, 0.45); background: rgba(52, 211, 153, 0.1); color: var(--good); }
+.recommendation-card { display: flex; flex-direction: column; gap: 0.5rem; min-height: 190px; }
+.model-card-copy { line-height: 1.4; font-size: 0.86rem; }
+.model-card-reason { flex: 1; }
+
+/* ---- Pull lifecycle terminal states ---- */
+.pull-progress-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin-top: 0.75rem;
+  padding: 0.65rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel-2);
+}
+.pull-progress-actions.cancelled { border-color: rgba(251, 191, 36, 0.4); }
+.pull-progress-actions.failed,
+.pull-progress-actions.blocked { border-color: rgba(248, 113, 113, 0.4); }
+
+/* ---- Chat session, composer, files, and structured JSON ---- */
+.chat-session-progress {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  color: var(--accent);
+  font-size: 0.8rem;
+  padding-top: 0.15rem;
+}
+.chat-messages { align-items: center; }
+.chat-row { width: min(100%, 880px); }
+.chat-row.user { align-self: center; }
+.chat-composer { transition: border-color 0.15s, background 0.15s; }
+.chat-composer.dragging { border-color: var(--accent-strong); background: rgba(79, 134, 247, 0.08); }
+.chat-input-row { width: min(100%, 880px); margin: 0 auto; }
+.chat-attachments { width: min(100%, 880px); margin-left: auto; margin-right: auto; }
+.chat-attach { width: auto; min-width: 5.25rem; padding: 0 0.65rem; gap: 0.35rem; }
+.chat-bubble-files { display: flex; flex-wrap: wrap; gap: 0.35rem; margin-bottom: 0.45rem; }
+.chat-bubble-file {
+  padding: 0.25rem 0.45rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel-2);
+  font-size: 0.75rem;
+}
+.chat-json { min-width: min(580px, 68vw); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; background: var(--bg); }
+.chat-json-toolbar { display: flex; gap: 0.3rem; padding: 0.4rem; border-bottom: 1px solid var(--border); background: var(--panel-2); }
+.chat-json-toolbar .btn.active { color: var(--accent); border-color: var(--accent-strong); }
+.json-tree { padding: 0.55rem 0.65rem; max-height: 420px; overflow: auto; font: 0.8rem/1.5 ui-monospace, Menlo, Consolas, monospace; }
+.json-tree-node > summary { cursor: pointer; color: var(--muted); }
+.json-tree-children { margin-left: 1rem; padding-left: 0.6rem; border-left: 1px solid var(--border); }
+.json-tree-row { display: flex; gap: 0.45rem; overflow-wrap: anywhere; }
+.json-key { color: var(--accent); }
+.json-string { color: var(--good); }
+.json-number { color: var(--warn); }
+.json-boolean { color: #d8a9ff; }
+.json-null { color: var(--muted); }
+.json-raw { margin: 0; padding: 0.7rem; max-height: 420px; overflow: auto; white-space: pre; }
+
+@media (max-width: 1000px) {
+  .catalog-filter-bar { grid-template-columns: repeat(3, minmax(140px, 1fr)); }
+}
+
+@media (max-width: 620px) {
+  .catalog-filter-bar { grid-template-columns: 1fr 1fr; }
+  .catalog-result-count { align-items: flex-start; flex-direction: column; gap: 0.15rem; }
+  .remote-catalog-wrap { max-height: none; overflow: visible; border: 0; }
+  .remote-catalog-wrap .catalog-table { min-width: 0; width: 100%; table-layout: auto; }
+  .remote-catalog-wrap .catalog-table thead { display: none; }
+  .remote-catalog-wrap .catalog-table tbody { display: grid; gap: 0.55rem; }
+  .remote-catalog-wrap .catalog-table tr {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+    background: var(--panel);
+  }
+  .remote-catalog-wrap .catalog-table td,
+  .remote-catalog-wrap .catalog-table tbody tr:nth-child(odd) td {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    min-width: 0;
+    padding: 0.45rem 0.55rem;
+    background: transparent;
+    border-bottom: 1px solid var(--border);
+  }
+  .remote-catalog-wrap .catalog-table td::before {
+    content: attr(data-label);
+    flex: none;
+    color: var(--muted);
+    font-size: 0.72rem;
+    font-weight: 600;
+  }
+  .remote-catalog-wrap .catalog-table .catalog-model-cell,
+  .remote-catalog-wrap .catalog-table .catalog-actions { grid-column: 1 / -1; }
+  .remote-catalog-wrap .catalog-table .catalog-model-cell {
+    display: block !important;
+    width: 100%;
+    max-width: none;
+  }
+  .remote-catalog-wrap .catalog-table .catalog-model-cell::before { display: none; }
+  .remote-catalog-wrap .catalog-table .catalog-actions { border-bottom: 0; }
+  .catalog-action-stack { width: 100%; }
+  .catalog-action-stack .btn { flex: 1; }
+  .chat-attach { min-width: 2.6rem; width: 2.6rem; padding: 0; }
+  .chat-attach-text { display: none; }
+  .chat-json { min-width: 0; width: 100%; }
+  .chat-json-toolbar { flex-wrap: wrap; }
+}
