@@ -376,6 +376,42 @@ def test_stop_success_path(monkeypatch) -> None:
     assert body["stopped"] == "gemma3:4b"
 
 
+def test_stop_waits_for_running_inventory_confirmation(monkeypatch) -> None:
+    inventories = iter(
+        [
+            ([{"name": "gemma3:4b"}], None),
+            ([{"name": "gemma3:4b"}], None),
+            ([], None),
+        ]
+    )
+    monkeypatch.setattr(models_mod._ollama, "unload_model", lambda m: {})
+    monkeypatch.setattr(models_mod._ollama, "list_running", lambda: next(inventories))
+    monkeypatch.setattr(models_mod.time, "sleep", lambda _seconds: None)
+    body = client.post("/models/stop", json={"model": "gemma3:4b"}).json()
+    assert body["status"] == "unloaded"
+    assert body["confirmed"] is True
+
+
+def test_stop_reports_pending_instead_of_false_success(monkeypatch) -> None:
+    monkeypatch.setattr(models_mod._ollama, "unload_model", lambda m: {})
+    monkeypatch.setattr(
+        models_mod._ollama,
+        "list_running",
+        lambda: ([{"name": "gemma3:4b"}], None),
+    )
+    monkeypatch.setattr(models_mod.time, "sleep", lambda _seconds: None)
+    body = client.post("/models/stop", json={"model": "gemma3:4b"}).json()
+    assert body["success"] is True
+    assert body["status"] == "pending"
+    assert body["confirmed"] is False
+
+
+def test_model_name_match_does_not_confuse_parameter_sizes() -> None:
+    assert models_mod._matches_model_name("gemma3:latest", "gemma3") is True
+    assert models_mod._matches_model_name("gemma3:4b", "gemma3:4b") is True
+    assert models_mod._matches_model_name("gemma3:12b", "gemma3:4b") is False
+
+
 def test_switch_success_path(monkeypatch) -> None:
     unloaded = []
     monkeypatch.setattr(models_mod._ollama, "unload_model", lambda m: unloaded.append(m) or {})

@@ -53,6 +53,10 @@ const state = {
   remoteCatalogLoaded: false,
   unifiedSearchSeq: 0,
   chatFiles: [],
+  remoteCatalog: { sourceRows: [], rows: [], fits: {}, query: "", sort: "popularity-desc" },
+  unloadingModels: new Set(),
+  chatSessionOperation: null,
+  pullRetry: null,
 };
 
 const BENCHMARK_RUNS_KEY = "localdeploy.benchmarkRuns.v1";
@@ -824,6 +828,9 @@ function scheduleFitRefresh() {
   state.fitRefreshTimer = setTimeout(() => {
     $$(".mrow[data-model]", $("#installed-body")).forEach((row) => fitCheckRow(row));
     if (!$("#fit-finder-body")?.textContent.includes("not been scanned")) scanConfiguredFits();
+    if (state.remoteCatalog.rows.length) {
+      void loadRemoteCatalogFits().then(() => renderRemoteCatalog());
+    }
   }, 350);
 }
 
@@ -1285,11 +1292,14 @@ async function refreshStatus() {
           const diskMb = m.size_mb ?? (m.size ? Math.round(m.size / 1_000_000) : null);
           const usedLabel = total && vramMb ? `${fmtMb(vramMb)} / ${fmtMb(total)} GPU VRAM` : `VRAM ${fmtMb(vramMb)}`;
           const activity = m.activity === "loaded" ? "Loaded / warm" : esc(m.activity || "Loaded");
-          return `<div class="running-card" data-model="${esc(m.name)}">
+          return `<div class="running-card model-card" data-model="${esc(m.name)}">
             <div class="running-top">
-              <div>
-                <div class="model-title">${esc(m.name)}</div>
-                <div class="muted small">${esc(activity)} · ${esc(formatExpires(m.expires_at))}</div>
+              <div class="model-identity">
+                <span class="model-mark running" aria-hidden="true">R</span>
+                <div>
+                  <div class="model-title">${esc(m.name)}</div>
+                  <div class="muted small">${esc(activity)} · ${esc(formatExpires(m.expires_at))}</div>
+                </div>
               </div>
               <div class="row gap">
                 ${place}
@@ -1375,21 +1385,48 @@ function wireCopyButtons(root) {
   );
 }
 
+function waitMs(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function waitForModelToUnload(name, attempts = 12) {
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    if (attempt) await waitMs(400);
+    const status = await getJSON("/system/status");
+    const running = status.ollama?.running || [];
+    state.runningDetails = running;
+    state.servedModels = status.served_models || running.map((item) => item.name).filter(Boolean);
+    if (!running.some((item) => ollamaModelNamesMatch(item.name, name))) return true;
+  }
+  return false;
+}
+
 async function killRunningModel(name, btn) {
   if (!name) return;
+  if (state.unloadingModels.has(name)) return;
+  state.unloadingModels.add(name);
+  const isChatModel = ollamaModelNamesMatch(chatSelectedModel(), name);
+  if (isChatModel) state.chatSessionOperation = "unloading";
   busy(btn, true);
+  const originalText = btn?.textContent;
+  if (btn) btn.textContent = "Unloading…";
+  updateChatModelState();
   try {
     const res = await postJSON("/models/stop", { model: name });
-    if (res.success) {
-      toast(res.message || `Unloaded ${name}.`, "success");
-      await refreshLiveModelState(true);
-    } else {
-      toast(res.error || res.message || "Could not unload model.", "error");
-    }
+    if (!res.success) throw new Error(res.error || res.message || "Could not unload model.");
+    const confirmed = res.confirmed === true || res.status === "unloaded" || await waitForModelToUnload(name);
+    if (!confirmed) throw new Error(`Ollama still reports ${name} as loaded. Retry unload or refresh status.`);
+    toast(`Unloaded ${name}.`, "success");
+    await refreshLiveModelState(true);
   } catch (err) {
     toast(`Unload failed: ${err.message}`, "error");
   } finally {
+    state.unloadingModels.delete(name);
+    if (isChatModel) state.chatSessionOperation = null;
     busy(btn, false);
+    if (btn && btn.isConnected && originalText) btn.textContent = originalText;
+    if (state.installedLoaded) renderInstalledList();
+    updateChatModelState();
   }
 }
 
@@ -1569,6 +1606,7 @@ async function refreshInstalled() {
   } finally {
     busy(btn, false);
     updateProgressRail();
+    if (state.remoteCatalog.rows.length) renderRemoteCatalog();
   }
 }
 
@@ -1624,10 +1662,11 @@ function renderInstalledList() {
           ? `<span class="meta disk-chip" title="Space this model takes on your drive (not the memory it needs to run)">💾 ${esc(diskGb)} GB disk</span>`
           : "";
         const running = runningDetailForInstalled(m.name);
+        const unloading = [...state.unloadingModels].some((name) => ollamaModelNamesMatch(name, m.name));
         const loaded = running ? `<span class="badge on">● loaded</span>` : "";
         const loadedHint = running ? `<span class="meta">${esc(formatExpires(running.expires_at))}</span>` : "";
-        const primaryAction = running
-          ? `<button class="btn danger unload-installed-btn" title="Unload this model from RAM and VRAM">■ Unload</button>`
+        const primaryAction = running || unloading
+          ? `<button class="btn danger unload-installed-btn${unloading ? " loading" : ""}" title="Unload this model from RAM and VRAM"${unloading ? " disabled" : ""}>${unloading ? "Unloading…" : "■ Unload"}</button>`
           : `<button class="btn primary start-installed-btn" title="Load this model into memory and start serving it">▶ Deploy</button>`;
         const checked = state.installedSelection.has(m.name) ? " checked" : "";
         return `<div class="mrow model-row" data-model="${esc(m.name)}">
@@ -2104,19 +2143,22 @@ async function startProfile(profile, btn) {
 function renderStarterCard(c) {
   const installed = !!findInstalledModel(c.pull_name);
   const action = installed
-    ? `<span class="badge on">installed</span>`
-    : `<button class="btn starter-pull-btn" data-model="${esc(c.pull_name)}">Pull</button>`;
+    ? `<span class="badge on">installed</span><button class="btn primary starter-deploy-btn" data-model="${esc(c.pull_name)}">Deploy</button>`
+    : `<button class="btn primary starter-pull-btn" data-model="${esc(c.pull_name)}">Pull model</button>`;
   const vision = c.vision ? `<span class="badge">vision</span>` : "";
-  return `<div class="fit-card">
+  return `<div class="fit-card model-card recommendation-card">
     <div class="running-top">
-      <div>
-        <div class="model-title">${esc(c.id)}</div>
-        <div class="muted small">${esc(c.use_case || "")}</div>
+      <div class="model-identity">
+        <span class="model-mark" aria-hidden="true">M</span>
+        <div>
+          <div class="model-title">${esc(c.id)}</div>
+          <div class="muted small">${esc(c.use_case || "")}</div>
+        </div>
       </div>
-      <span class="badge" title="Hand-curated quality rating; 5 = best-in-class for its size class">tier ${esc(c.tier)}/5</span>
+      <span class="badge" title="Hand-curated quality rating; 5 is strongest in its size class">quality ${esc(c.tier)}/5</span>
     </div>
-    <div class="muted small">${esc(c.description || "")}</div>
-    <div class="muted small">${esc(c.reasoning || "")}</div>
+    <div class="model-card-copy">${esc(c.description || "")}</div>
+    <div class="muted small model-card-reason">${esc(c.reasoning || "")}</div>
     <div class="row gap wrap fit-card-actions">
       ${vision}
       <span class="spacer"></span>
@@ -2151,6 +2193,9 @@ async function starterPack(source) {
     body.innerHTML = header + note + `<div class="fit-grid">` + data.candidates.map(renderStarterCard).join("") + `</div>`;
     $$(".starter-pull-btn", body).forEach((b) =>
       b.addEventListener("click", () => pullModel(b.dataset.model, b))
+    );
+    $$(".starter-deploy-btn", body).forEach((b) =>
+      b.addEventListener("click", () => startInstalledModel(resolveInstalledName(b.dataset.model), b))
     );
   } catch (err) {
     body.innerHTML = `<div class="muted">Starter pack lookup failed.</div>`;
@@ -2348,8 +2393,8 @@ function exactTagQuery(query) {
 
 function sourceBadge(source) {
   return source === "huggingface"
-    ? `<span class="badge src-hf" title="Hugging Face — pulled through Ollama's hf.co/ shortcut">🤗 Hugging Face</span>`
-    : `<span class="badge src-ollama" title="Official Ollama library">🦙 Ollama</span>`;
+    ? `<span class="badge src-hf" title="Hugging Face models are pulled through Ollama's hf.co/ shortcut"><span class="source-dot"></span>Hugging Face</span>`
+    : `<span class="badge src-ollama" title="Official Ollama model library"><span class="source-dot"></span>Ollama</span>`;
 }
 
 // "270m" / "0.8b" / "7b" -> billions of parameters (null when unparseable).
@@ -2361,39 +2406,202 @@ function paramsFromSizeToken(token) {
   return m[2] === "m" ? value / 1000 : value;
 }
 
-function unifiedResultRow(model) {
-  const installed = model.installed_match ? `<span class="badge on" title="You already have a model from this family">✓</span>` : "";
-  const sizes = (model.sizes || [])
-    .map((s) => {
-      const params = paramsFromSizeToken(s);
-      return `<button class="btn compact size-pull-btn" data-model="${esc(model.name)}:${esc(s)}"${params ? ` data-params="${params}"` : ""} title="Pull ${esc(model.name)}:${esc(s)} (fit-checked first)">${esc(s)}</button>`;
-    })
-    .join("");
-  // Unified rows carry `name` (inventory rows carry `model`), so parse directly.
-  const nameMatch = String(model.name || "").toLowerCase().match(/(\d+(?:\.\d+)?)\s*b(?![a-z0-9])/);
-  const nameParams = nameMatch ? parseFloat(nameMatch[1]) : null;
-  const caps = (model.capabilities || [])
-    .slice(0, 3)
-    .map((c) => `<span class="badge${c === "cloud" ? " off" : ""}">${esc(c)}</span>`)
-    .join(" ");
-  const action = model.pullable === false
-    ? `<a class="btn compact" href="${esc(model.url)}" target="_blank" rel="noopener">View ↗</a>`
-    : `<button class="btn primary compact library-pull-btn" data-model="${esc(model.pull_name || model.name)}" title="Pull ${esc(model.pull_name || model.name)} (fit-checked first)">↓ Pull</button>`;
-  const quantTarget = (model.sizes || []).length
-    ? `${model.name}:${model.sizes[model.sizes.length - 1]}`
-    : model.name;
-  const quantBtn = `<button class="btn compact quant-jump-btn" data-model="${esc(quantTarget)}" title="Which quantization of this fits your GPU?">⚖</button>`;
-  return `<tr>
-    <td class="catalog-model-cell">
-      <div class="catalog-result-title"><a href="${esc(model.url)}" target="_blank" rel="noopener">${esc(model.name)}</a>${installed}${caps}<span class="row-fit-slot"${!model.sizes?.length && nameParams ? ` data-params="${nameParams}"` : ""}></span></div>
-      ${model.description ? `<div class="muted small catalog-description" title="${esc(model.description)}">${esc(model.description)}</div>` : ""}
+function popularityNumber(value) {
+  if (value == null) return null;
+  if (Number.isFinite(Number(value))) return Number(value);
+  const match = String(value).trim().match(/^([\d.]+)\s*([kmb]?)$/i);
+  if (!match) return null;
+  return Number(match[1]) * ({ "": 1, k: 1e3, m: 1e6, b: 1e9 }[match[2].toLowerCase()] || 1);
+}
+
+function paramsFromModelName(name) {
+  const matches = [...String(name || "").toLowerCase().matchAll(/(?:^|[-_:/])(\d+(?:\.\d+)?)\s*([mb])(?:$|[-_.])/g)];
+  if (!matches.length) return null;
+  const match = matches[matches.length - 1];
+  const value = Number(match[1]);
+  return match[2] === "m" ? value / 1000 : value;
+}
+
+function expandRemoteCatalog(models) {
+  return (models || []).flatMap((model) => {
+    let variants = Array.isArray(model.variants) ? model.variants : [];
+    if (!variants.length && model.sizes?.length) {
+      variants = model.sizes.map((label) => ({
+        label,
+        params_b: paramsFromSizeToken(label),
+        pull_name: `${model.name}:${label}`,
+      }));
+    }
+    if (!variants.length) variants = [{ label: null, params_b: paramsFromModelName(model.name), pull_name: model.pull_name }];
+    return variants.map((variant, index) => {
+      const paramsB = Number(variant.params_b) > 0 ? Number(variant.params_b) : paramsFromModelName(model.name);
+      const pullName = variant.pull_name || model.pull_name || model.name;
+      return {
+        ...model,
+        row_id: `${model.source}:${model.name}:${variant.label || index}`,
+        family: model.family || model.name,
+        size_label: variant.label || (paramsB != null ? `${paramsB}b` : null),
+        params_b: paramsB,
+        quant: variant.quant || null,
+        context: variant.context || null,
+        download_bytes: variant.download_bytes || null,
+        pull_name: pullName,
+        popularity: model.popularity ?? popularityNumber(model.pulls),
+      };
+    });
+  });
+}
+
+function remoteFit(row) {
+  return row.params_b != null ? state.remoteCatalog.fits[String(row.params_b)] || null : null;
+}
+
+function fitBadgeForCatalog(row) {
+  const fit = remoteFit(row);
+  if (!fit) return `<span class="badge unknown" title="The parameter size is unknown, so fit cannot be estimated">unknown</span>`;
+  const labels = { ok: "fits GPU", soft: fit.tier === "cpu_only" ? "CPU only" : "tight", hard: "will not fit", unknown: "unknown" };
+  const classes = { ok: "fits", soft: "tight", hard: "wont", unknown: "unknown" };
+  return `<span class="badge ${classes[fit.severity] || "unknown"}" data-tooltip="Estimated need: ${esc(fit.required_gb)} GB at a typical Q4 quant and 4K context. Compare quants for an exact estimate." tabindex="0">${esc(labels[fit.severity] || "unknown")}</span>`;
+}
+
+function remoteSizeMatches(paramsB, filter) {
+  if (filter === "all") return true;
+  if (paramsB == null) return filter === "unknown";
+  if (filter === "under4") return paramsB < 4;
+  if (filter === "4to8") return paramsB >= 4 && paramsB <= 8;
+  if (filter === "8to15") return paramsB > 8 && paramsB < 15;
+  if (filter === "15to35") return paramsB >= 15 && paramsB < 35;
+  if (filter === "over35") return paramsB >= 35;
+  return true;
+}
+
+function remoteCatalogFilteredRows() {
+  const source = $("#remote-source-filter")?.value || "all";
+  const size = $("#remote-size-filter")?.value || "all";
+  const fit = $("#remote-fit-filter")?.value || "all";
+  const capability = $("#remote-cap-filter")?.value || "all";
+  const installedOnly = !!$("#remote-installed-filter")?.checked;
+  const rows = state.remoteCatalog.rows.filter((row) => {
+    if (source !== "all" && row.source !== source) return false;
+    if (!remoteSizeMatches(row.params_b, size)) return false;
+    const rowFit = remoteFit(row);
+    if (fit !== "all" && (rowFit?.severity || "unknown") !== fit) return false;
+    if (capability !== "all" && !(row.capabilities || []).includes(capability)) return false;
+    if (installedOnly && !row.installed_match && !findInstalledModel(row.pull_name)) return false;
+    return true;
+  });
+  const sort = state.remoteCatalog.sort || $("#remote-sort")?.value || "popularity-desc";
+  const [key, direction = "asc"] = sort.split("-");
+  const factor = direction === "desc" ? -1 : 1;
+  const value = (row) => {
+    if (key === "model") return String(row.name || "").toLowerCase();
+    if (key === "source") return String(row.source || "");
+    if (key === "params") return row.params_b ?? null;
+    if (key === "updated") return row.updated ? String(row.updated) : null;
+    return row.popularity ?? null;
+  };
+  return rows.sort((a, b) => {
+    const av = value(a);
+    const bv = value(b);
+    if (av == null && bv != null) return 1;
+    if (bv == null && av != null) return -1;
+    if (av == null && bv == null) return String(a.name).localeCompare(String(b.name));
+    const compared = typeof av === "string" ? av.localeCompare(bv) : av - bv;
+    return compared * factor || String(a.name).localeCompare(String(b.name));
+  });
+}
+
+function catalogSortHeading(label, key, className = "") {
+  const active = state.remoteCatalog.sort?.startsWith(`${key}-`);
+  const direction = active && state.remoteCatalog.sort.endsWith("desc") ? "descending" : active ? "ascending" : "none";
+  const arrow = direction === "ascending" ? " ↑" : direction === "descending" ? " ↓" : "";
+  return `<th class="${className}" aria-sort="${direction}"><button class="catalog-sort-btn" data-sort-key="${key}">${esc(label)}${arrow}</button></th>`;
+}
+
+function remoteCatalogRow(row) {
+  const wanted = String(row.pull_name || "").toLowerCase().replace(/:latest$/, "");
+  const exactInstalled = Object.values(state.installedByName).some((model) =>
+    String(model.name || "").toLowerCase().replace(/:latest$/, "") === wanted
+  );
+  const installed = exactInstalled || (row.params_b == null && row.installed_match)
+    ? `<span class="badge on" title="A matching model is installed">installed</span>`
+    : "";
+  const caps = (row.capabilities || []).slice(0, 3).map((c) => `<span class="badge">${esc(c)}</span>`).join("");
+  const params = row.params_b != null ? `${row.params_b < 1 ? row.params_b * 1000 + "M" : row.params_b + "B"}` : "—";
+  const pullAction = row.pullable === false
+    ? `<a class="btn compact" href="${esc(row.url)}" target="_blank" rel="noopener">View</a>`
+    : `<button class="btn primary compact library-pull-btn" data-model="${esc(row.pull_name)}" title="Pull this exact ${row.size_label ? `${esc(row.size_label)} size` : "model"}">Pull</button>`;
+  const quantAction = row.params_b != null
+    ? `<button class="btn compact quant-jump-btn" data-model="${esc(row.source === "ollama" && row.size_label ? `${row.family}:${row.size_label}` : row.name)}" data-params="${esc(row.params_b)}" data-source="${esc(row.source)}" data-family="${esc(row.family)}">Compare quants</button>`
+    : "";
+  return `<tr data-catalog-row="${esc(row.row_id)}">
+    <td class="catalog-model-cell" data-label="Model">
+      <div class="catalog-result-title"><a href="${esc(row.url)}" target="_blank" rel="noopener">${esc(row.name)}</a>${installed}</div>
+      <div class="catalog-caps">${caps}</div>
+      ${row.description ? `<div class="muted small catalog-description" title="${esc(row.description)}">${esc(row.description)}</div>` : ""}
     </td>
-    <td>${sourceBadge(model.source)}</td>
-    <td class="catalog-sizes">${sizes || `<span class="muted">—</span>`}</td>
-    <td class="num" title="Pulls (Ollama) or downloads (Hugging Face)">${esc(model.pulls || "—")}</td>
-    <td class="muted small">${esc(model.updated || "—")}</td>
-    <td class="catalog-actions">${quantBtn}${action}</td>
+    <td data-label="Source">${sourceBadge(row.source)}</td>
+    <td class="num" data-label="Parameters"><strong>${esc(params)}</strong></td>
+    <td data-label="Best fit">${fitBadgeForCatalog(row)}</td>
+    <td class="num" data-label="Popularity" title="Pulls on Ollama or downloads on Hugging Face">${esc(row.pulls || "—")}</td>
+    <td class="muted small" data-label="Updated">${esc(row.updated || "—")}</td>
+    <td class="catalog-actions" data-label="Actions"><div class="catalog-action-stack">${quantAction}${pullAction}</div></td>
   </tr>`;
+}
+
+function updateRemoteFilterSummary(total, shown) {
+  const slot = $("#remote-active-filters");
+  if (!slot) return;
+  const controls = [
+    ["Source", $("#remote-source-filter")], ["Parameters", $("#remote-size-filter")],
+    ["Fit", $("#remote-fit-filter")], ["Capability", $("#remote-cap-filter")],
+  ];
+  const active = controls.filter(([, control]) => control && control.value !== "all")
+    .map(([label, control]) => `<span class="filter-chip">${label}: ${esc(control.options[control.selectedIndex].textContent)}</span>`);
+  if ($("#remote-installed-filter")?.checked) active.push(`<span class="filter-chip">Installed only</span>`);
+  slot.classList.toggle("hidden", !active.length);
+  slot.innerHTML = active.length ? `<span class="muted small">Showing ${shown} of ${total} size-specific rows</span>${active.join("")}` : "";
+}
+
+function renderRemoteCatalog(message = null) {
+  const body = $("#updates-body");
+  if (!body) return;
+  const rows = remoteCatalogFilteredRows();
+  updateRemoteFilterSummary(state.remoteCatalog.rows.length, rows.length);
+  const exact = exactTagQuery(state.remoteCatalog.query);
+  const exactRow = exact
+    ? `<div class="exact-pull-row">Exact pullable tag detected <button class="btn primary compact library-pull-btn" data-model="${esc(exact)}">Pull ${esc(exact)}</button></div>`
+    : "";
+  if (!rows.length) {
+    body.innerHTML = `${exactRow}<div class="empty-state">No size-specific models match the current filters.</div>`;
+  } else {
+    body.innerHTML = `${exactRow}<div class="catalog-result-count"><strong>${rows.length}</strong> size-specific result${rows.length === 1 ? "" : "s"}<span class="muted small">One row per model parameter size; compare quants before pulling when memory is tight.</span></div>
+      <div class="table-wrap remote-catalog-wrap"><table class="results catalog-table">
+        <thead><tr>${catalogSortHeading("Model", "model")}${catalogSortHeading("Source", "source")}${catalogSortHeading("Parameters", "params", "num")}<th>Best fit</th>${catalogSortHeading("Popularity", "popularity", "num")}${catalogSortHeading("Updated", "updated")}<th><span class="sr-only">Actions</span></th></tr></thead>
+        <tbody>${rows.map(remoteCatalogRow).join("")}</tbody></table></div>${message ? `<p class="muted small">${esc(message)}</p>` : ""}`;
+  }
+  $$(".library-pull-btn", body).forEach((pullBtn) => pullBtn.addEventListener("click", () => pullModel(pullBtn.dataset.model, pullBtn)));
+  $$(".quant-jump-btn", body).forEach((qBtn) => qBtn.addEventListener("click", () => openQuantAdvisor(qBtn.dataset.model, Number(qBtn.dataset.params), qBtn.dataset.source, qBtn.dataset.family)));
+  $$(".catalog-sort-btn", body).forEach((sortBtn) => sortBtn.addEventListener("click", () => {
+    const key = sortBtn.dataset.sortKey;
+    const current = state.remoteCatalog.sort || "";
+    state.remoteCatalog.sort = current.startsWith(`${key}-`) && current.endsWith("asc") ? `${key}-desc` : `${key}-asc`;
+    const select = $("#remote-sort");
+    if (select && [...select.options].some((option) => option.value === state.remoteCatalog.sort)) select.value = state.remoteCatalog.sort;
+    renderRemoteCatalog(message);
+  }));
+}
+
+async function loadRemoteCatalogFits() {
+  const params = [...new Set(state.remoteCatalog.rows.map((row) => row.params_b).filter((value) => value > 0))];
+  state.remoteCatalog.fits = {};
+  if (!params.length) return;
+  try {
+    const res = await postJSON("/system/fit-batch", { params_b: params, free_vram_mb: targetVram() });
+    (res.items || []).forEach((item) => (state.remoteCatalog.fits[String(item.params_b)] = item));
+  } catch {
+    // The catalog remains useful when a hardware fit estimate is unavailable.
+  }
 }
 
 async function searchUnifiedModels(source) {
@@ -2417,23 +2625,13 @@ async function searchUnifiedModels(source) {
       body.innerHTML = `<div class="empty-state">${esc(data.message || "No model source is reachable.")}</div>`;
       return;
     }
-    const exact = exactTagQuery(query);
-    const exactRow = exact
-      ? `<div class="exact-pull-row">⌨ Looks like an exact tag — <button class="btn primary compact library-pull-btn" data-model="${esc(exact)}">↓ Pull ${esc(exact)}</button></div>`
-      : "";
-    const rows = (data.results || []).map(unifiedResultRow).join("");
-    body.innerHTML = rows
-      ? `${exactRow}<div class="table-wrap"><table class="results catalog-table">
-          <thead><tr><th>Model</th><th>Source</th><th>Pull a size</th><th class="num">Popularity</th><th>Updated</th><th></th></tr></thead>
-          <tbody>${rows}</tbody></table></div>${data.message ? `<p class="muted small">${esc(data.message)}</p>` : ""}`
-      : `${exactRow || `<div class="empty-state">${esc(data.message || `No models matched “${query}”.`)}</div>`}`;
-    $$(".library-pull-btn, .size-pull-btn", body).forEach((pullBtn) =>
-      pullBtn.addEventListener("click", () => pullModel(pullBtn.dataset.model, pullBtn))
-    );
-    $$(".quant-jump-btn", body).forEach((qBtn) =>
-      qBtn.addEventListener("click", () => openQuantAdvisor(qBtn.dataset.model))
-    );
-    void applyCatalogFitBadges(body);
+    state.remoteCatalog.sourceRows = data.results || [];
+    state.remoteCatalog.rows = expandRemoteCatalog(data.results || []);
+    state.remoteCatalog.query = query;
+    state.remoteCatalog.sort = $("#remote-sort")?.value || "popularity-desc";
+    renderRemoteCatalog(data.message);
+    await loadRemoteCatalogFits();
+    if (seq === state.unifiedSearchSeq) renderRemoteCatalog(data.message);
   } catch (err) {
     if (seq !== state.unifiedSearchSeq) return;
     body.innerHTML = `<div class="empty-state">Model search failed.</div>`;
@@ -2443,46 +2641,15 @@ async function searchUnifiedModels(source) {
   }
 }
 
-// Your hardware is already detected — so say, per size, whether it fits. One
-// batched request classifies every distinct parameter count on the page and
-// colors the size chips (green fits / yellow tight or CPU / red won't fit).
-async function applyCatalogFitBadges(body) {
-  const targets = $$("[data-params]", body);
-  if (!targets.length) return;
-  const unique = [...new Set(targets.map((el) => Number(el.dataset.params)))].filter((n) => n > 0);
-  if (!unique.length) return;
-  try {
-    const res = await postJSON("/system/fit-batch", { params_b: unique, free_vram_mb: targetVram() });
-    if (!res.success) return;
-    const byParams = {};
-    (res.items || []).forEach((item) => (byParams[item.params_b] = item));
-    const label = { ok: "fits your GPU", soft: "tight fit or CPU-only", hard: "won't fit this machine", unknown: "fit unknown" };
-    targets.forEach((el) => {
-      const item = byParams[Number(el.dataset.params)];
-      if (!item) return;
-      if (el.classList.contains("row-fit-slot")) {
-        el.innerHTML = `<span class="badge ${item.severity === "ok" ? "fits" : item.severity === "soft" ? "tight" : item.severity === "hard" ? "wont" : "unknown"}" title="Needs ~${esc(item.required_gb)} GB VRAM (default quant estimate)">${esc(label[item.severity] || "?")}</span>`;
-      } else {
-        el.classList.add(`fit-${item.severity}`);
-        el.title = `Pull ${el.dataset.model} — needs ~${item.required_gb} GB VRAM, ${label[item.severity] || "?"}`;
-      }
-    });
-    const status = $("#catalog-source-status");
-    if (status && !$("#catalog-fit-legend")) {
-      status.insertAdjacentHTML(
-        "beforeend",
-        `<span id="catalog-fit-legend" class="muted small catalog-fit-legend">size chips: <span class="chip-swatch fit-ok"></span> fits · <span class="chip-swatch fit-soft"></span> tight/CPU · <span class="chip-swatch fit-hard"></span> won't fit</span>`
-      );
-    }
-  } catch {
-    /* fit badges are progressive enhancement — the table works without them */
-  }
-}
-
 // Jump to the quant advisor pre-filled with a model from the results table.
-function openQuantAdvisor(modelId) {
+function openQuantAdvisor(modelId, paramsB = null, source = "ollama", family = null) {
   const input = $("#quant-model");
   if (input) input.value = modelId;
+  if (input) {
+    input.dataset.params = paramsB || "";
+    input.dataset.source = source || "ollama";
+    input.dataset.family = family || "";
+  }
   $('.seg-btn[data-seg="quant"]')?.click();
   quantAdvise($("#btn-quant-advise"));
 }
@@ -2592,12 +2759,45 @@ function showPullDone(model) {
       <div><strong>✓ Pulled — ${esc(model)} is ready</strong>
         <div class="muted small">A run profile was created for it. Deploy it from Your models, or right here.</div>
       </div>
-      <button class="btn primary compact" id="btn-deploy-pulled" data-model="${esc(model)}">Deploy now</button>
+      <div class="row gap wrap">
+        <button class="btn compact" id="btn-view-pulled" data-model="${esc(model)}">View in Your models</button>
+        <button class="btn primary compact" id="btn-deploy-pulled" data-model="${esc(model)}">Deploy now</button>
+      </div>
     </div>`;
   done.classList.remove("hidden");
+  $("#btn-pull-dismiss").hidden = false;
   $("#btn-deploy-pulled").addEventListener("click", (e) => {
     const b = e.currentTarget;
     startInstalledModel(resolveInstalledName(b.dataset.model), b);
+  });
+  $("#btn-view-pulled").addEventListener("click", (e) => highlightInstalledModel(e.currentTarget.dataset.model));
+}
+
+function dismissPullProgress() {
+  state.pullRetry = null;
+  $("#pull-progress")?.classList.add("hidden");
+  $("#pull-progress-actions")?.classList.add("hidden");
+  $("#pull-progress-done")?.classList.add("hidden");
+  $("#btn-pull-dismiss").hidden = true;
+}
+
+function showPullTerminal(kind, model, message) {
+  const actions = $("#pull-progress-actions");
+  const retry = kind === "cancelled" || kind === "failed" || kind === "blocked";
+  actions.innerHTML = `<div>
+      <strong>${kind === "cancelled" ? "Pull cancelled" : kind === "blocked" ? "Pull blocked" : "Pull failed"}</strong>
+      <div class="muted small">${esc(message)}</div>
+    </div>
+    <div class="row gap wrap">
+      ${retry ? `<button class="btn primary compact" id="btn-pull-retry">Retry</button>` : ""}
+      <button class="btn compact" id="btn-pull-close">Dismiss</button>
+    </div>`;
+  actions.className = `pull-progress-actions ${kind}`;
+  $("#btn-pull-dismiss").hidden = false;
+  $("#btn-pull-close")?.addEventListener("click", dismissPullProgress);
+  $("#btn-pull-retry")?.addEventListener("click", () => {
+    actions.classList.add("hidden");
+    pullModel(model);
   });
 }
 
@@ -2640,8 +2840,12 @@ async function pullModel(modelArg, triggerBtn) {
   hideOllamaHelp();
   // Reset + reveal the progress panel.
   const panel = $("#pull-progress");
+  state.pullRetry = model;
   $("#pull-progress-done").classList.add("hidden");
   $("#pull-progress-done").innerHTML = "";
+  $("#pull-progress-actions").classList.add("hidden");
+  $("#pull-progress-actions").innerHTML = "";
+  $("#btn-pull-dismiss").hidden = true;
   $("#pull-progress-title").textContent = model;
   $("#pull-progress-dest").textContent = "";
   setPullProgress({ percent: 0, status: "Starting…", stats: "" });
@@ -2662,7 +2866,12 @@ async function pullModel(modelArg, triggerBtn) {
   // Wire a cancel that aborts the stream (closes the connection; Ollama stops).
   const controller = new AbortController();
   cancelBtn.hidden = false;
-  const onCancel = () => controller.abort();
+  const onCancel = () => {
+    cancelBtn.disabled = true;
+    cancelBtn.textContent = "Cancelling…";
+    setPullProgress({ percent: null, status: "Cancelling request…", stats: "Downloaded layers may be retained by Ollama for a later retry." });
+    controller.abort();
+  };
   cancelBtn.addEventListener("click", onCancel);
 
   let ollamaUnreachable = false;
@@ -2741,15 +2950,18 @@ async function pullModel(modelArg, triggerBtn) {
         append(`blocked by fit check: ${msg}`);
         if (j.fit?.estimate_gb) append(`  needs ~${j.fit.estimate_gb.required} GB`);
         setPullProgress({ percent: 0, status: `Blocked by fit check — tick "Warn only; pull anyway" to continue.` });
+        showPullTerminal("blocked", model, msg);
       } else {
         const msg = j.error || "Pull could not start.";
         append(msg);
         if (checkOllamaError(msg)) ollamaUnreachable = true;
         setPullProgress({ status: `Error: ${msg}` });
+        showPullTerminal("failed", model, msg);
       }
     } else if (sawError) {
       // Stream opened but reported a failure mid-way — don't claim success or
       // flip any card to "installed".
+      showPullTerminal("failed", model, "The model source reported an error. Open Raw log for details.");
     } else {
       append("done.");
       setPullProgress({ percent: 100, status: "Pulled successfully.", stats: "" });
@@ -2762,14 +2974,18 @@ async function pullModel(modelArg, triggerBtn) {
   } catch (err) {
     if (err.name === "AbortError") {
       append("cancelled.");
-      setPullProgress({ status: "Cancelled." });
+      setPullProgress({ percent: 0, status: "Cancelled.", stats: "The transfer stopped. Ollama may keep completed layers for a faster retry." });
+      showPullTerminal("cancelled", model, "The transfer stopped. Dismiss this panel or retry the same model.");
       toast("Pull cancelled.", "info");
     } else {
       append(`error: ${err.message}`);
       setPullProgress({ status: `Error: ${err.message}` });
+      showPullTerminal("failed", model, err.message);
     }
   } finally {
     cancelBtn.hidden = true;
+    cancelBtn.disabled = false;
+    cancelBtn.textContent = "Cancel";
     cancelBtn.removeEventListener("click", onCancel);
     if (usesSpinner) busy(btn, false);
     else {
@@ -2839,11 +3055,15 @@ function quantBadge(v) {
 // Fill the "Pull it" column with real, published tags for this family+size,
 // so pulling a specific quant is one click on a tag that actually exists —
 // no guessing tag-name conventions.
-async function attachQuantPullButtons(res) {
+async function attachQuantPullButtons(res, source = "ollama") {
   const family = res.model?.family;
   const paramsB = res.model?.params_b;
   const cells = $$(".quant-pull-cell");
   const extra = $("#quant-tags-extra");
+  if (source !== "ollama") {
+    cells.forEach((c) => (c.innerHTML = `<span class="muted small" title="Open the Hugging Face repository to choose an exact GGUF file">repository</span>`));
+    return;
+  }
   if (!family || !cells.length) {
     cells.forEach((c) => (c.innerHTML = `<span class="muted small" title="Not an Ollama library model — pull it by its own name">—</span>`));
     return;
@@ -2888,6 +3108,9 @@ async function attachQuantPullButtons(res) {
 
 async function quantAdvise(btn) {
   const modelId = $("#quant-model").value.trim();
+  const input = $("#quant-model");
+  const explicitParams = Number(input?.dataset.params) || undefined;
+  const source = input?.dataset.source || "ollama";
   const body = $("#quant-body");
   if (!modelId) {
     body.innerHTML = `<div class="muted">Enter a model name that includes the size, e.g. <code>gemma3:12b</code>.</div>`;
@@ -2898,6 +3121,7 @@ async function quantAdvise(btn) {
   try {
     const res = await postJSON("/system/quant-advisor", {
       model_id: modelId,
+      params_b: explicitParams,
       context: Number($("#quant-context").value) || undefined,
       free_vram_mb: targetVram(),
     });
@@ -2920,11 +3144,18 @@ async function quantAdvise(btn) {
         </tr>`;
       })
       .join("");
-    const link = res.tags_url
+    const link = source === "ollama" && res.tags_url
       ? `<a href="${esc(res.tags_url)}" target="_blank" rel="noopener">Browse ${esc(res.model.family)}'s actual tags on ollama.com ↗</a>`
+      : source === "huggingface"
+        ? `<a href="https://huggingface.co/${esc(input?.dataset.family || modelId)}" target="_blank" rel="noopener">Browse exact GGUF files on Hugging Face ↗</a>`
+        : "";
+    const familyRows = state.remoteCatalog.rows.filter((row) => row.family === (input?.dataset.family || res.model.family) && row.params_b != null);
+    const sizeSwitcher = familyRows.length > 1
+      ? `<div class="quant-size-switcher"><span class="muted small">Parameter size</span>${familyRows.map((row) => `<button class="btn compact quant-size-btn${row.params_b === res.model.params_b ? " active" : ""}" data-model="${esc(row.source === "ollama" && row.size_label ? `${row.family}:${row.size_label}` : row.name)}" data-params="${esc(row.params_b)}" data-source="${esc(row.source)}" data-family="${esc(row.family)}">${esc(row.size_label || `${row.params_b}b`)}</button>`).join("")}</div>`
       : "";
     body.innerHTML = `
       <div class="next-action" style="margin-bottom:0.6rem"><b>${esc(res.recommendation)}</b></div>
+      ${sizeSwitcher}
       <div class="muted small" style="margin-bottom:0.5rem">${esc(res.model.params_b)}B parameters · ${esc(res.model.context)} context · ${esc(budget)}</div>
       <div class="table-wrap"><table class="results quant-table">
         <thead><tr><th title="Lower precision uses less memory but can reduce quality">Quant</th><th class="num" title="Estimated model weight size">Weights</th><th class="num" title="Estimated weights, KV cache, and runtime overhead">Needs</th><th class="num" title="Memory budget remaining after the estimate">Headroom</th><th>Fit</th><th>Quality</th><th class="quant-pull-col">Pull it</th></tr></thead>
@@ -2933,7 +3164,8 @@ async function quantAdvise(btn) {
       <div id="quant-tags-extra"></div>
       <p class="muted small quant-legend"><b>Reading quant names:</b> the number is the approximate bit class, <code>K</code> is the newer K-quant family, and <code>M</code> is its medium mixed-precision variant. Hover or focus a quant for its tradeoff.</p>
       <p class="muted small" style="margin-top:0.5rem">${esc(res.note)} ${link}</p>`;
-    void attachQuantPullButtons(res);
+    $$(".quant-size-btn", body).forEach((sizeBtn) => sizeBtn.addEventListener("click", () => openQuantAdvisor(sizeBtn.dataset.model, Number(sizeBtn.dataset.params), sizeBtn.dataset.source, sizeBtn.dataset.family)));
+    void attachQuantPullButtons(res, source);
   } catch (err) {
     body.innerHTML = `<div class="muted">Estimate failed.</div>`;
     toast(`Quant advisor failed: ${err.message}`, "error");
@@ -2969,7 +3201,7 @@ function chatSelectedProfile() {
 
 function runningChatModel(model = chatSelectedModel()) {
   if (!model) return null;
-  return (state.runningDetails || []).find((item) => item.name === model) || null;
+  return (state.runningDetails || []).find((item) => ollamaModelNamesMatch(item.name, model)) || null;
 }
 
 function chatModelIsReady() {
@@ -3023,29 +3255,34 @@ function updateChatModelState() {
   const duration = $("#chat-keep-alive");
   const input = $("#chat-input");
   const send = $("#btn-chat-send");
+  const progress = $("#chat-session-progress");
+  const progressLabel = $("#chat-session-progress-label");
   if (!attach || !hint || !session || !action || !duration || !input || !send) return;
   const model = chatSelectedModel();
   const running = runningChatModel(model);
   const profile = chatSelectedProfile();
   const ready = !!(model && running && profile);
   const vision = chatProfileSupportsVision();
-  const canAttach = ready && vision;
+  const operation = state.chatSessionOperation || (state.chatSessionBusy ? "loading" : null);
+  const canAttach = ready && !operation;
   attach.classList.toggle("disabled", !canAttach);
   attach.title = canAttach
-    ? "Attach images to your next message"
-    : ready
-      ? "This model is not marked as vision-capable"
-      : "Load a vision-capable model before attaching images";
-  if (!canAttach && state.chatImages.length) {
+    ? vision
+      ? "Attach text files or images to your next message"
+      : "Attach text files; images require a vision-capable model"
+    : "Load an installed model before attaching files";
+  if ((!ready || !vision) && state.chatImages.length) {
     state.chatImages = [];
     renderChatAttachments();
   }
-  input.disabled = !ready;
-  send.disabled = !ready && !state.chatController;
-  input.placeholder = ready ? "Message this local model" : "Load an installed model to start chatting";
-  duration.disabled = ready || state.chatSessionBusy;
-  action.disabled = !model || state.chatSessionBusy || !!state.chatController;
-  session.className = `chat-session-state${ready ? " ready" : state.chatSessionBusy ? " loading" : ""}`;
+  input.disabled = !ready || !!operation;
+  send.disabled = (!ready || !!operation) && !state.chatController;
+  input.placeholder = operation ? `${operation === "unloading" ? "Unloading" : "Loading"} ${model}…` : ready ? "Message this local model" : "Load an installed model to start chatting";
+  duration.disabled = ready || !!operation;
+  action.disabled = !model || !!operation || !!state.chatController;
+  session.className = `chat-session-state${ready && !operation ? " ready" : operation ? " loading" : ""}`;
+  progress?.classList.toggle("hidden", !operation);
+  if (progressLabel && operation) progressLabel.textContent = `${operation === "unloading" ? "Unloading" : "Loading"} ${model}…`;
   if (!state.installedLoaded) {
     hint.textContent = "Checking models installed in Ollama…";
     session.lastElementChild.textContent = "Checking availability";
@@ -3054,12 +3291,14 @@ function updateChatModelState() {
     hint.textContent = "No local models are installed. Pull one from Setup & Deploy to use Chat.";
     session.lastElementChild.textContent = "Nothing installed";
     action.textContent = "Load model";
-  } else if (state.chatSessionBusy) {
-    hint.textContent = `Loading ${model} into memory…`;
-    session.lastElementChild.textContent = "Loading";
-    action.textContent = "Loading…";
+  } else if (operation) {
+    const unloading = operation === "unloading";
+    hint.textContent = `${unloading ? "Releasing" : "Loading"} ${model} ${unloading ? "from" : "into"} RAM and VRAM…`;
+    session.lastElementChild.textContent = unloading ? "Unloading" : "Loading";
+    action.textContent = unloading ? "Unloading…" : "Loading…";
   } else if (ready) {
-    hint.textContent = `${model} is ready in Ollama. ${formatExpires(running.expires_at)}.`;
+    const placement = running.placement ? ` · ${running.placement}${running.gpu_percent != null ? ` ${running.gpu_percent}% GPU` : ""}` : "";
+    hint.textContent = `${model} is ready · ${formatExpires(running.expires_at)}${placement}`;
     session.lastElementChild.textContent = "Ready";
     action.textContent = "Unload";
   } else if (running) {
@@ -3084,6 +3323,7 @@ async function toggleChatSession() {
     return;
   }
   state.chatSessionBusy = true;
+  state.chatSessionOperation = "loading";
   updateChatModelState();
   try {
     const profileResult = await postJSON("/profiles/upsert", {
@@ -3106,8 +3346,13 @@ async function toggleChatSession() {
     toast(`Could not start chat: ${err.message}`, "error");
   } finally {
     state.chatSessionBusy = false;
+    state.chatSessionOperation = null;
     updateChatModelState();
   }
+}
+
+function chatImageUrl(image) {
+  return typeof image === "string" ? image : image?.url || "";
 }
 
 function renderChatAttachments() {
@@ -3124,7 +3369,7 @@ function renderChatAttachments() {
     const chip = document.createElement("span");
     chip.className = "chat-file-chip";
     const label = document.createElement("span");
-    label.textContent = `📄 ${file.name}`;
+    label.textContent = `${file.name} · ${fmtBytes(file.size || file.content?.length || 0)}`;
     const x = document.createElement("button");
     x.type = "button";
     x.textContent = "×";
@@ -3136,12 +3381,12 @@ function renderChatAttachments() {
     chip.append(label, x);
     slot.appendChild(chip);
   });
-  state.chatImages.forEach((dataUrl, i) => {
+  state.chatImages.forEach((image, i) => {
     const chip = document.createElement("span");
     chip.className = "chat-attach-chip";
     const img = document.createElement("img");
-    img.src = dataUrl;
-    img.alt = `attachment ${i + 1}`;
+    img.src = chatImageUrl(image);
+    img.alt = typeof image === "object" && image.name ? image.name : `attachment ${i + 1}`;
     const x = document.createElement("button");
     x.type = "button";
     x.textContent = "×";
@@ -3170,7 +3415,7 @@ function addChatImages(files) {
       }
       const reader = new FileReader();
       reader.onload = () => {
-        state.chatImages.push(String(reader.result));
+        state.chatImages.push({ url: String(reader.result), name: file.name, size: file.size, type: file.type });
         renderChatAttachments();
       };
       reader.readAsDataURL(file);
@@ -3183,18 +3428,120 @@ function addChatImages(files) {
     }
     const reader = new FileReader();
     reader.onload = () => {
-      state.chatFiles.push({ name: file.name, content: String(reader.result) });
+      state.chatFiles.push({ name: file.name, content: String(reader.result), size: file.size, type: file.type || "text/plain" });
       renderChatAttachments();
     };
     reader.readAsText(file);
   });
 }
 
-// Render reply text into a bubble body: fenced ``` code blocks become styled
+function parseChatJson(text) {
+  let raw = String(text || "").trim();
+  const fenced = raw.match(/^```(?:json)?\s*\n?([\s\S]*?)\n?```$/i);
+  if (fenced) raw = fenced[1].trim();
+  if (!raw || !["{", "["].includes(raw[0])) return null;
+  try {
+    const value = JSON.parse(raw);
+    return { value, raw: JSON.stringify(value, null, 2) };
+  } catch {
+    return null;
+  }
+}
+
+function appendJsonTreeValue(parent, value, key = null, depth = 0) {
+  const isContainer = value !== null && typeof value === "object";
+  if (!isContainer) {
+    const row = document.createElement("div");
+    row.className = "json-tree-row";
+    if (key !== null) {
+      const keyNode = document.createElement("span");
+      keyNode.className = "json-key";
+      keyNode.textContent = `${key}:`;
+      row.appendChild(keyNode);
+    }
+    const scalar = document.createElement("span");
+    scalar.className = `json-value json-${value === null ? "null" : typeof value}`;
+    scalar.textContent = typeof value === "string" ? `"${value}"` : String(value);
+    row.appendChild(scalar);
+    parent.appendChild(row);
+    return;
+  }
+  const entries = Array.isArray(value) ? value.map((item, index) => [index, item]) : Object.entries(value);
+  const details = document.createElement("details");
+  details.className = "json-tree-node";
+  details.open = depth < 2;
+  const summary = document.createElement("summary");
+  const type = Array.isArray(value) ? "array" : "object";
+  summary.textContent = `${key !== null ? `${key}: ` : ""}${type} · ${entries.length} item${entries.length === 1 ? "" : "s"}`;
+  details.appendChild(summary);
+  const children = document.createElement("div");
+  children.className = "json-tree-children";
+  entries.forEach(([childKey, child]) => appendJsonTreeValue(children, child, childKey, depth + 1));
+  details.appendChild(children);
+  parent.appendChild(details);
+}
+
+function renderChatJson(container, parsed) {
+  const shell = document.createElement("div");
+  shell.className = "chat-json";
+  const toolbar = document.createElement("div");
+  toolbar.className = "chat-json-toolbar";
+  const treeBtn = document.createElement("button");
+  treeBtn.type = "button";
+  treeBtn.className = "btn compact active";
+  treeBtn.textContent = "Tree";
+  const rawBtn = document.createElement("button");
+  rawBtn.type = "button";
+  rawBtn.className = "btn compact";
+  rawBtn.textContent = "Raw";
+  const copyBtn = document.createElement("button");
+  copyBtn.type = "button";
+  copyBtn.className = "btn compact";
+  copyBtn.textContent = "Copy";
+  const downloadBtn = document.createElement("button");
+  downloadBtn.type = "button";
+  downloadBtn.className = "btn compact";
+  downloadBtn.textContent = "Download JSON";
+  toolbar.append(treeBtn, rawBtn, copyBtn, downloadBtn);
+  const tree = document.createElement("div");
+  tree.className = "json-tree";
+  appendJsonTreeValue(tree, parsed.value);
+  const raw = document.createElement("pre");
+  raw.className = "json-raw hidden";
+  const code = document.createElement("code");
+  code.textContent = parsed.raw;
+  raw.appendChild(code);
+  const selectView = (showRaw) => {
+    tree.classList.toggle("hidden", showRaw);
+    raw.classList.toggle("hidden", !showRaw);
+    treeBtn.classList.toggle("active", !showRaw);
+    rawBtn.classList.toggle("active", showRaw);
+  };
+  treeBtn.addEventListener("click", () => selectView(false));
+  rawBtn.addEventListener("click", () => selectView(true));
+  copyBtn.addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText(parsed.raw);
+      copyBtn.textContent = "Copied";
+      setTimeout(() => (copyBtn.textContent = "Copy"), 1200);
+    } catch { /* clipboard unavailable */ }
+  });
+  downloadBtn.addEventListener("click", () => downloadFile("localdeploy-response.json", parsed.raw, "application/json"));
+  shell.append(toolbar, tree, raw);
+  container.appendChild(shell);
+}
+
+// Render reply text into a bubble body: JSON gets a tree/raw inspector and
+// fenced code blocks become styled <pre><code> elements with a copy button.
 // <pre><code> elements with a copy button; everything else stays textContent
 // (never innerHTML), so model output can't inject markup.
 function renderChatText(container, text) {
   container.innerHTML = "";
+  const parsedJson = parseChatJson(text);
+  if (parsedJson) {
+    renderChatJson(container, parsedJson);
+    return;
+  }
   const parts = String(text).split(/```([\w+-]*)\n?([\s\S]*?)(?:```|$)/g);
   // split() with two capture groups yields [text, lang, code, text, lang, code, …]
   for (let i = 0; i < parts.length; i += 3) {
@@ -3293,7 +3640,7 @@ function appendMarkdownLite(container, text) {
 }
 
 // Build one message bubble with a compact role marker.
-function appendChatBubble(role, text, images = []) {
+function appendChatBubble(role, text, images = [], files = []) {
   const list = $("#chat-messages");
   const row = document.createElement("div");
   row.className = `chat-row ${role}`;
@@ -3306,13 +3653,25 @@ function appendChatBubble(role, text, images = []) {
   if (images.length) {
     const strip = document.createElement("div");
     strip.className = "chat-bubble-images";
-    images.forEach((src) => {
+    images.forEach((image) => {
       const img = document.createElement("img");
-      img.src = src;
-      img.alt = "attached image";
+      img.src = chatImageUrl(image);
+      img.alt = typeof image === "object" && image.name ? image.name : "attached image";
       strip.appendChild(img);
     });
     bubble.appendChild(strip);
+  }
+  if (files.length) {
+    const fileStrip = document.createElement("div");
+    fileStrip.className = "chat-bubble-files";
+    files.forEach((file) => {
+      const item = document.createElement("span");
+      item.className = "chat-bubble-file";
+      item.textContent = `${file.name} · ${fmtBytes(file.size || file.content?.length || 0)}`;
+      item.title = "This file's text was included in the model request.";
+      fileStrip.appendChild(item);
+    });
+    bubble.appendChild(fileStrip);
   }
   const body = document.createElement("div");
   body.className = "chat-bubble-text";
@@ -3336,12 +3695,12 @@ function chatMessagesForApi(profile) {
       messages.push({
         role: m.role,
         content: [
-          { type: "text", text: m.text },
-          ...m.images.map((url) => ({ type: "image_url", image_url: { url } })),
+          { type: "text", text: m.apiText || m.text },
+          ...m.images.map((image) => ({ type: "image_url", image_url: { url: chatImageUrl(image) } })),
         ],
       });
     } else {
-      messages.push({ role: m.role, content: m.text });
+      messages.push({ role: m.role, content: m.apiText || m.text });
     }
   });
   return {
@@ -3364,7 +3723,7 @@ async function sendChatMessage() {
   }
   const typed = input.value.trim();
   const profile = chatSelectedProfile();
-  if ((!typed && !state.chatFiles.length) || !chatModelIsReady() || !profile) {
+  if ((!typed && !state.chatFiles.length && !state.chatImages.length) || !chatModelIsReady() || !profile) {
     if (!chatModelIsReady()) toast("Load an installed model before sending a message.", "error");
     return;
   }
@@ -3373,8 +3732,10 @@ async function sendChatMessage() {
   const fileBlocks = state.chatFiles
     .map((f) => "\n\n[Attached file: " + f.name + "]\n```\n" + f.content + "\n```")
     .join("");
-  const text = (typed || "Please look at the attached file(s).") + fileBlocks;
+  const displayText = typed || "Please review the attached file(s).";
+  const apiText = displayText + fileBlocks;
   const images = state.chatImages.slice();
+  const files = state.chatFiles.map((file) => ({ ...file }));
   state.chatImages = [];
   state.chatFiles = [];
   renderChatAttachments();
@@ -3382,8 +3743,8 @@ async function sendChatMessage() {
   input.style.height = "auto";
 
   $("#chat-messages .chat-welcome")?.remove();
-  state.chatMessages.push({ role: "user", text, images });
-  appendChatBubble("user", text, images);
+  state.chatMessages.push({ role: "user", text: displayText, apiText, images, files });
+  appendChatBubble("user", displayText, images, files);
   const assistant = appendChatBubble("assistant", "", []);
   assistant.bubble.classList.add("typing");
 
@@ -3458,6 +3819,7 @@ function clearChat() {
   state.chatController?.abort();
   state.chatMessages = [];
   state.chatImages = [];
+  state.chatFiles = [];
   renderChatAttachments();
   renderChatWelcome();
 }
@@ -4779,6 +5141,24 @@ $("#hf-search")?.addEventListener("input", () => {
   clearTimeout(state.unifiedSearchTimer);
   state.unifiedSearchTimer = setTimeout(() => searchUnifiedModels(), 650);
 });
+["#remote-source-filter", "#remote-size-filter", "#remote-fit-filter", "#remote-cap-filter"].forEach((selector) =>
+  $(selector)?.addEventListener("change", () => renderRemoteCatalog())
+);
+$("#remote-sort")?.addEventListener("change", (e) => {
+  state.remoteCatalog.sort = e.target.value;
+  renderRemoteCatalog();
+});
+$("#remote-installed-filter")?.addEventListener("change", () => renderRemoteCatalog());
+$("#btn-remote-clear")?.addEventListener("click", () => {
+  ["#remote-source-filter", "#remote-size-filter", "#remote-fit-filter", "#remote-cap-filter"].forEach((selector) => {
+    const control = $(selector);
+    if (control) control.value = "all";
+  });
+  if ($("#remote-installed-filter")) $("#remote-installed-filter").checked = false;
+  state.remoteCatalog.sort = "popularity-desc";
+  if ($("#remote-sort")) $("#remote-sort").value = state.remoteCatalog.sort;
+  renderRemoteCatalog();
+});
 $("#btn-provider-refresh")?.addEventListener("click", (e) => loadProviderCatalog(e));
 $("#catalog-search")?.addEventListener("input", () => { state.catalog.page = 0; renderProviderCatalog(); });
 ["#catalog-provider", "#catalog-size", "#catalog-sort"].forEach((sel) =>
@@ -4789,6 +5169,11 @@ $("#catalog-next")?.addEventListener("click", () => { state.catalog.page += 1; r
 $("#btn-fit-profiles")?.addEventListener("click", scanConfiguredFits);
 $("#btn-clean-orphans")?.addEventListener("click", (e) => cleanOrphanProfiles(e.currentTarget));
 $("#btn-quant-advise")?.addEventListener("click", (e) => quantAdvise(e.currentTarget));
+$("#quant-model")?.addEventListener("input", (e) => {
+  e.target.dataset.params = "";
+  e.target.dataset.source = "ollama";
+  e.target.dataset.family = "";
+});
 $("#quant-model")?.addEventListener("keydown", (e) => {
   if (e.key === "Enter") {
     e.preventDefault();
@@ -4817,12 +5202,27 @@ $("#btn-chat-system-toggle")?.addEventListener("click", () => {
   if (!panel.classList.contains("hidden")) $("#chat-system").focus();
 });
 $("#chat-images")?.addEventListener("change", (e) => {
-  if (!chatProfileSupportsVision() || !chatModelIsReady()) {
-    toast("Load a vision-capable model before attaching images.", "error");
-  } else {
-    addChatImages(e.target.files);
-  }
+  if (!chatModelIsReady()) toast("Load an installed model before attaching files.", "error");
+  else addChatImages(e.target.files);
   e.target.value = "";
+});
+const chatComposer = $(".chat-composer");
+chatComposer?.addEventListener("dragover", (e) => {
+  if (!chatModelIsReady()) return;
+  e.preventDefault();
+  chatComposer.classList.add("dragging");
+});
+chatComposer?.addEventListener("dragleave", (e) => {
+  if (!chatComposer.contains(e.relatedTarget)) chatComposer.classList.remove("dragging");
+});
+chatComposer?.addEventListener("drop", (e) => {
+  e.preventDefault();
+  chatComposer.classList.remove("dragging");
+  if (!chatModelIsReady()) {
+    toast("Load an installed model before dropping files here.", "error");
+    return;
+  }
+  addChatImages(e.dataTransfer?.files);
 });
 $("#chat-input")?.addEventListener("input", (e) => {
   const el = e.target;
@@ -4840,6 +5240,7 @@ $("#chat-input")?.addEventListener("keydown", (e) => {
 $("#btn-starter-pack")?.addEventListener("click", (e) => starterPack(e));
 $("#btn-free").addEventListener("click", freeMemory);
 $("#btn-pull").addEventListener("click", () => pullModel());
+$("#btn-pull-dismiss")?.addEventListener("click", dismissPullProgress);
 $("#btn-builtin-bench").addEventListener("click", useBuiltInBench);
 $("#btn-example").addEventListener("click", loadExample);
 $("#btn-validate").addEventListener("click", validateSet);

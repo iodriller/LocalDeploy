@@ -195,9 +195,19 @@ def _placement(size: Any, size_vram: Any) -> Dict[str, Any]:
 
 
 def _matches_model_name(running_name: Any, model_id: str) -> bool:
-    name = str(running_name or "")
-    base = model_id.split(":")[0]
-    return name == model_id or name.split(":")[0] == base
+    name = str(running_name or "").strip().lower()
+    requested = str(model_id or "").strip().lower()
+    if not name or not requested:
+        return False
+    if name == requested:
+        return True
+    # Ollama may omit or add the implicit latest tag. A request for an exact
+    # non-latest tag must never match another size from the same family.
+    if ":" not in requested:
+        return name == f"{requested}:latest" or name.split(":", 1)[0] == requested
+    if requested.endswith(":latest") and ":" not in name:
+        return name == requested.rsplit(":", 1)[0]
+    return False
 
 
 def _expected_placement(num_gpu: Optional[int]) -> Optional[str]:
@@ -484,7 +494,39 @@ def models_stop(req: StopRequest) -> Dict[str, Any]:
         return {"success": False, "error": "Ollama is not running or is unreachable."}
     except requests.RequestException as exc:
         return {"success": False, "error": f"Failed to stop '{model_id}': {exc}"}
-    return {"success": True, "backend": "ollama", "stopped": model_id, "message": f"'{model_id}' unloaded."}
+
+    # keep_alive=0 is an unload request, but Ollama's process inventory can lag
+    # behind the generate response. Confirm it disappeared before claiming the
+    # memory was released. A pending response lets the UI keep polling instead
+    # of flipping back to Deploy prematurely.
+    inventory_error = None
+    for attempt in range(8):
+        running, inventory_error = _ollama.list_running()
+        if inventory_error:
+            break
+        if not any(_matches_model_name(item.get("name"), model_id) for item in running):
+            return {
+                "success": True,
+                "backend": "ollama",
+                "status": "unloaded",
+                "confirmed": True,
+                "stopped": model_id,
+                "message": f"'{model_id}' unloaded.",
+            }
+        if attempt < 7:
+            time.sleep(0.2)
+    return {
+        "success": True,
+        "backend": "ollama",
+        "status": "pending",
+        "confirmed": False,
+        "stopped": model_id,
+        "message": (
+            f"Unload requested for '{model_id}', but running status could not be verified: {inventory_error}"
+            if inventory_error
+            else f"Unload requested for '{model_id}'; Ollama still reports it as loaded."
+        ),
+    }
 
 
 class DeleteRequest(BaseModel):

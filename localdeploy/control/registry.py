@@ -410,6 +410,19 @@ def _library_rows(query: str, limit: int) -> Tuple[List[Dict[str, Any]], Optiona
     rows = parse_ollama_library_search(resp.text)[: max(1, limit)]
     for row in rows:
         row["source"] = "ollama"
+        row["family"] = row["name"]
+        row["variants"] = [
+            {
+                "label": size,
+                "params_b": _params_from_token(size),
+                "pull_name": f"{row['name']}:{size}",
+                "quant": None,
+                "download_bytes": None,
+                "context": None,
+            }
+            for size in row.get("sizes") or []
+        ]
+        row["popularity"] = _parse_compact_count(row.get("pulls"))
     if not rows:
         return [], "No Ollama library results parsed — the page layout may have changed."
     return rows, None
@@ -442,6 +455,13 @@ def _hf_rows(query: str, limit: int) -> Tuple[List[Dict[str, Any]], Optional[str
                 continue
             downloads = getattr(model, "downloads", None)
             modified = getattr(model, "lastModified", None)
+            tags = [str(tag).lower() for tag in (getattr(model, "tags", None) or [])]
+            pipeline = str(getattr(model, "pipeline_tag", None) or "").lower()
+            params_b = _params_from_name(str(mid))
+            size_label = _format_params_token(params_b)
+            quant = _quant_from_name(str(mid))
+            capabilities = _catalog_capabilities(str(mid), tags, pipeline)
+            pull_name = f"hf.co/{mid}"
             rows.append(
                 {
                     "source": "huggingface",
@@ -449,13 +469,25 @@ def _hf_rows(query: str, limit: int) -> Tuple[List[Dict[str, Any]], Optional[str
                     "provider": "huggingface",
                     "publisher": str(mid).split("/", 1)[0] if "/" in str(mid) else None,
                     "description": None,
-                    "sizes": [],
-                    "capabilities": [],
+                    "family": str(mid),
+                    "sizes": [size_label] if size_label else [],
+                    "capabilities": capabilities,
                     "pulls": _fmt_count(downloads),
+                    "popularity": int(downloads) if isinstance(downloads, (int, float)) else None,
                     "updated": str(modified)[:10] if modified else None,
                     "pullable": True,
-                    "pull_name": f"hf.co/{mid}",
+                    "pull_name": pull_name,
                     "url": f"https://huggingface.co/{mid}",
+                    "variants": [
+                        {
+                            "label": size_label,
+                            "params_b": params_b,
+                            "pull_name": pull_name,
+                            "quant": quant,
+                            "download_bytes": None,
+                            "context": None,
+                        }
+                    ],
                 }
             )
         return rows, None
@@ -473,6 +505,63 @@ def _fmt_count(value: Any) -> Optional[str]:
     if n >= 1_000:
         return f"{n / 1_000:.1f}K"
     return str(int(n))
+
+
+def _parse_compact_count(value: Any) -> Optional[int]:
+    match = re.fullmatch(r"\s*([\d.]+)\s*([kmb]?)\s*", str(value or ""), re.I)
+    if not match:
+        return None
+    multiplier = {"": 1, "k": 1_000, "m": 1_000_000, "b": 1_000_000_000}[match.group(2).lower()]
+    return int(float(match.group(1)) * multiplier)
+
+
+def _params_from_token(value: Any) -> Optional[float]:
+    match = re.fullmatch(r"\s*(\d+(?:\.\d+)?)\s*([mb])\s*", str(value or ""), re.I)
+    if not match:
+        return None
+    number = float(match.group(1))
+    return number / 1000 if match.group(2).lower() == "m" else number
+
+
+def _params_from_name(value: str) -> Optional[float]:
+    matches = list(re.finditer(r"(?:^|[-_:/])(\d+(?:\.\d+)?)\s*([mb])(?:$|[-_.])", value, re.I))
+    if not matches:
+        return None
+    match = matches[-1]
+    number = float(match.group(1))
+    return number / 1000 if match.group(2).lower() == "m" else number
+
+
+def _format_params_token(params_b: Optional[float]) -> Optional[str]:
+    if params_b is None:
+        return None
+    if params_b < 1:
+        return f"{params_b * 1000:g}m"
+    return f"{params_b:g}b"
+
+
+def _quant_from_name(value: str) -> Optional[str]:
+    match = re.search(r"(?:^|[-_])(IQ\d+_[A-Z0-9_]+|Q\d+(?:_[A-Z0-9_]+)?)(?:$|[-_.])", value, re.I)
+    return match.group(1).upper() if match else None
+
+
+def _catalog_capabilities(name: str, tags: List[str], pipeline: str) -> List[str]:
+    haystack = " ".join([name.lower(), pipeline, *tags])
+    capabilities: List[str] = []
+    checks = (
+        ("vision", ("vision", "image-text-to-text", "multimodal")),
+        ("embedding", ("embedding", "feature-extraction", "sentence-similarity")),
+        ("code", ("code", "coder", "starcoder", "codestral")),
+        ("tools", ("tool-use", "function-calling", "tool calling")),
+    )
+    for label, needles in checks:
+        if any(needle in haystack for needle in needles):
+            capabilities.append(label)
+    if "vision" not in capabilities and re.search(r"(?:^|[-_/])vl(?:$|[-_/])", name, re.I):
+        capabilities.append("vision")
+    if "embedding" not in capabilities:
+        capabilities.insert(0, "chat")
+    return capabilities
 
 
 @router.post("/registry/search-models")

@@ -4,8 +4,8 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>LocalDeploy</title>
-    <link rel="icon" type="image/png" href="favicon.png?v=20260718-ui26" />
-    <link rel="stylesheet" href="styles.css?v=20260718-ui26" />
+    <link rel="icon" type="image/png" href="favicon.png?v=20260718-ui30" />
+    <link rel="stylesheet" href="styles.css?v=20260718-ui30" />
     <script>
       // Applied synchronously, before CSS renders, so a saved preference never flashes the other theme.
       try {
@@ -19,7 +19,7 @@
   <body>
     <header class="topbar">
       <button class="brand brand-button" id="brand-home" type="button" title="Go to setup">
-        <img class="brand-icon" src="logo.svg?v=20260718-ui26" alt="" />
+        <img class="brand-icon" src="logo.svg?v=20260718-ui30" alt="" />
         <span>LocalDeploy</span>
       </button>
       <nav class="tabs" role="tablist">
@@ -122,13 +122,73 @@
           </div>
 
           <div class="seg-panel hidden" data-seg-panel="hf">
-            <div class="row gap wrap" style="margin-bottom: 0.5rem">
+            <div class="row gap wrap catalog-search-row">
               <label class="field grow">
                 <span>Search all sources — results update as you type</span>
                 <input type="search" id="hf-search" placeholder="gemma, qwen, coder, vision… (blank = most popular)" />
               </label>
               <button class="btn primary" id="btn-hf-search" data-icon="⌕">Search</button>
             </div>
+            <div class="catalog-filter-bar" aria-label="Model catalog filters">
+              <label class="field compact-field">
+                <span>Source</span>
+                <select id="remote-source-filter">
+                  <option value="all">All sources</option>
+                  <option value="ollama">Ollama</option>
+                  <option value="huggingface">Hugging Face</option>
+                </select>
+              </label>
+              <label class="field compact-field">
+                <span>Parameters</span>
+                <select id="remote-size-filter">
+                  <option value="all">Any size</option>
+                  <option value="under4">Under 4B</option>
+                  <option value="4to8">4B to 8B</option>
+                  <option value="8to15">Over 8B to 15B</option>
+                  <option value="15to35">15B to 35B</option>
+                  <option value="over35">35B and larger</option>
+                  <option value="unknown">Unknown size</option>
+                </select>
+              </label>
+              <label class="field compact-field">
+                <span>Hardware fit <span class="help-tip" tabindex="0" role="button" aria-expanded="false" data-tooltip="Fit is estimated for the exact parameter-size row using the model fit budget above. It assumes a typical Q4 quant until you compare exact quants." aria-label="Hardware fit is estimated for each parameter size using a typical Q4 quant.">?</span></span>
+                <select id="remote-fit-filter">
+                  <option value="all">Any fit</option>
+                  <option value="ok">Fits GPU</option>
+                  <option value="soft">Tight or CPU</option>
+                  <option value="hard">Will not fit</option>
+                  <option value="unknown">Unknown</option>
+                </select>
+              </label>
+              <label class="field compact-field">
+                <span>Capability</span>
+                <select id="remote-cap-filter">
+                  <option value="all">Any capability</option>
+                  <option value="chat">Chat</option>
+                  <option value="vision">Vision</option>
+                  <option value="code">Code</option>
+                  <option value="embedding">Embeddings</option>
+                  <option value="tools">Tool calling</option>
+                </select>
+              </label>
+              <label class="field compact-field">
+                <span>Sort</span>
+                <select id="remote-sort">
+                  <option value="popularity-desc">Most popular</option>
+                  <option value="model-asc">Model A-Z</option>
+                  <option value="source-asc">Source</option>
+                  <option value="params-asc">Smallest first</option>
+                  <option value="params-desc">Largest first</option>
+                  <option value="updated-desc">Recently updated</option>
+                </select>
+              </label>
+              <label class="check catalog-installed-filter">
+                <input type="checkbox" id="remote-installed-filter" />
+                <span>Installed only</span>
+              </label>
+              <button class="btn compact" id="btn-remote-clear" type="button">Clear filters</button>
+            </div>
+            <div id="remote-active-filters" class="active-filter-row hidden" aria-live="polite"></div>
             <div id="catalog-source-status" class="provider-statuses"></div>
             <div id="updates-body" class="muted">One search covers the Ollama library and Hugging Face GGUF repos — the source shows as a column. Leave blank for the most popular models.</div>
             <p class="muted small" style="margin-top:0.6rem">Browse directly: <a href="https://ollama.com/search" target="_blank" rel="noopener">Ollama library ↗</a> · <a href="https://huggingface.co/models?library=gguf" target="_blank" rel="noopener">Hugging Face GGUF ↗</a></p>
@@ -179,6 +239,7 @@
             <div class="row gap" style="align-items: center">
               <span id="pull-progress-percent" class="run-percent">0%</span>
               <button class="btn danger compact" id="btn-pull-cancel" hidden>Cancel</button>
+              <button class="btn compact" id="btn-pull-dismiss" hidden>Dismiss</button>
             </div>
           </div>
           <div class="run-progress-track large"><div id="pull-progress-bar" class="run-progress-fill" style="width:0%" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-label="Pull progress"></div></div>
@@ -187,6 +248,7 @@
             <span id="pull-progress-stats" class="muted small"></span>
           </div>
           <div id="pull-progress-done" class="pull-progress-done hidden"></div>
+          <div id="pull-progress-actions" class="pull-progress-actions hidden"></div>
           <details class="pull-log-details">
             <summary>Raw log</summary>
             <pre id="pull-log" class="log"></pre>
@@ -403,6 +465,9 @@
               </select>
             </label>
             <button class="btn primary chat-session-action" id="btn-chat-session" type="button">Load model</button>
+            <div class="chat-session-progress hidden" id="chat-session-progress" aria-live="polite">
+              <span class="spin-inline"></span><span id="chat-session-progress-label">Loading model…</span>
+            </div>
           </div>
           <div class="chat-system-panel hidden" id="chat-system-panel">
             <label class="field grow">
@@ -414,8 +479,8 @@
           <footer class="chat-composer">
             <div id="chat-attachments" class="chat-attachments hidden"></div>
             <div class="chat-input-row">
-              <label class="btn file chat-attach" id="chat-attach-label" title="Attach images (vision profiles) or text files — file contents are added to your message">
-                📎
+              <label class="btn file chat-attach" id="chat-attach-label" title="Attach text files, or images when the loaded model supports vision">
+                <span aria-hidden="true">＋</span><span class="chat-attach-text">Attach</span>
                 <input type="file" id="chat-images" accept="image/png,image/jpeg,image/webp,image/gif,.txt,.md,.json,.csv,.py,.js,.ts,.html,.css,.yaml,.yml,.toml,.log,text/plain" multiple hidden />
               </label>
               <textarea id="chat-input" rows="1" spellcheck="false" placeholder="Load an installed model to start chatting" disabled></textarea>
@@ -638,6 +703,6 @@
 
     <div id="ui-tooltip" class="ui-tooltip" role="tooltip" aria-hidden="true"></div>
     <div id="toasts" class="toasts" aria-live="polite"></div>
-    <script src="app.js?v=20260718-ui26"></script>
+    <script src="app.js?v=20260718-ui30"></script>
   </body>
 </html>

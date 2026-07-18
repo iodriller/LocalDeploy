@@ -139,8 +139,8 @@ def test_unified_search_merges_sources_and_reports_partial_failures(monkeypatch)
                "description": None, "pulls": "1M", "updated": None, "pullable": True,
                "pull_name": "gemma3", "url": "https://ollama.com/library/gemma3",
                "provider": "ollama", "publisher": "ollama"}
-    monkeypatch.setattr(reg, "_library_rows", lambda q, l: ([dict(lib_row)], None))
-    monkeypatch.setattr(reg, "_hf_rows", lambda q, l: ([], "Hugging Face unreachable: boom"))
+    monkeypatch.setattr(reg, "_library_rows", lambda query, limit: ([dict(lib_row)], None))
+    monkeypatch.setattr(reg, "_hf_rows", lambda query, limit: ([], "Hugging Face unreachable: boom"))
     body = client.post("/registry/search-models", json={"query": "gemma"}).json()
     assert body["success"] is True
     assert body["online"] is True  # one source is enough
@@ -160,11 +160,21 @@ def test_unified_search_orders_library_before_hf(monkeypatch):
     hf = {"source": "huggingface", "name": "z-org/a-hf", "sizes": [], "capabilities": [], "description": None,
           "pulls": None, "updated": None, "pullable": True, "pull_name": "hf.co/z-org/a-hf",
           "url": "u", "provider": "huggingface", "publisher": "z-org"}
-    monkeypatch.setattr(reg, "_library_rows", lambda q, l: ([dict(lib)], None))
-    monkeypatch.setattr(reg, "_hf_rows", lambda q, l: ([dict(hf)], None))
+    monkeypatch.setattr(reg, "_library_rows", lambda query, limit: ([dict(lib)], None))
+    monkeypatch.setattr(reg, "_hf_rows", lambda query, limit: ([dict(hf)], None))
     body = client.post("/registry/search-models", json={"query": "a"}).json()
     assert [r["source"] for r in body["results"]] == ["ollama", "huggingface"]
     assert body["results"][1]["pull_name"] == "hf.co/z-org/a-hf"
+
+
+def test_catalog_metadata_extracts_size_quant_and_capabilities():
+    from localdeploy.control import registry as reg
+
+    assert reg._params_from_name("Qwen/Qwen3.5-4B-Instruct-Q4_K_M-GGUF") == 4
+    assert reg._params_from_name("org/tiny-270m-gguf") == pytest.approx(0.27)
+    assert reg._quant_from_name("model-4B-Q4_K_M-GGUF") == "Q4_K_M"
+    assert "vision" in reg._catalog_capabilities("org/model-vl", [], "image-text-to-text")
+    assert "embedding" in reg._catalog_capabilities("org/embed", [], "feature-extraction")
 
 
 # --- library tags (/registry/library-tags) ------------------------------------

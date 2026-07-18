@@ -179,6 +179,7 @@ def test_chat_only_lists_installed_models_and_tracks_load_delete(live_server, br
             }
         ],
         "running": [],
+        "stop_pending": 0,
     }
     stopped_models = []
     profiles = {
@@ -210,6 +211,10 @@ def test_chat_only_lists_installed_models_and_tracks_load_delete(live_server, br
     )
 
     def status_route(route):
+        if runtime["stop_pending"] > 0:
+            runtime["stop_pending"] -= 1
+            if runtime["stop_pending"] == 0:
+                runtime["running"] = []
         route.fulfill(
             json={
                 "success": True,
@@ -239,8 +244,16 @@ def test_chat_only_lists_installed_models_and_tracks_load_delete(live_server, br
 
     def stop_route(route):
         stopped_models.append(route.request.post_data_json["model"])
-        runtime["running"] = []
-        route.fulfill(json={"success": True, "stopped": "gemma3:4b", "message": "Unloaded gemma3:4b."})
+        runtime["stop_pending"] = 2
+        route.fulfill(
+            json={
+                "success": True,
+                "status": "pending",
+                "confirmed": False,
+                "stopped": "gemma3:4b",
+                "message": "Unload requested.",
+            }
+        )
 
     page.route("**/system/status", status_route)
     page.route("**/models/serve", serve_route)
@@ -277,6 +290,7 @@ def test_chat_only_lists_installed_models_and_tracks_load_delete(live_server, br
         sync_api.expect(tooltip).to_be_hidden()
 
         model_row.locator(".unload-installed-btn").click()
+        sync_api.expect(model_row.locator(".unload-installed-btn")).to_contain_text("Unloading")
         sync_api.expect(model_row.locator(".start-installed-btn")).to_have_text("▶ Deploy")
         assert stopped_models == ["gemma3:4b"]
 
@@ -286,5 +300,116 @@ def test_chat_only_lists_installed_models_and_tracks_load_delete(live_server, br
         page.get_by_role("tab", name="Chat").click()
         sync_api.expect(page.locator("#chat-hint")).to_contain_text("No local models are installed")
         assert page.locator("#chat-input").is_disabled()
+    finally:
+        page.close()
+
+
+def test_catalog_keeps_clicked_size_and_renders_json_inspector(live_server, browser):
+    page = browser.new_page(viewport={"width": 1365, "height": 900})
+    advisor_requests = []
+
+    page.route(
+        "**/registry/search-models",
+        lambda route: route.fulfill(
+            json={
+                "success": True,
+                "online": True,
+                "message": None,
+                "sources": {
+                    "ollama": {"online": True, "count": 1, "error": None},
+                    "huggingface": {"online": True, "count": 0, "error": None},
+                },
+                "results": [
+                    {
+                        "source": "ollama",
+                        "name": "qwen3.5",
+                        "family": "qwen3.5",
+                        "provider": "ollama",
+                        "publisher": "ollama",
+                        "description": "A family with several parameter sizes.",
+                        "sizes": ["0.8b", "4b", "122b"],
+                        "capabilities": ["chat", "tools"],
+                        "pulls": "2.5M",
+                        "popularity": 2_500_000,
+                        "updated": "today",
+                        "pullable": True,
+                        "pull_name": "qwen3.5",
+                        "url": "https://ollama.com/library/qwen3.5",
+                        "variants": [
+                            {"label": "0.8b", "params_b": 0.8, "pull_name": "qwen3.5:0.8b"},
+                            {"label": "4b", "params_b": 4, "pull_name": "qwen3.5:4b"},
+                            {"label": "122b", "params_b": 122, "pull_name": "qwen3.5:122b"},
+                        ],
+                    }
+                ],
+            }
+        ),
+    )
+    page.route(
+        "**/system/fit-batch",
+        lambda route: route.fulfill(
+            json={
+                "success": True,
+                "items": [
+                    {"params_b": 0.8, "required_gb": 1.3, "severity": "ok", "tier": "comfortable"},
+                    {"params_b": 4, "required_gb": 3.1, "severity": "ok", "tier": "comfortable"},
+                    {"params_b": 122, "required_gb": 72, "severity": "hard", "tier": "wont_fit"},
+                ],
+            }
+        ),
+    )
+
+    def advisor_route(route):
+        advisor_requests.append(route.request.post_data_json)
+        route.fulfill(
+            json={
+                "success": True,
+                "recommendation": "Q4_K_M fits comfortably.",
+                "free_vram_gb": 8,
+                "model": {"family": "qwen3.5", "params_b": 4, "context": 4096},
+                "variants": [
+                    {
+                        "quant": "Q4_K_M",
+                        "weights_gb": 2,
+                        "required_gb": 3.1,
+                        "margin_gb": 4.9,
+                        "severity": "ok",
+                        "tier": "comfortable",
+                        "quality": "good",
+                    }
+                ],
+                "note": "Estimate only.",
+                "tags_url": "https://ollama.com/library/qwen3.5/tags",
+            }
+        )
+
+    page.route("**/system/quant-advisor", advisor_route)
+    page.route(
+        "**/registry/library-tags",
+        lambda route: route.fulfill(json={"success": True, "online": True, "family": "qwen3.5", "tags": []}),
+    )
+    try:
+        page.goto(f"{live_server}/ui", wait_until="domcontentloaded")
+        page.locator('.seg-btn[data-seg="hf"]').click()
+        sync_api.expect(page.locator("#updates-body tbody tr")).to_have_count(3)
+        page.locator("#remote-size-filter").select_option("4to8")
+        sync_api.expect(page.locator("#updates-body tbody tr")).to_have_count(1)
+        sync_api.expect(page.locator("#updates-body tbody tr")).to_contain_text("4B")
+        page.locator("#updates-body .quant-jump-btn").click()
+        sync_api.expect(page.locator("#quant-model")).to_have_value("qwen3.5:4b")
+        page.wait_for_function("document.querySelector('#quant-body')?.textContent.includes('4B parameters')")
+        assert advisor_requests[-1]["params_b"] == 4
+
+        page.evaluate(
+            """() => {
+              const node = document.createElement('div');
+              node.id = 'json-test-node';
+              document.body.appendChild(node);
+              renderChatText(node, '{"model":"qwen3.5","scores":[1,2,3]}');
+            }"""
+        )
+        sync_api.expect(page.locator("#json-test-node .chat-json")).to_be_visible()
+        page.locator("#json-test-node").get_by_role("button", name="Raw").click()
+        sync_api.expect(page.locator("#json-test-node .json-raw")).to_contain_text('"scores"')
     finally:
         page.close()
