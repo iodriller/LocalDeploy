@@ -122,9 +122,21 @@ def get_config_path() -> Path:
 
 
 def load_config() -> Dict[str, Any]:
+    """Load the live config, or a minimal empty one when none exists yet.
+
+    A fresh clone deliberately starts with zero profiles: config.json mirrors
+    what the user actually has, and pulling a model auto-creates its profile.
+    (config.example.json is documentation/reference only — falling back to it
+    here would show a dozen models the user never pulled.)
+    """
     path = get_config_path()
     if not path.exists():
-        path = APP_DIR / "config.example.json"
+        return {
+            "version": 1,
+            "default_profile": None,
+            "global_defaults": {"safe_mode": True, "stream": False, "require_gpu_only": False},
+            "profiles": {},
+        }
     with path.open("r", encoding="utf-8") as handle:
         return json.load(handle)
 
@@ -244,6 +256,11 @@ def resolve_profile(
     require_enabled: bool = True,
 ) -> Tuple[Optional[str], Optional[Dict[str, Any]], Optional[str]]:
     profiles = config.get("profiles", {})
+    if not profiles:
+        return None, None, (
+            "No model profiles configured yet. Pull a model first (UI → Get a model, "
+            "or POST /models/pull) — a profile is created automatically."
+        )
     profile_name = (
         request_data.get("profile")
         or os.getenv("DEFAULT_MODEL_PROFILE")
@@ -787,6 +804,14 @@ def sanitize_profiles(config: Dict[str, Any]) -> Dict[str, Any]:
     for name, profile in config.get("profiles", {}).items():
         item = dict(profile)
         item["warning"] = profile_warning(item)
+        # llama.cpp profiles reference a local GGUF path the browser can't
+        # verify; report file presence so the UI can flag/hide dead profiles
+        # the same way it does for un-pulled Ollama models.
+        if str(item.get("backend", "")).lower() == "llamacpp":
+            try:
+                item["model_file_exists"] = Path(str(item.get("model_id") or "")).is_file()
+            except OSError:
+                item["model_file_exists"] = False
         sanitized[name] = item
     return sanitized
 

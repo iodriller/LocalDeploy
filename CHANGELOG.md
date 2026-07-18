@@ -2,6 +2,42 @@
 
 All notable changes to this project should be documented here.
 
+## 0.4.0 - 2026-07-17
+
+Streamlining for the public launch: the app now only ever shows models that are
+actually on your machine.
+
+### No more phantom models
+
+- **Fresh installs start truly empty.** `load_config()` no longer falls back to
+  `config.example.json` when `config.json` is missing (that fallback made a fresh
+  clone list a dozen sample profiles for models that were never pulled — most
+  visibly on macOS/Linux, where `start.sh` doesn't seed a config). A missing
+  config now yields zero profiles; pulling a model auto-creates its profile.
+  `config.example.json` remains as field-reference documentation and a test fixture.
+- **`.env.example` no longer pins `DEFAULT_MODEL_PROFILE`.** The pinned sample value
+  made `/chat` fail with "Unknown profile" on a fresh install until that exact model
+  was pulled, even after other models were. The config's `default_profile`
+  (auto-set on first pull) is now used.
+- **Clear first-run error.** With no profiles configured, `/chat` and friends now say
+  "pull a model first" instead of "Unknown profile 'gemma3_4b_ollama_safe'".
+- **UI hides profiles whose model isn't on the machine.** The benchmark model picker
+  hides them by default behind a "Show N hidden (model not pulled)" toggle, the
+  profile dropdowns annotate them, and a new **Remove not-pulled profiles** button
+  (Advanced → All run profiles) deletes them in one click. For llama.cpp profiles the
+  server now reports whether the GGUF file exists (`model_file_exists` on `/profiles`),
+  so dead file paths get the same treatment as un-pulled Ollama models.
+
+### Fresh coat of paint
+
+- New logo (`web/logo.svg`), regenerated favicon, and a repo social banner
+  (`docs/assets/banner.png`).
+- README rebuilt around an animated demo GIF (`docs/assets/demo.gif`), captured by the
+  new `scripts/capture_demo_gif.py`; screenshots now ship in dark (default) and light
+  themes via `scripts/capture_screenshots.py`.
+- The web asset cache-bust test no longer pins the exact `?v=` token, so bumping asset
+  versions can't silently break CI.
+
 ## 0.3.0 - 2026-07-08
 
 First public release.

@@ -100,6 +100,11 @@ def upsert_profile(req: UpsertProfileRequest) -> Dict[str, Any]:
         if key in _EDITABLE_FIELDS:
             prof[key] = value
 
+    # Same rule as the pull auto-create path: the first profile ever created
+    # becomes the default, so /chat works without further setup.
+    if not config.get("default_profile"):
+        config["default_profile"] = name
+
     err = write_config_atomic(config, path)
     if err:
         return {"success": False, "error": err}
