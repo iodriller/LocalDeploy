@@ -38,11 +38,16 @@ def test_no_smart_quotes_as_js_delimiters() -> None:
 
 
 def test_ui_assets_are_cache_busted_and_no_favicon_404() -> None:
+    """Every static asset must carry one shared ?v= token (a stale-cache guard),
+    without pinning the token's value so a version bump doesn't break the test."""
+    import re
+
     html = (WEB_DIR / "index.html").read_text(encoding="utf-8")
-    assert 'href="styles.css?v=20260711-ui18"' in html
-    assert 'src="app.js?v=20260711-ui18"' in html
-    assert 'rel="icon" type="image/png" href="favicon.png?v=20260711-ui18"' in html
+    versions = set(re.findall(r'(?:styles\.css|app\.js|favicon\.png|logo\.svg)\?v=([\w-]+)', html))
+    assert len(versions) == 1, f"expected one shared cache-bust token, found: {sorted(versions)}"
+    assert 'rel="icon" type="image/png" href="favicon.png?v=' in html
     assert (WEB_DIR / "favicon.png").is_file()
+    assert (WEB_DIR / "logo.svg").is_file()
 
 
 def test_benchmark_workspace_v2_labels_are_present() -> None:

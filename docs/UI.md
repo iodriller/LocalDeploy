@@ -66,6 +66,11 @@ The **Model fit budget** is auto-filled from the hardware probe and is used by i
 badges, saved-profile scans, Hugging Face search, fit checks, and the pull gate. You can override it
 to test against a different card or current free VRAM.
 
+`config.json` mirrors what is actually on your machine: pulling a model auto-creates its profile.
+Profiles whose model is gone (never pulled, or deleted outside the UI) are annotated everywhere and
+can be removed in one click with **Advanced → All run profiles → Remove not-pulled profiles**. For
+llama.cpp profiles the server checks whether the GGUF file still exists on disk.
+
 ## Tab 2 — Benchmark & Compare
 
 The benchmark tab is a local experiment workspace. It keeps run records in browser
@@ -77,7 +82,9 @@ The benchmark tab is a local experiment workspace. It keeps run records in brows
   (`POST /benchmark/validate`).
 - **Benchmark runner** replaces the old single-profile form. Select one or more saved profiles as
   chips, review the built-in/custom test-set summary, choose **Auto**, **CPU**, **GPU**, or
-  **CPU + GPU**, then click **Run benchmark suite**.
+  **CPU + GPU**, then click **Run benchmark suite**. Profiles whose model isn't on the machine are
+  hidden by default behind a "Show N hidden (model not pulled)" toggle, so the picker only offers
+  models that can actually run.
 - **Run queue** creates one row per model/device variant and runs sequentially by default to avoid
   VRAM contention. Each row shows queued/deploying/running/finished/failed/stopped state, current
   test progress, elapsed time, and a distinct visual treatment for active versus finished work.

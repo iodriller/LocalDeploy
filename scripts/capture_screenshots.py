@@ -35,13 +35,34 @@ def _free_port() -> int:
 
 
 def _seed_runs() -> str:
+    """Synthetic-but-plausible completed runs: 3 models x 5 categories, so the
+    leaderboard, heatmap, and scatter render populated instead of near-empty."""
     profiles = [
-        ("gemma3_4b_ollama_safe", "gemma3:4b", 0.93, 1.8, 42.0),
-        ("qwen3vl_8b_ollama", "qwen3-vl:8b-instruct", 0.97, 3.1, 27.0),
-        ("llama32_3b_ollama", "llama3.2:3b", 0.88, 1.1, 55.0),
+        # (profile, model, per-category accuracy, base latency s, tok/s)
+        ("qwen3vl_8b_ollama", "qwen3-vl:8b-instruct",
+         {"reasoning": 0.95, "math": 0.90, "code": 0.88, "structured_json": 0.93, "summarization": 0.91}, 3.1, 27.0),
+        ("gemma3_4b_ollama_safe", "gemma3:4b",
+         {"reasoning": 0.86, "math": 0.74, "code": 0.71, "structured_json": 0.88, "summarization": 0.90}, 1.8, 42.0),
+        ("llama32_3b_ollama", "llama3.2:3b",
+         {"reasoning": 0.78, "math": 0.61, "code": 0.66, "structured_json": 0.83, "summarization": 0.85}, 1.1, 55.0),
     ]
     runs = []
-    for i, (profile, model, acc, latency, tps) in enumerate(profiles):
+    for i, (profile, model, cats, latency, tps) in enumerate(profiles):
+        tests = []
+        for j, (cat, acc) in enumerate(cats.items()):
+            for k in range(2):
+                accuracy = round(min(1.0, max(0.0, acc + (0.04 if k else -0.03))), 2)
+                tests.append(
+                    {
+                        "name": f"{cat}_{k + 1}",
+                        "category": cat,
+                        "success": accuracy >= 0.5,
+                        "accuracy": accuracy,
+                        "elapsed_seconds": round(latency * (1 + 0.15 * ((j + k) % 3)), 2),
+                        "approx_tokens_per_second": round(tps * (1 - 0.05 * (j % 2)), 1),
+                    }
+                )
+        passed = sum(1 for t in tests if t["success"])
         runs.append(
             {
                 "id": f"run-{i}",
@@ -49,22 +70,13 @@ def _seed_runs() -> str:
                 "profile": profile,
                 "modelId": model,
                 "source": "restored-history",
-                "tests": [
-                    {
-                        "name": "reasoning_1",
-                        "category": "reasoning",
-                        "success": True,
-                        "accuracy": acc,
-                        "elapsed_seconds": latency,
-                        "approx_tokens_per_second": tps,
-                    }
-                ],
+                "tests": tests,
                 "summary": {
-                    "tests": 1,
-                    "passed": 1,
-                    "avg_accuracy": acc,
-                    "avg_latency_s": latency,
-                    "avg_tokens_per_second": tps,
+                    "tests": len(tests),
+                    "passed": passed,
+                    "avg_accuracy": round(sum(t["accuracy"] for t in tests) / len(tests), 3),
+                    "avg_latency_s": round(sum(t["elapsed_seconds"] for t in tests) / len(tests), 2),
+                    "avg_tokens_per_second": round(sum(t["approx_tokens_per_second"] for t in tests) / len(tests), 1),
                 },
             }
         )
@@ -105,18 +117,25 @@ def main() -> int:
                 print(f"chromium not available: run 'python -m playwright install chromium' ({exc})")
                 return 1
             try:
-                page = browser.new_page(viewport={"width": 1440, "height": 960})
-                page.add_init_script(
-                    f'window.localStorage.setItem("localdeploy.benchmarkRuns.v1", {json.dumps(_seed_runs())});'
-                )
-                page.goto(f"{base}/ui", wait_until="networkidle")
-                page.screenshot(path=str(OUT_DIR / "setup-deploy.png"))
-                print(f"wrote {OUT_DIR / 'setup-deploy.png'}")
+                def capture(theme: str, shots: list[tuple[str, str]]) -> None:
+                    """Screenshot each (tab, filename) in the given UI theme."""
+                    page = browser.new_page(viewport={"width": 1440, "height": 960})
+                    page.add_init_script(
+                        f'window.localStorage.setItem("localdeploy.benchmarkRuns.v1", {json.dumps(_seed_runs())});'
+                        f'window.localStorage.setItem("localdeploy_theme", "{theme}");'
+                    )
+                    page.goto(f"{base}/ui", wait_until="networkidle")
+                    for tab, filename in shots:
+                        if tab:
+                            page.get_by_role("tab", name=tab).click()
+                            page.wait_for_timeout(400)
+                        page.screenshot(path=str(OUT_DIR / filename))
+                        print(f"wrote {OUT_DIR / filename}")
+                    page.close()
 
-                page.get_by_role("tab", name="Benchmark & Compare").click()
-                page.wait_for_timeout(300)
-                page.screenshot(path=str(OUT_DIR / "benchmark-compare.png"))
-                print(f"wrote {OUT_DIR / 'benchmark-compare.png'}")
+                # Dark is the app's default look; one light shot shows the toggle.
+                capture("dark", [("", "setup-deploy.png"), ("Benchmark & Compare", "benchmark-compare.png")])
+                capture("light", [("", "setup-deploy-light.png")])
             finally:
                 browser.close()
     finally:

@@ -5,3 +5,5 @@ httpx>=0.27
 # browser once:  python -m playwright install chromium
 # The UI tests skip cleanly if Playwright or its browser isn't present.
 playwright>=1.40
+# Screenshot/GIF tooling (scripts/capture_screenshots.py, scripts/capture_demo_gif.py)
+pillow>=10.0
