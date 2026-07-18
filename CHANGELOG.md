@@ -9,6 +9,16 @@ All notable changes to this project should be documented here.
 - Record repeated-run variance and benchmark provenance: LocalDeploy/Ollama versions, full model digest, quant, context, initial warm/cold state, native backend metrics, and hardware snapshot.
 - Add OpenAI-compatible tool calling, `/v1/responses`, and `/v1/embeddings` with float/base64 output. LocalDeploy returns tool calls but never executes them.
 - Clarify the single-user local-only security boundary: one shared token, no TLS, no multi-user isolation, and no claim of internet-facing readiness.
+- **Project layout**: `api_server.py`, `benchmark.py`, `chat_cli.py`, and `compare_models.py`
+  moved into the `localdeploy` package (`localdeploy/server.py` etc.); the root files remain
+  as alias shims (`sys.modules` aliasing), so `python api_server.py`, `uvicorn api_server:app`,
+  and every existing import keep working unchanged. `pytest.ini` folded into `pyproject.toml`.
+- **Clean-machine startup hardening**: a double-clickable `start.bat` (execution-policy safe,
+  works from a plain ZIP download), dependencies re-install automatically when
+  `requirements.txt` changes after a `git pull`, `start.ps1` heals a stale API from an older
+  checkout instead of declaring it "already running" (plus a `-Restart` switch), Ollama startup
+  is polled rather than a fixed sleep, and `start.sh` now gives actionable guidance when
+  Python 3.10+/venv/Ollama are missing.
 
 ## 0.4.0 - 2026-07-17
 

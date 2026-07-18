@@ -2,11 +2,13 @@
 # Ollama if installed, launches the API in the background, and opens the UI.
 #   -Foreground   run the API in this terminal with live logs (no browser)
 #   -NoBrowser    start in the background without opening the UI
+#   -Restart      stop any running LocalDeploy API first, then start fresh
 param(
     [switch]$Foreground,
     [switch]$NoBrowser,
     [switch]$SkipInstall,
-    [switch]$SkipLlamaCpp
+    [switch]$SkipLlamaCpp,
+    [switch]$Restart
 )
 
 $ErrorActionPreference = "Stop"
@@ -247,6 +249,29 @@ $healthUrl = "$apiBaseUrl/health"
 $uiUrl = "$apiBaseUrl/ui"
 $docsUrl = "$apiBaseUrl/docs"
 
+function Install-Requirements {
+    param([string]$PythonExe)
+    Write-Step "Installing Python dependencies (this can take a minute on first run)"
+    & $PythonExe -m pip install --upgrade pip --quiet
+    & $PythonExe -m pip install --quiet -r requirements.txt
+    if ($LASTEXITCODE -ne 0) {
+        throw ("Dependency install failed. Check your internet connection (or proxy) and re-run this script. " +
+               "The exact pip error is printed above.")
+    }
+    (Get-FileHash -LiteralPath ".\requirements.txt" -Algorithm SHA256).Hash |
+        Set-Content -LiteralPath ".\.venv\requirements.sha256"
+}
+
+function Test-RequirementsCurrent {
+    # True when the venv was installed from the requirements.txt we have now.
+    # Catches the "git pull added a dependency" case that used to end in a raw
+    # ImportError, because deps only installed when .venv was missing.
+    $marker = ".\.venv\requirements.sha256"
+    if (-not (Test-Path -LiteralPath $marker)) { return $false }
+    $current = (Get-FileHash -LiteralPath ".\requirements.txt" -Algorithm SHA256).Hash
+    return (Get-Content -LiteralPath $marker -ErrorAction SilentlyContinue) -eq $current
+}
+
 $python = ".\.venv\Scripts\python.exe"
 if (-not (Test-Path -LiteralPath $python)) {
     if ($SkipInstall) {
@@ -262,9 +287,11 @@ if (-not (Test-Path -LiteralPath $python)) {
         if (-not (Test-Path -LiteralPath $python)) {
             throw "Virtual environment creation failed. Verify your Python installation and try again."
         }
-        & $python -m pip install --upgrade pip
-        & $python -m pip install -r requirements.txt
+        Install-Requirements -PythonExe $python
     }
+}
+elseif (-not $SkipInstall -and -not (Test-RequirementsCurrent)) {
+    Install-Requirements -PythonExe $python
 }
 
 $ollama = Find-Ollama
@@ -277,15 +304,52 @@ if (-not $ollama) {
 elseif (-not (Test-Http "http://localhost:11434/api/tags" -Timeout 5)) {
     Write-Step "Starting Ollama"
     Start-Process -FilePath $ollama -ArgumentList "serve" -WindowStyle Hidden
-    Start-Sleep -Seconds 3
+    # Poll instead of a fixed sleep: first launch can take a while.
+    for ($i = 0; $i -lt 20; $i++) {
+        Start-Sleep -Milliseconds 750
+        if (Test-Http "http://localhost:11434/api/tags" -Timeout 2) { break }
+    }
+    if (-not (Test-Http "http://localhost:11434/api/tags" -Timeout 2)) {
+        Write-Warning "Ollama has not answered yet. The UI will show its status; pulls will work once it's up."
+    }
 }
 
 if (-not $SkipLlamaCpp) {
     & "$PSScriptRoot\start_llamacpp.ps1" -Optional
 }
 
-if (Test-Http $healthUrl -Timeout 5) {
-    Write-Step "LocalDeploy API is already running"
+function Stop-RunningApi {
+    # Prefer the PID file the background launcher writes; fall back to whoever
+    # holds the port.
+    $pidFile = ".\logs\api_server.pid"
+    if (Test-Path -LiteralPath $pidFile) {
+        $apiPid = Get-Content -LiteralPath $pidFile -ErrorAction SilentlyContinue
+        if ($apiPid) { Stop-Process -Id $apiPid -Force -ErrorAction SilentlyContinue }
+        Remove-Item -LiteralPath $pidFile -Force -ErrorAction SilentlyContinue
+    }
+    Clear-ZombieOnPort $healthUrl
+    Start-Sleep -Milliseconds 400
+}
+
+$alreadyRunning = Test-Http $healthUrl -Timeout 5
+if ($alreadyRunning -and $Restart) {
+    Write-Step "Restarting LocalDeploy API (-Restart)"
+    Stop-RunningApi
+    $alreadyRunning = $false
+}
+elseif ($alreadyRunning -and
+        ((Env-Value -EnvFile $envFile -Name "ENABLE_WEB_UI" -Default "true") -ne "false") -and
+        -not (Test-Http $uiUrl -Timeout 5)) {
+    # /health answers but /ui errors: a server from an older checkout is still
+    # running (e.g. after a git pull moved files). Heal it instead of opening a
+    # broken page and telling the user everything is fine.
+    Write-Warning "A LocalDeploy API is running but its UI is broken (stale process from an older version). Restarting it."
+    Stop-RunningApi
+    $alreadyRunning = $false
+}
+
+if ($alreadyRunning) {
+    Write-Step "LocalDeploy API is already running (use -Restart to force a fresh start)"
 }
 elseif ($Foreground) {
     Write-Step "Starting LocalDeploy API in the foreground"

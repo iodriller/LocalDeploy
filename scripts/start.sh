@@ -7,16 +7,46 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 PYTHON="${PYTHON:-python3}"
+if ! command -v "$PYTHON" >/dev/null 2>&1; then
+  echo "ERROR: Python 3 was not found." >&2
+  echo "  macOS:          brew install python  (or https://www.python.org/downloads/)" >&2
+  echo "  Debian/Ubuntu:  sudo apt install python3 python3-venv" >&2
+  echo "  Fedora:         sudo dnf install python3" >&2
+  echo "Then re-run this script." >&2
+  exit 1
+fi
+if ! "$PYTHON" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)'; then
+  echo "ERROR: Python 3.10+ is required; found $("$PYTHON" --version 2>&1)." >&2
+  exit 1
+fi
+
 if [ ! -d .venv ]; then
   echo "[start] creating virtualenv (.venv) ..."
-  "$PYTHON" -m venv .venv
+  "$PYTHON" -m venv .venv || {
+    echo "ERROR: could not create a virtualenv. On Debian/Ubuntu: sudo apt install python3-venv" >&2
+    exit 1
+  }
 fi
 # shellcheck disable=SC1091
 . .venv/bin/activate
 
-echo "[start] installing dependencies ..."
-pip install --quiet --upgrade pip
-pip install --quiet -r requirements.txt
+# Reinstall only when requirements.txt changed since the last install, so a
+# git pull that adds a dependency can't leave the venv broken.
+REQ_HASH="$( (sha256sum requirements.txt 2>/dev/null || shasum -a 256 requirements.txt) | cut -d' ' -f1 )"
+if [ "$(cat .venv/requirements.sha256 2>/dev/null)" != "$REQ_HASH" ]; then
+  echo "[start] installing dependencies (first run can take a minute) ..."
+  pip install --quiet --upgrade pip
+  pip install --quiet -r requirements.txt || {
+    echo "ERROR: dependency install failed. Check your internet connection and re-run." >&2
+    exit 1
+  }
+  echo "$REQ_HASH" > .venv/requirements.sha256
+fi
+
+if ! command -v ollama >/dev/null 2>&1 && ! curl -fsS --max-time 2 "${OLLAMA_BASE_URL:-http://127.0.0.1:11434}/api/tags" >/dev/null 2>&1; then
+  echo "[start] NOTE: Ollama was not found. Install it from https://ollama.com/download —"
+  echo "        the UI will start anyway and shows Ollama's status on the Setup tab."
+fi
 
 # Seed local environment defaults if absent. The live config starts empty and
 # is created when the first model profile is saved.
