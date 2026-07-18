@@ -117,3 +117,51 @@ def test_endpoint_survives_network_failure(monkeypatch):
     assert body["success"] is True
     assert body["online"] is False
     assert "Could not reach ollama.com" in body["message"]
+
+
+# --- unified search (/registry/search-models) --------------------------------
+
+
+def test_unified_search_respects_offline_mode(monkeypatch):
+    monkeypatch.setenv("OFFLINE", "true")
+    body = client.post("/registry/search-models", json={"query": "gemma"}).json()
+    assert body["success"] is True
+    assert body["online"] is False
+    assert body["results"] == []
+    assert "no egress" in body["message"]
+
+
+def test_unified_search_merges_sources_and_reports_partial_failures(monkeypatch):
+    from localdeploy.control import registry as reg
+
+    monkeypatch.delenv("OFFLINE", raising=False)
+    lib_row = {"source": "ollama", "name": "gemma3", "sizes": ["4b"], "capabilities": [],
+               "description": None, "pulls": "1M", "updated": None, "pullable": True,
+               "pull_name": "gemma3", "url": "https://ollama.com/library/gemma3",
+               "provider": "ollama", "publisher": "ollama"}
+    monkeypatch.setattr(reg, "_library_rows", lambda q, l: ([dict(lib_row)], None))
+    monkeypatch.setattr(reg, "_hf_rows", lambda q, l: ([], "Hugging Face unreachable: boom"))
+    body = client.post("/registry/search-models", json={"query": "gemma"}).json()
+    assert body["success"] is True
+    assert body["online"] is True  # one source is enough
+    assert [r["name"] for r in body["results"]] == ["gemma3"]
+    assert body["sources"]["ollama"]["online"] is True
+    assert body["sources"]["huggingface"]["online"] is False
+    assert "Partial results" in body["message"]
+
+
+def test_unified_search_orders_library_before_hf(monkeypatch):
+    from localdeploy.control import registry as reg
+
+    monkeypatch.delenv("OFFLINE", raising=False)
+    lib = {"source": "ollama", "name": "a-lib", "sizes": [], "capabilities": [], "description": None,
+           "pulls": None, "updated": None, "pullable": True, "pull_name": "a-lib",
+           "url": "u", "provider": "ollama", "publisher": "ollama"}
+    hf = {"source": "huggingface", "name": "z-org/a-hf", "sizes": [], "capabilities": [], "description": None,
+          "pulls": None, "updated": None, "pullable": True, "pull_name": "hf.co/z-org/a-hf",
+          "url": "u", "provider": "huggingface", "publisher": "z-org"}
+    monkeypatch.setattr(reg, "_library_rows", lambda q, l: ([dict(lib)], None))
+    monkeypatch.setattr(reg, "_hf_rows", lambda q, l: ([dict(hf)], None))
+    body = client.post("/registry/search-models", json={"query": "a"}).json()
+    assert [r["source"] for r in body["results"]] == ["ollama", "huggingface"]
+    assert body["results"][1]["pull_name"] == "hf.co/z-org/a-hf"

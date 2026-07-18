@@ -62,6 +62,8 @@ class ChatRequest(BaseModel):
     profile: Optional[str] = None
     model: Optional[str] = None
     backend: Optional[str] = None
+    # Ollama keep-alive for this request (e.g. "5m", "1h", "-1" = until unloaded).
+    keep_alive: Optional[str] = None
     prompt: str = ""
     system_prompt: Optional[str] = None
     temperature: Optional[float] = None
@@ -117,6 +119,7 @@ class OpenAIChatCompletionRequest(BaseModel):
     stream: bool = False
     response_format: Optional[Dict[str, Any]] = None
     profile: Optional[str] = None
+    keep_alive: Optional[str] = None
     context_limit: Optional[int] = None
     safe_mode: bool = True
     allow_clamp: bool = False
@@ -426,6 +429,7 @@ def openai_request_to_local_payload(request_model: OpenAIChatCompletionRequest) 
         "allow_clamp": request_model.allow_clamp,
         "timeout_seconds": request_model.timeout_seconds,
         "response_format": request_model.response_format,
+        "keep_alive": request_model.keep_alive,
         "messages": [model_dump_compat(message) for message in request_model.messages],
         "tools": request_model.tools,
         "tool_choice": request_model.tool_choice,
@@ -612,6 +616,7 @@ def prepare_request(
         "estimated_prompt_tokens": estimated_prompt_tokens,
         "images_base64": data.get("images_base64") or [],
         "response_format": response_format,
+        "keep_alive": data.get("keep_alive"),
         "messages": data.get("messages") or [],
         "tools": data.get("tools") or [],
         "tool_choice": data.get("tool_choice"),

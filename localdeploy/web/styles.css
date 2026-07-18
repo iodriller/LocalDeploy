@@ -238,7 +238,16 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--a
   cursor: pointer;
   font-size: 0.88rem;
   white-space: nowrap;
+  /* Uniform shape: emoji/icon labels center instead of sitting on odd baselines. */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.3rem;
+  line-height: 1.2;
+  min-height: 2.15rem;
+  vertical-align: middle;
 }
+.btn.compact { min-height: 1.7rem; }
 .btn[data-icon] {
   display: inline-flex;
   align-items: center;
@@ -927,6 +936,56 @@ table.results td.num, table.results th.num { text-align: right; font-variant-num
 @media (max-width: 560px) {
   .catalog-result-row { grid-template-columns: minmax(0, 1fr); }
   .catalog-result-row > .btn { justify-self: start; }
+}
+
+/* --- Unified catalog table ------------------------------------------------ */
+.catalog-table td { vertical-align: middle; }
+.catalog-model-cell { max-width: 34ch; }
+.catalog-result-title { display: flex; align-items: center; gap: 0.4rem; font-weight: 600; }
+.catalog-description { max-width: 34ch; }
+.catalog-caps { display: flex; gap: 0.3rem; flex-wrap: wrap; margin-top: 0.2rem; }
+.catalog-sizes { max-width: 16rem; }
+.catalog-sizes .btn { margin: 0.1rem 0.15rem 0.1rem 0; }
+.catalog-actions { white-space: nowrap; }
+.catalog-actions .btn { margin-left: 0.25rem; }
+.badge.src-ollama { border-color: rgba(52, 211, 153, 0.35); }
+.badge.src-hf { border-color: rgba(251, 191, 36, 0.35); }
+.exact-pull-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  margin-bottom: 0.5rem;
+  border: 1px dashed rgba(79, 134, 247, 0.45);
+  border-radius: 8px;
+  background: rgba(79, 134, 247, 0.06);
+}
+
+/* --- Chat file chips + markdown-lite --------------------------------------- */
+.chat-file-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.3rem 0.55rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 0.8rem;
+  background: var(--panel-2);
+}
+.chat-file-chip button { border: 0; background: none; color: var(--muted); cursor: pointer; font-size: 0.9rem; }
+.chat-file-chip button:hover { color: var(--bad); }
+.chat-attach { width: 2.5rem; padding: 0; justify-content: center; }
+.chat-bubble-text .md-h1, .chat-bubble-text .md-h2, .chat-bubble-text .md-h3 { font-weight: 700; margin: 0.45rem 0 0.15rem; }
+.chat-bubble-text .md-h1 { font-size: 1.05rem; }
+.chat-bubble-text .md-h2 { font-size: 0.98rem; }
+.chat-bubble-text .md-li { padding-left: 0.9rem; }
+.chat-bubble-text .md-gap { height: 0.45rem; }
+.chat-bubble-text code {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0 0.25rem;
+  font-size: 0.84em;
 }
 
 /* --- Serving card: API snippet ----------------------------------------- */

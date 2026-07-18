@@ -165,7 +165,7 @@ def main() -> int:
 
     video_path: Path | None = None
     try:
-        with sync_playwright() as p, tempfile.TemporaryDirectory() as tmp:
+        with sync_playwright() as p, tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             browser = p.chromium.launch()
             context = browser.new_context(
                 viewport=VIEWPORT,
@@ -201,10 +201,15 @@ def main() -> int:
             if _glide(page, '.tab[data-tab="chat"]'):
                 page.locator('.tab[data-tab="chat"]').click()
                 page.wait_for_timeout(900)
-                chat_profile = _best_chat_profile(base)
-                if chat_profile:
-                    page.select_option("#chat-profile", chat_profile)
-                if not chat_profile:
+                chat_model = _best_chat_profile(base)
+                if chat_model:
+                    page.select_option("#chat-model", chat_model)
+                    page.click("#btn-chat-session")
+                    try:
+                        page.wait_for_selector(".chat-session-state.ready", timeout=120000)
+                    except Exception:
+                        chat_model = None
+                if not chat_model:
                     raise RuntimeError  # handled below: skip the chat scene cleanly
                 page.locator("#chat-input").click()
                 page.keyboard.type("In one short sentence: why run AI models locally?", delay=16)

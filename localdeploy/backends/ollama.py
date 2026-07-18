@@ -178,6 +178,8 @@ def call_ollama_detailed(prepared: Dict[str, Any]) -> Dict[str, Any]:
         "stream": False,
         "options": options_payload(prepared),
     }
+    if prepared.get("keep_alive"):
+        payload["keep_alive"] = prepared["keep_alive"]
     tools = _selected_tools(prepared)
     if tools:
         payload["tools"] = tools
@@ -232,6 +234,8 @@ def stream_ollama_events(prepared: Dict[str, Any]) -> Iterator[Dict[str, Any]]:
         "stream": True,
         "options": options_payload(prepared),
     }
+    if prepared.get("keep_alive"):
+        payload["keep_alive"] = prepared["keep_alive"]
     tools = _selected_tools(prepared)
     if tools:
         payload["tools"] = tools

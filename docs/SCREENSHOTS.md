@@ -13,6 +13,13 @@ The whole UI also ships with a light theme (toggle in the top bar):
 
 ![Setup & Deploy tab (light)](screenshots/setup-deploy-light.png)
 
+## Model catalog
+
+One search across the Ollama library and Hugging Face GGUF repos — source is a column,
+size chips are fit-checked pulls, and ⚖ jumps to the quant advisor pre-filled.
+
+![Model catalog](screenshots/model-catalog.png)
+
 ## Chat playground
 
 A real streamed reply from a local model — the meta line separates model-load time
