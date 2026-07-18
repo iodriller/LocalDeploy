@@ -1079,6 +1079,52 @@ function formatExpires(expiresAt) {
   return `Expires in ${(mins / 60).toFixed(1)}h`;
 }
 
+const QUANT_EXPLANATIONS = {
+  F16: "16-bit floating-point weights. Highest memory use and a reference-quality baseline.",
+  BF16: "16-bit brain floating-point weights. Reference quality with the same broad memory class as F16.",
+  Q8_0: "8-bit quantization. Near-reference quality, but much larger than common 4-bit or 5-bit files.",
+  Q6_K: "About 6-bit K-quant. High quality when there is enough RAM or VRAM headroom.",
+  Q5_K_M: "5-bit K-quant, medium variant. More memory and usually more quality than Q4_K_M.",
+  Q4_K_M: "4-bit K-quant, medium variant. A common balance of model quality, size, and speed.",
+  Q4_0: "Older 4-bit quantization. Small and widely supported, but usually less accurate than Q4_K_M.",
+  Q4_0_QAT: "4-bit quantization-aware-trained weights. The model was trained to preserve quality at this precision.",
+  IQ4_XS: "Importance-aware 4-bit, extra-small variant. Saves memory to fit larger models or context windows.",
+  Q3_K_M: "3-bit K-quant, medium variant. Very compact, with a more noticeable quality tradeoff.",
+};
+
+function quantExplanation(value) {
+  const quant = String(value || "").trim().toUpperCase();
+  if (!quant) return "Quantization reduces model weight precision to use less disk space and memory.";
+  if (QUANT_EXPLANATIONS[quant]) return QUANT_EXPLANATIONS[quant];
+  const bits = quant.match(/(?:^|_)[QI]?(\d+)(?:_|$)/)?.[1];
+  const family = quant.includes("_K") ? " It uses the newer K-quant family." : "";
+  const variant = quant.endsWith("_M") ? " M means the medium mixed-precision variant." : "";
+  return `${bits ? `Approximately ${bits}-bit quantized weights.` : "Quantized model weights."}${family}${variant}`;
+}
+
+function quantLabelHtml(value, className = "badge") {
+  if (!value) return `<span class="muted">—</span>`;
+  const explanation = quantExplanation(value);
+  return `<span class="${esc(className)} quant-label tooltip-target" tabindex="0" title="${esc(explanation)}" data-tooltip="${esc(explanation)}" aria-label="${esc(value)}: ${esc(explanation)}">${esc(value)}<span class="quant-info" aria-hidden="true">?</span></span>`;
+}
+
+function ollamaModelNamesMatch(left, right) {
+  const a = String(left || "").toLowerCase();
+  const b = String(right || "").toLowerCase();
+  if (!a || !b) return false;
+  if (a === b) return true;
+  if (!a.includes(":") && b === `${a}:latest`) return true;
+  if (!b.includes(":") && a === `${b}:latest`) return true;
+  return false;
+}
+
+function runningDetailForInstalled(modelName) {
+  return (
+    (state.runningDetails || []).find((item) => ollamaModelNamesMatch(item.name, modelName)) ||
+    ((state.servedModels || []).some((name) => ollamaModelNamesMatch(name, modelName)) ? { name: modelName } : null)
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Tab 1 — Status
 // ---------------------------------------------------------------------------
@@ -1161,6 +1207,7 @@ async function refreshStatus() {
     toast(`Status failed: ${err.message}`, "error");
   } finally {
     busy(btn, false);
+    if (state.installedLoaded) renderInstalledList();
     renderChatModelOptions();
     updateProgressRail();
   }
@@ -1170,6 +1217,10 @@ async function refreshStatus() {
 // endpoint URL for OpenAI-compatible clients, and a ready-to-run curl.
 function apiEndpointBase() {
   return `${window.location.origin}/v1/chat/completions`;
+}
+
+function apiDocsUrl() {
+  return `${window.location.origin}/docs`;
 }
 
 function curlSnippetFor(model) {
@@ -1182,12 +1233,14 @@ function curlSnippetFor(model) {
 
 function apiSnippetHtml(model) {
   const url = apiEndpointBase();
+  const docs = apiDocsUrl();
   return `<div class="api-snippet">
     <span class="eyebrow">🔌 Use via API</span>
     <div class="api-snippet-row">
       <code class="api-url" title="OpenAI-compatible endpoint — point any client here with model: &quot;${esc(model)}&quot; and any API key">${esc(url)}</code>
       <button class="btn compact copy-btn" data-copy="${esc(url)}" title="Copy endpoint URL">⧉ URL</button>
       <button class="btn compact copy-btn" data-copy="${esc(curlSnippetFor(model))}" title="Copy a ready-to-run curl request for this model">⧉ curl</button>
+      <a class="btn compact api-docs-link" href="${esc(docs)}" target="_blank" rel="noopener" title="Open Swagger UI with every endpoint and its request and response definitions">API docs ↗</a>
     </div>
   </div>`;
 }
@@ -1449,16 +1502,18 @@ function renderInstalledList() {
       .map((m) => {
         const diskGb = m.size ? (m.size / 1e9).toFixed(1) : null;
         const d = m.details || {};
-        const quant = d.quantization_level
-          ? `<span class="badge" style="font-size:.72rem">${esc(d.quantization_level)}</span>`
-          : "";
+        const quant = d.quantization_level ? quantLabelHtml(d.quantization_level, "badge model-quant") : "";
         const params = d.parameter_size ? `<span class="meta">${esc(d.parameter_size)}</span>` : "";
         const date = m.modified_at ? `<span class="meta">updated ${esc(m.modified_at.slice(0, 10))}</span>` : "";
         const disk = diskGb
           ? `<span class="meta disk-chip" title="Space this model takes on your drive (not the memory it needs to run)">💾 ${esc(diskGb)} GB disk</span>`
           : "";
-        const loaded = state.servedModels.includes(m.name) ? `<span class="badge on">● loaded</span>` : "";
-        const loadedHint = loaded ? `<span class="meta">Unload from Currently serving</span>` : "";
+        const running = runningDetailForInstalled(m.name);
+        const loaded = running ? `<span class="badge on">● loaded</span>` : "";
+        const loadedHint = running ? `<span class="meta">${esc(formatExpires(running.expires_at))}</span>` : "";
+        const primaryAction = running
+          ? `<button class="btn danger unload-installed-btn" title="Unload this model from RAM and VRAM">■ Unload</button>`
+          : `<button class="btn primary start-installed-btn" title="Load this model into memory and start serving it">▶ Deploy</button>`;
         const checked = state.installedSelection.has(m.name) ? " checked" : "";
         return `<div class="mrow model-row" data-model="${esc(m.name)}">
           <input type="checkbox" class="model-select" title="Select for bulk delete"${checked} />
@@ -1468,7 +1523,7 @@ function renderInstalledList() {
             <span class="fit"><span class="muted small">⚡ checking VRAM fit…</span></span>
           </div>
           <span class="spacer"></span>
-          <button class="btn primary start-installed-btn" title="Load this model into memory and start serving it">▶ Deploy</button>
+          ${primaryAction}
           <button class="btn edit-tuning-btn" title="Edit this model's run profile (context, KV cache, GPU layers…)">⚙ Tune</button>
           <button class="btn compact fit-btn" title="Re-run the VRAM fit estimate (runs automatically when the list loads)">↻</button>
           <button class="btn danger del-btn" title="Delete from disk${diskGb ? ` — frees ${esc(diskGb)} GB` : ""}">🗑 Delete</button>
@@ -1484,6 +1539,9 @@ function renderInstalledList() {
   );
   $$(".start-installed-btn", body).forEach((b) =>
     b.addEventListener("click", () => startInstalledModel(b.closest(".mrow").dataset.model, b))
+  );
+  $$(".unload-installed-btn", body).forEach((b) =>
+    b.addEventListener("click", () => killRunningModel(b.closest(".mrow").dataset.model, b))
   );
   $$(".edit-tuning-btn", body).forEach((b) =>
     b.addEventListener("click", () => openTuningEditor(b.closest(".mrow").dataset.model))
@@ -2106,7 +2164,7 @@ function renderProviderCatalog() {
         <td><span class="badge">${esc(model.provider)}</span></td>
         <td>${esc(model.publisher || "—")}</td>
         <td class="num">${esc(model.parameters || (catalogParamsB(model) != null ? catalogParamsB(model) + "B" : "—"))}</td>
-        <td>${esc(model.quant || "—")}</td>
+        <td>${quantLabelHtml(model.quant, "quant-code")}</td>
         <td class="num" title="${model.benchmark_samples ? `${esc(model.benchmark_samples)} saved samples` : "Not benchmarked yet — run it in Benchmark & Compare"}">${model.tokens_per_second != null ? esc(model.tokens_per_second) : "—"}</td>
         <td class="num">${model.context != null ? esc(model.context) : "—"}</td>
         <td><button class="btn compact provider-profile-btn" data-model="${esc(model.model)}" data-provider="${esc(model.provider)}" data-base-url="${esc(model.base_url)}" title="Create a run profile for this model">＋ Add profile</button></td>
@@ -2635,7 +2693,7 @@ async function quantAdvise(btn) {
       .map((v) => {
         const margin = v.margin_gb != null ? `${v.margin_gb >= 0 ? "+" : ""}${v.margin_gb} GB` : "—";
         return `<tr>
-          <td><code>${esc(v.quant)}</code></td>
+          <td>${quantLabelHtml(v.quant, "quant-code")}</td>
           <td class="num">~${esc(v.weights_gb)} GB</td>
           <td class="num">~${esc(v.required_gb)} GB</td>
           <td class="num">${esc(margin)}</td>
@@ -2651,9 +2709,10 @@ async function quantAdvise(btn) {
       <div class="next-action" style="margin-bottom:0.6rem"><b>${esc(res.recommendation)}</b></div>
       <div class="muted small" style="margin-bottom:0.5rem">${esc(res.model.params_b)}B parameters · ${esc(res.model.context)} context · ${esc(budget)}</div>
       <div class="table-wrap"><table class="results quant-table">
-        <thead><tr><th>Quant</th><th class="num">Weights</th><th class="num">Needs</th><th class="num">Headroom</th><th>Fit</th><th>Quality</th></tr></thead>
+        <thead><tr><th title="Lower precision uses less memory but can reduce quality">Quant</th><th class="num" title="Estimated model weight size">Weights</th><th class="num" title="Estimated weights, KV cache, and runtime overhead">Needs</th><th class="num" title="Memory budget remaining after the estimate">Headroom</th><th>Fit</th><th>Quality</th></tr></thead>
         <tbody>${rows}</tbody>
       </table></div>
+      <p class="muted small quant-legend"><b>Reading quant names:</b> the number is the approximate bit class, <code>K</code> is the newer K-quant family, and <code>M</code> is its medium mixed-precision variant. Hover or focus a quant for its tradeoff.</p>
       <p class="muted small" style="margin-top:0.5rem">${esc(res.note)} ${link}</p>`;
   } catch (err) {
     body.innerHTML = `<div class="muted">Estimate failed.</div>`;

@@ -88,6 +88,23 @@ def test_chat_tab_present() -> None:
     assert 'id="tab-chat"' in html
 
 
+def test_api_docs_quant_help_and_model_lifecycle_controls_are_present() -> None:
+    html = (WEB_DIR / "index.html").read_text(encoding="utf-8")
+    js = (WEB_DIR / "app.js").read_text(encoding="utf-8")
+    css = (WEB_DIR / "styles.css").read_text(encoding="utf-8")
+
+    assert "apiDocsUrl" in js
+    assert "${window.location.origin}/docs" in js
+    assert 'class="btn compact api-docs-link"' in js
+    assert "QUANT_EXPLANATIONS" in js
+    assert "4-bit K-quant, medium variant" in js
+    assert html.count('class="help-tip"') >= 4
+    assert ".help-tip::after" in css
+    assert ".quant-label" in css
+    assert "unload-installed-btn" in js
+    assert 'postJSON("/models/stop"' in js
+
+
 def test_system_card_holds_hardware_and_fit_budget() -> None:
     """New IA: hardware, live VRAM, and the model fit budget all live together in
     the top 'System' card; deploy options moved to 'Your models'."""
@@ -130,5 +147,5 @@ def test_ui_does_not_guess_unattributed_vram_sources() -> None:
     assert "LocalDeploy cannot attribute" not in js
     assert "Ollama reports" not in js
     assert "Ollama model VRAM" in js
-    assert "Unload from Currently serving" in js
+    assert "Unload this model from RAM and VRAM" in js
     assert "downloads not reported" in js
