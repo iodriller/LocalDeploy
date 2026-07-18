@@ -18,11 +18,13 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+import localdeploy
 from localdeploy.backends.llamacpp import call_llamacpp, llama_health
 from localdeploy.backends.ollama import call_ollama, ollama_models, stream_ollama
 from localdeploy.utils import (
     BackendCallError,
     api_token,
+    app_home,
     enable_web_ui,
     env_bool,
     env_float,
@@ -31,11 +33,15 @@ from localdeploy.utils import (
     model_dump_compat,
     model_validate_compat,
     require_gpu_only,
+    web_dir,
 )
 
 
 APP_DIR = Path(__file__).resolve().parent
-load_dotenv(APP_DIR / ".env")
+# Runtime state (.env, config.json, logs/, reports/) lives in the app home:
+# the repo root for a source checkout, ~/.localdeploy for pip installs.
+APP_HOME = app_home()
+load_dotenv(APP_HOME / ".env")
 
 
 class ChatRequest(BaseModel):
@@ -117,7 +123,7 @@ def get_config_path() -> Path:
     configured = os.getenv("CONFIG_PATH", "config.json")
     path = Path(configured)
     if not path.is_absolute():
-        path = APP_DIR / path
+        path = APP_HOME / path
     return path
 
 
@@ -445,7 +451,8 @@ def prepare_request(
             warning=profile_warning(profile) if profile else None,
         )
 
-    assert profile is not None
+    if profile is None:
+        return None, make_error_response(error="Profile resolution returned no profile.")
     backend = str(profile.get("backend")).lower()
     prompt = data.get("prompt") or ""
     system_prompt = data.get("system_prompt") or ""
@@ -621,7 +628,8 @@ def run_local_request(kind: str, request_data: Dict[str, Any]) -> Dict[str, Any]
     prepared, error_response = prepare_request(kind, request_data, require_enabled=True)
     if error_response:
         return error_response
-    assert prepared is not None
+    if prepared is None:
+        return make_error_response(error="Request preparation returned no request.")
 
     start = time.perf_counter()
     try:
@@ -675,7 +683,14 @@ def estimate_request_safety(request_data: Dict[str, Any]) -> Dict[str, Any]:
         }
         return error_response
 
-    assert prepared is not None
+    if prepared is None:
+        response = make_error_response(error="Request preparation returned no request.")
+        response["response"] = {
+            "likely_safe": False,
+            "errors": ["Request preparation returned no request."],
+            "warnings": [],
+        }
+        return response
     warnings: List[str] = []
     profile = prepared["profile"]
     limits = get_global_limits()
@@ -894,7 +909,10 @@ def openai_stream_response(request_model: OpenAIChatCompletionRequest) -> Stream
             yield openai_sse_error(completion_id, model_name, str(error_response.get("error") or "LocalDeploy request failed."))
             yield "data: [DONE]\n\n"
             return
-        assert prepared is not None
+        if prepared is None:
+            yield openai_sse_error(completion_id, model_name, "Request preparation returned no request.")
+            yield "data: [DONE]\n\n"
+            return
 
         if prepared["backend"] != "ollama":
             try:
@@ -996,7 +1014,7 @@ def normalize_structured_content(content: str) -> str:
     return content
 
 
-app = FastAPI(title="Local LLM Server", version="1.0.0")
+app = FastAPI(title="LocalDeploy", version=localdeploy.__version__)
 
 
 def _host_is_loopback(host: str) -> bool:
@@ -1271,10 +1289,18 @@ def benchmark(request: BenchmarkRequest) -> Dict[str, Any]:
 # Web UI and control-plane endpoints are additive and opt-out via ENABLE_WEB_UI.
 # When disabled, the server behaves exactly as it did before this package existed.
 if enable_web_ui():
+    from fastapi.responses import FileResponse
+
     from localdeploy.control import router as web_router
 
     app.include_router(web_router)
-    app.mount("/ui", StaticFiles(directory=str(APP_DIR / "web"), html=True), name="ui")
+    app.mount("/ui", StaticFiles(directory=str(web_dir()), html=True), name="ui")
+
+    @app.get("/favicon.ico", include_in_schema=False)
+    def favicon() -> FileResponse:
+        # Browsers request this on /docs and the API root; without it every
+        # page view logs a 404.
+        return FileResponse(web_dir() / "favicon.png", media_type="image/png")
 
 
 if __name__ == "__main__":

@@ -1,0 +1,7 @@
+include LICENSE README.md CHANGELOG.md SECURITY.md
+include config.example.json .env.example
+recursive-include localdeploy/web *
+prune docs
+prune tests
+prune scripts
+prune examples

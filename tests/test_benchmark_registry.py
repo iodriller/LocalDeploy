@@ -60,6 +60,29 @@ def test_api_base_url_normalizes_bind_all(monkeypatch):
     assert benchmark.api_base_url() == "http://127.0.0.1:8000"
 
 
+def test_call_chat_sends_configured_api_token(monkeypatch):
+    captured = {}
+
+    class Response:
+        status_code = 200
+        text = ""
+
+        @staticmethod
+        def json():
+            return {"success": True, "response": "ok"}
+
+    def fake_post(url, **kwargs):
+        captured.update({"url": url, **kwargs})
+        return Response()
+
+    monkeypatch.setenv("API_TOKEN", "benchmark-secret")
+    monkeypatch.setattr(benchmark.requests, "post", fake_post)
+    case = _TestCase("token", "security", "hello", lambda _text: 1.0, "test")
+    result = benchmark.call_chat("http://127.0.0.1:8000", "profile", {}, case, 5)
+    assert result["success"] is True
+    assert captured["headers"] == {"X-API-Token": "benchmark-secret"}
+
+
 def test_unknown_grader_type_raises():
     with pytest.raises(ValueError):
         build_grader({"type": "does_not_exist"})

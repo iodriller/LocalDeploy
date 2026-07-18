@@ -7,7 +7,15 @@ runtime, no external/CDN assets — so it runs anywhere the API runs and works f
 The UI is **opt-out**: set `ENABLE_WEB_UI=false` to disable it (the API behaves exactly as it did
 before the UI existed).
 
-## Launching an existing clone
+## Launching
+
+Installed via pip/pipx, one command serves the API + UI and opens the browser
+(`--no-browser`, `--host`, `--port` to override; state lives in `~/.localdeploy`
+or `LOCALDEPLOY_HOME`):
+
+```bash
+localdeploy
+```
 
 From a local checkout on Windows:
 
@@ -45,7 +53,8 @@ A newcomer can go end-to-end without reading anything else:
    streams live. The pull is **fit-checked** first and blocked only for hard "fits nowhere"
    warnings unless **Warn only; pull anyway** is checked.
 3. **Deploy a profile** — load the model into memory with an Ollama keep-alive.
-4. **Benchmark & Compare tab** — load the example question set, **Validate**, then **Run**.
+4. **Chat tab** — talk to the model you just deployed, streaming, right in the browser.
+5. **Benchmark & Compare tab** — load the example question set, **Validate**, then **Run**.
 
 ## Tab 1 — Setup & Deploy
 
@@ -71,10 +80,42 @@ Profiles whose model is gone (never pulled, or deleted outside the UI) are annot
 can be removed in one click with **Advanced → All run profiles → Remove not-pulled profiles**. For
 llama.cpp profiles the server checks whether the GGUF file still exists on disk.
 
+**Quant advisor** (Get a model → ⚖ Quant advisor) fit-checks every common GGUF quantization
+(Q2_K → F16) of one model size against your budget using the same estimator as fit checks, and says
+when there's headroom for a higher-quality tag than the usual Q4 default
+(`POST /system/quant-advisor`). Exact tag availability varies per family, so it links to the
+family's tags page on ollama.com rather than guessing pull names.
+
+**Disk usage** lives in the Your models card: a `N models · X GB on disk` summary, a sort control
+(largest / recently updated / name), and per-row checkboxes that reveal a bulk **Delete selected**
+bar with the total gigabytes being freed.
+
+## Tab — Chat playground
+
+A minimal streaming chat over the server's own OpenAI-compatible endpoint
+(`POST /v1/chat/completions` with `stream: true`) — pick a profile, type, and tokens render as they
+arrive. Conversation state lives in the page (nothing is stored); **Clear** resets it.
+
+- The profile picker is the same annotated list as everywhere else, so a not-pulled profile is
+  labeled before you try it. The first message to a cold model includes Ollama's load time; the
+  reply's meta line separates that out (`first token X s`) from the generation speed (`tok/s`).
+- **Images** can be attached to a message when the selected profile is marked vision-capable
+  (`supports_vision` — editable via Edit tuning). Attachments preview as thumbnails and are sent as
+  data-URI `image_url` parts, the same shape any OpenAI client would use.
+- An optional **system prompt** (collapsed by default) is sent with every turn.
+- **Enter** sends, **Shift+Enter** inserts a newline, and the Send button becomes **Stop** while a
+  reply is streaming.
+
 ## Tab 2 — Benchmark & Compare
 
-The benchmark tab is a local experiment workspace. It keeps run records in browser
-`localStorage` under `localdeploy.benchmarkRuns.v1`; there is no backend database.
+The benchmark tab is a local experiment workspace. Its primary run history lives in
+browser `localStorage` under `localdeploy.benchmarkRuns.v1`; there is no backend database.
+
+Optionally, the **Also store on server** toggle (History tile) mirrors completed runs to
+`reports/benchmark-history/` as one JSON file per run (`/benchmark/history` endpoints) — so
+history survives the browser and can be shared or inspected as plain files. Turning the toggle on
+pushes this browser's existing runs and pulls any runs stored by other browsers; deleting a run in
+the UI also deletes its server copy.
 
 - **Question set** is open by default. Leave the editor empty to use the built-in LocalDeploy
   suite, or use **Use LocalDeploy test bench** to load the built-in JSON into the editor for

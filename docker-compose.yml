@@ -18,6 +18,7 @@ services:
       - "127.0.0.1:${API_PORT:-8000}:8000" # API + UI (http://localhost:8000/ui)
     volumes:
       - ollama-models:/root/.ollama # persist pulled models between runs
+      - localdeploy-data:/data/localdeploy # persist profiles, settings, and benchmark history
     environment:
       - API_HOST=0.0.0.0
       - ENABLE_WEB_UI=true
@@ -46,3 +47,4 @@ services:
 
 volumes:
   ollama-models:
+  localdeploy-data:

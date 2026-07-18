@@ -71,7 +71,15 @@ def test_control_plane_endpoints_require_token_when_set(monkeypatch):
 def test_control_plane_endpoints_open_without_token(monkeypatch):
     # Confirms the opt-in nature: with no API_TOKEN configured, these endpoints
     # are reachable (they may still 4xx/5xx on an empty body, just not for auth).
+    # Keep this auth-only probe inert: /models/free otherwise unloads the user's
+    # live models, and /system/recommend can launch real benchmark requests when
+    # the developer's local config contains enabled profiles.
+    import api_server
+    from localdeploy.control import models as model_routes
+
     monkeypatch.delenv("API_TOKEN", raising=False)
+    monkeypatch.setattr(model_routes._ollama, "unload_all", lambda: (0, None))
+    monkeypatch.setattr(api_server, "load_config", lambda: {"profiles": {}})
     for path in CONTROL_PLANE_ENDPOINTS:
         resp = client.post(path, json={})
         assert resp.status_code != 401, f"{path} unexpectedly required auth with no token set"

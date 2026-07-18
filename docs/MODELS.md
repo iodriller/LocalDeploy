@@ -46,7 +46,7 @@ These actually separate the models. The easy `structured` category had everyone 
 ### Headline findings
 
 1. **`qwen3-vl:8b` is the best all-rounder** at 0.84 overall, perfect classification, top-tier on every category. Use it as the default profile unless you specifically need raw speed.
-2. **`qwen3:8b` is the structured-output champion at 0.91 hard-JSON**, but only with `think: false` set. Without it Ollama returns empty content (the chain-of-thought lives in a separate `thinking` field). Configured in this repo's `config.json`.
+2. **`qwen3:8b` is the structured-output champion at 0.91 hard-JSON**, but only with `think: false` set. Without it Ollama returns empty content (the chain-of-thought lives in a separate `thinking` field). Auto-created Qwen profiles set this by default; the reference profile in `config.example.json` does too.
 3. **`llama3.1:8b` is the sleeper pick for JSON pipelines** — 0.89 hard JSON (#2 overall) despite only 0.66 overall. If you don't need math, it's competitive with the top.
 4. **QAT beats default Q4 on Gemma 12B**: `gemma3:12b-it-qat` scores 0.79 vs `gemma3:12b`'s 0.77, same speed. Always use the QAT tag for Gemma.
 5. **Q5_K_M ≈ Q4 default on Qwen2.5 7B** — same overall (0.79 vs 0.79), Q5 adds ~2s latency, picks up `math_determinant` but loses `cls_bug_severity`. Not worth the bigger VRAM footprint on its own.
@@ -70,7 +70,7 @@ These actually separate the models. The easy `structured` category had everyone 
 
 ### Profiles to avoid (or be careful with)
 
-- **Default `qwen3:8b` without `think:false`** → empty responses (thinking field is separate from content in Ollama). Already configured here.
+- **Default `qwen3:8b` without `think:false`** → empty responses (thinking field is separate from content in Ollama). LocalDeploy's auto-created and example profiles disable thinking by default.
 - **`gemma3:12b` default Q4 over QAT** → ~2% worse for same speed and VRAM. Pull `gemma3:12b-it-qat` instead.
 - **`qwen2.5vl:7b`** → superseded by `qwen3-vl:8b-instruct`; 0.72 vs 0.84.
 - **`mistral:7b`** → outdated, weak on math and classification; better Qwen alternatives at every size.

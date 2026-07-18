@@ -36,3 +36,8 @@ models/
 Thumbs.db
 .idea/
 .vscode/
+
+# Packaging build artifacts
+build/
+dist/
+*.egg-info/

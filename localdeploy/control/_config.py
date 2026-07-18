@@ -43,7 +43,7 @@ def refuse_example(path: Path) -> Optional[str]:
     if path.name == "config.example.json":
         return (
             "Refusing to overwrite config.example.json. Point CONFIG_PATH at a real "
-            "config.json (the app seeds from the example when it is missing)."
+            "config.json (a missing live config starts empty)."
         )
     return None
 

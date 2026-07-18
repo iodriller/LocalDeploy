@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128" role="img" aria-label="LocalDeploy logo">
+  <defs>
+    <linearGradient id="ld-bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#4f86f7"/>
+      <stop offset="1" stop-color="#22d3ee"/>
+    </linearGradient>
+    <linearGradient id="ld-sheen" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.20"/>
+      <stop offset="0.55" stop-color="#ffffff" stop-opacity="0.03"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+  <!-- badge -->
+  <rect x="4" y="4" width="120" height="120" rx="30" fill="url(#ld-bg)"/>
+  <rect x="4" y="4" width="120" height="120" rx="30" fill="url(#ld-sheen)"/>
+  <!-- deploy arrow -->
+  <path d="M64 22 L94 54 H77 V80 H51 V54 H34 Z" fill="#ffffff" stroke="#ffffff" stroke-width="6" stroke-linejoin="round"/>
+  <!-- local machine stack, with a green "serving" LED -->
+  <rect x="30" y="92" width="68" height="11" rx="5.5" fill="#ffffff"/>
+  <circle cx="90" cy="97.5" r="3.4" fill="#10b981"/>
+  <rect x="42" y="109" width="44" height="9" rx="4.5" fill="#ffffff" opacity="0.55"/>
+</svg>

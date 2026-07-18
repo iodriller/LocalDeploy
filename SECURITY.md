@@ -66,6 +66,7 @@ These are deliberate trade-offs for the single-user, local-only design. They bec
 | No prompt-injection filter | Operator-supplied prompts assumed trusted | Feeding the model with untrusted external content |
 | No output PII/jailbreak filter | Outputs stay on the machine | Piping responses to logs, tickets, or other systems |
 | Backend error bodies surfaced in API errors | Helpful for debugging locally | Could leak local filesystem paths if exposed |
+| Built-in code benchmarks execute model answers in a restricted child process | Functional grading needs to run candidate functions; imports/builtins and common file/process/network operations are blocked, with time and POSIX resource caps | This is defense in depth, not a hardened VM boundary; do not run adversarial models or prompts under a privileged OS account |
 | `/benchmark` runs every enabled profile | Diagnostic tool, deliberate | Unauthenticated callers could exhaust GPU |
 | Web control-plane (`/models/pull`, `/models/serve`, `/models/delete`, `/models/free`, `/system/recommend`, `/system/set-default`) | Convenience for the local operator | Unauthenticated callers could fill disk (pulls), **delete installed models** (`/models/delete`), unload models (`/models/free`), run benchmarks, or rewrite `config.json`. Set `API_TOKEN`, disable with `ENABLE_WEB_UI=false`, or keep the bind on loopback |
 
