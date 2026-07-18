@@ -155,6 +155,7 @@ def test_chat_only_lists_installed_models_and_tracks_load_delete(live_server, br
         ],
         "running": [],
     }
+    stopped_models = []
     profiles = {
         "gemma3_4b": {
             "backend": "ollama",
@@ -211,8 +212,14 @@ def test_chat_only_lists_installed_models_and_tracks_load_delete(live_server, br
         runtime["running"] = []
         route.fulfill(json={"success": True, "deleted": "gemma3:4b"})
 
+    def stop_route(route):
+        stopped_models.append(route.request.post_data_json["model"])
+        runtime["running"] = []
+        route.fulfill(json={"success": True, "stopped": "gemma3:4b", "message": "Unloaded gemma3:4b."})
+
     page.route("**/system/status", status_route)
     page.route("**/models/serve", serve_route)
+    page.route("**/models/stop", stop_route)
     page.route("**/models/delete", delete_route)
     try:
         page.goto(f"{live_server}/ui", wait_until="domcontentloaded")
@@ -230,8 +237,17 @@ def test_chat_only_lists_installed_models_and_tracks_load_delete(live_server, br
         assert page.locator("#btn-chat-session").inner_text() == "Unload"
 
         page.get_by_role("tab", name="Setup & Deploy").click()
+        model_row = page.locator('#installed-body .model-row[data-model="gemma3:4b"]')
+        sync_api.expect(model_row.locator(".unload-installed-btn")).to_have_text("■ Unload")
+        sync_api.expect(page.locator("#status-body .api-docs-link")).to_have_attribute("href", f"{live_server}/docs")
+        assert model_row.locator(".start-installed-btn").count() == 0
+
+        model_row.locator(".unload-installed-btn").click()
+        sync_api.expect(model_row.locator(".start-installed-btn")).to_have_text("▶ Deploy")
+        assert stopped_models == ["gemma3:4b"]
+
         page.once("dialog", lambda dialog: dialog.accept())
-        page.locator('#installed-body .model-row[data-model="gemma3:4b"] .del-btn').click()
+        model_row.locator(".del-btn").click()
         page.wait_for_function("document.querySelector('#chat-model')?.value === ''")
         page.get_by_role("tab", name="Chat").click()
         sync_api.expect(page.locator("#chat-hint")).to_contain_text("No local models are installed")
