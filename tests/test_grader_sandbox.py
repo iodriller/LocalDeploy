@@ -1,12 +1,11 @@
-"""Security tests for the code-grader sandbox.
+"""Security tests for the code-grader worker.
 
 The code-category graders run a model's *response* code. These verify the
-sandbox contains it: side effects don't reach this process, infinite loops time
+  restricted worker contains it: side effects are blocked, infinite loops time
 out instead of hanging, and a correct answer still scores fully.
 """
 from __future__ import annotations
 
-import os
 import time
 
 from localdeploy.grader_sandbox import run_code_fraction
@@ -32,20 +31,28 @@ def test_wrong_code_scores_zero():
     assert run_code_fraction("def levenshtein(a, b):\n    return 999\n", "levenshtein") == 0.0
 
 
-def test_side_effect_runs_in_child_not_this_process(tmp_path):
-    # A model answer that tries to write a file as a top-level side effect must be
-    # contained: the grader call returns a score instead of raising into us, and
-    # our process is never the one executing the untrusted code.
+def test_file_side_effect_is_blocked(tmp_path):
+    # A model answer that tries to write a file as a top-level side effect is
+    # rejected before execution.
     marker = tmp_path / "pwned.txt"
     code = (
         f"open({str(marker)!r}, 'w').write('x')\n"
         "def levenshtein(a, b):\n    return 999\n"  # clearly wrong → 0.0
     )
     score = run_code_fraction(code, "levenshtein")
-    assert score == 0.0  # completed and scored without raising into this process
-    # The child shares the filesystem so the file may exist; clean it up.
-    if marker.exists():
-        os.remove(marker)
+    assert score == 0.0
+    assert not marker.exists()
+
+
+def test_non_allowlisted_import_is_blocked(tmp_path):
+    marker = tmp_path / "imported.txt"
+    code = (
+        "import pathlib\n"
+        f"pathlib.Path({str(marker)!r}).write_text('x')\n"
+        "def levenshtein(a, b):\n    return 0\n"
+    )
+    assert run_code_fraction(code, "levenshtein") == 0.0
+    assert not marker.exists()
 
 
 def test_infinite_loop_times_out_quickly():

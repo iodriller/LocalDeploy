@@ -4,8 +4,28 @@ All notable changes to this project should be documented here.
 
 ## 0.4.0 - 2026-07-17
 
-Streamlining for the public launch: the app now only ever shows models that are
+Public-launch release: a chat playground, quant advisor, disk usage tools, durable
+benchmark history — and streamlining so the app only ever shows models that are
 actually on your machine.
+
+### New features
+
+- **Chat playground tab.** Talk to any pulled model right in the UI — streaming
+  tokens over the server's own OpenAI-compatible `/v1/chat/completions`, image
+  attachments for vision-capable profiles, an optional system prompt, and a
+  Send-becomes-Stop button. The reply meta line separates model-load time
+  ("first token X s") from true generation speed (tok/s).
+- **Quantization advisor** (Get a model → ⚖ Quant advisor). Fit-checks every
+  common GGUF quant (Q2_K → F16) of a model size against your VRAM budget with
+  the same estimator as fit checks, and tells you when there's headroom for a
+  higher-quality tag than the usual Q4 default (`POST /system/quant-advisor`).
+- **Disk usage panel.** The Your models card now shows `N models · X GB on disk`,
+  sorts by size / recency / name, and bulk-deletes selected models with a
+  freed-gigabytes preview.
+- **Opt-in server-side benchmark history.** A toggle on the History tile mirrors
+  completed runs to `reports/benchmark-history/` as one JSON file per run
+  (`/benchmark/history` endpoints), so results survive the browser and can be
+  shared as plain files. Run ids are strictly validated (no path traversal).
 
 ### No more phantom models
 
@@ -28,15 +48,41 @@ actually on your machine.
   server now reports whether the GGUF file exists (`model_file_exists` on `/profiles`),
   so dead file paths get the same treatment as un-pulled Ollama models.
 
+### Packaging
+
+- **`pip install localdeploy`.** The project now ships as a proper Python package
+  (`pyproject.toml`) with a `localdeploy` console command that serves the API + UI
+  and opens the browser. The web UI ships as package data (`localdeploy/web/`,
+  moved from the repo-root `web/`).
+- **App home for runtime state.** Installed runs keep `.env`, `config.json`,
+  `logs/`, and `reports/` in `~/.localdeploy` (override with `LOCALDEPLOY_HOME`);
+  source checkouts keep using the repo root, so nothing changes for `git clone`
+  users. Docker now mounts that state separately from Ollama's model volume, so
+  profiles and benchmark history survive container recreation. `/favicon.ico`
+  is now served, so `/docs` page views stop logging 404s.
+
 ### Fresh coat of paint
 
-- New logo (`web/logo.svg`), regenerated favicon, and a repo social banner
+- New logo (`localdeploy/web/logo.svg`), regenerated favicon, and a repo social banner
   (`docs/assets/banner.png`).
 - README rebuilt around an animated demo GIF (`docs/assets/demo.gif`), captured by the
   new `scripts/capture_demo_gif.py`; screenshots now ship in dark (default) and light
   themes via `scripts/capture_screenshots.py`.
 - The web asset cache-bust test no longer pins the exact `?v=` token, so bumping asset
   versions can't silently break CI.
+
+### Security and reliability
+
+- Updated `python-multipart` to `0.0.31` after dependency auditing found three
+  advisories affecting `0.0.28`; CI now audits the pinned runtime requirements.
+- Bundled benchmark and chat clients now forward `API_TOKEN`, so enabling auth
+  no longer breaks server-initiated benchmarks or local CLI calls.
+- The code benchmark worker now validates candidate ASTs, exposes only a small
+  builtin/import allowlist, and blocks common filesystem, process, network,
+  registry, and native-library operations in addition to its existing timeout.
+- Removed the browser-triggered `pip install psutil` endpoint. `psutil` is a
+  required dependency, and hardware probe failures now degrade to a read-only
+  status instead of modifying the running Python environment.
 
 ## 0.3.0 - 2026-07-08
 

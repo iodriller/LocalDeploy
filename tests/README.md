@@ -33,7 +33,7 @@ pytest tests/test_guardrails.py -v
 - `test_utils.py` — `is_loopback_url`, `get_backend_base_url`, env helpers.
 - `test_guardrails.py` — `prepare_request` rejects oversized prompts, honors `allow_clamp`, rejects unknown/disabled profiles, image limits and base64 validation.
 - `test_security.py` — opt-in API token (`API_TOKEN` env var); endpoints require the token when set; `/health` and static UI stay open.
-- `test_grader_sandbox.py` — code-grader sandbox security (untrusted code cannot escape).
+- `test_grader_sandbox.py` — restricted code-grader worker (side-effect blocking, resource caps, and timeouts).
 
 **Hardware & fit**
 - `test_hardware_cpu_ram.py` — hardware probe reports CPU model, cores, and RAM.

@@ -12,7 +12,7 @@ from typing import Any, Dict, Iterator, List, Optional, Tuple
 
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from ._config import refuse_example, write_config_atomic
 
@@ -79,15 +79,15 @@ def set_enabled(req: SetEnabledRequest) -> Dict[str, Any]:
 
 class RecommendRequest(BaseModel):
     profiles: Optional[List[str]] = None
-    free_vram_mb: Optional[int] = None
-    sample_size: int = 3
-    timeout: int = 120
+    free_vram_mb: Optional[int] = Field(default=None, ge=0, le=100_000_000)
+    sample_size: int = Field(default=3, ge=1, le=25)
+    timeout: int = Field(default=120, ge=1, le=3_600)
     # Optional scoring tilt for the three built-in UI presets (Safe Starter /
     # Best Quality / Fast & Low VRAM). Defaults to the standard "quality
     # dominates" weighting when omitted; need not sum to 1.
-    quality_weight: Optional[float] = None
-    speed_weight: Optional[float] = None
-    headroom_weight: Optional[float] = None
+    quality_weight: Optional[float] = Field(default=None, ge=0, le=100)
+    speed_weight: Optional[float] = Field(default=None, ge=0, le=100)
+    headroom_weight: Optional[float] = Field(default=None, ge=0, le=100)
 
 
 DEFAULT_WEIGHTS = (0.60, 0.25, 0.15)

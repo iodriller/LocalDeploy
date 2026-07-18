@@ -196,14 +196,37 @@ def main() -> int:
             # 2. The installed-models list with live fit badges.
             _jump_to(page, "#your-models-card", pause_ms=1900)
 
-            # 3. Benchmark workspace: leaderboard, scatter, heatmap.
+            # 3. Chat playground: type a prompt and stream a real reply.
+            #    Skipped cleanly when no model can answer (no Ollama).
+            if _glide(page, '.tab[data-tab="chat"]'):
+                page.locator('.tab[data-tab="chat"]').click()
+                page.wait_for_timeout(900)
+                try:
+                    # Prefer a small, fast profile when the machine has one.
+                    page.select_option("#chat-profile", "llama32_3b_ollama")
+                except Exception:
+                    pass
+                page.locator("#chat-input").click()
+                page.keyboard.type("In one short sentence: why run AI models locally?", delay=16)
+                page.wait_for_timeout(300)
+                if _glide(page, "#btn-chat-send", pause_ms=200):
+                    page.locator("#btn-chat-send").click()
+                    try:
+                        page.wait_for_selector(
+                            ".chat-row.assistant .chat-bubble-meta:not(:empty)", timeout=45000
+                        )
+                        page.wait_for_timeout(1500)
+                    except Exception:
+                        pass  # no backend — move on, the tour still works
+
+            # 4. Benchmark workspace: leaderboard, scatter, heatmap.
             if _glide(page, '.tab[data-tab="bench"]'):
                 page.locator('.tab[data-tab="bench"]').click()
                 page.wait_for_timeout(1300)
             _jump_to(page, "#results-dashboard-card", pause_ms=2400)
             _glide(page, "#heatmap-body", pause_ms=1500)
 
-            # 4. End back on the setup tab so the GIF loops naturally.
+            # 5. End back on the setup tab so the GIF loops naturally.
             _jump_to(page, "body", pause_ms=400)
             if _glide(page, '.tab[data-tab="serve"]'):
                 page.locator('.tab[data-tab="serve"]').click()

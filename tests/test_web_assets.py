@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-WEB_DIR = Path(__file__).resolve().parent.parent / "web"
+WEB_DIR = Path(__file__).resolve().parent.parent / "localdeploy" / "web"
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
@@ -31,7 +31,6 @@ def test_no_smart_quotes_as_js_delimiters() -> None:
     Node is unavailable. Display-text curly quotes inside straight-quoted
     strings are fine; these patterns are the fatal ones."""
     text = (WEB_DIR / "app.js").read_text(encoding="utf-8")
-    bad_markers = ['("“', '”)', '="”', 'class=”', '$(“']
     # Common fatal shapes: $(“  ”)  || “”  join(“  class=”
     offenders = [m for m in ['$(“', '”)', 'class=”', 'join(“', 'split(“'] if m in text]
     assert not offenders, f"smart quotes used as JS delimiters in web/app.js: {offenders}"
@@ -59,11 +58,29 @@ def test_benchmark_workspace_v2_labels_are_present() -> None:
 def test_new_ui_controls_have_safe_bindings() -> None:
     html = (WEB_DIR / "index.html").read_text(encoding="utf-8")
     js = (WEB_DIR / "app.js").read_text(encoding="utf-8")
-    for dom_id in ("btn-hf-search", "btn-fit-profiles", "fit-filter", "hf-fit-filter", "vram-budget-gb"):
-        assert f'id="{dom_id}"' in html
+    for dom_id in (
+        "btn-hf-search", "btn-fit-profiles", "fit-filter", "hf-fit-filter", "vram-budget-gb",
+        # chat playground
+        "chat-profile", "btn-chat-send", "btn-chat-clear", "chat-input", "chat-images",
+        # quant advisor
+        "quant-model", "btn-quant-advise", "quant-body",
+        # disk usage / bulk delete
+        "installed-sort", "models-disk-summary", "btn-bulk-delete", "btn-bulk-clear",
+        # server-side history + orphan cleanup
+        "bench-history-server", "btn-clean-orphans",
+    ):
+        assert f'id="{dom_id}"' in html, dom_id
     assert '$("#btn-hf-search")?.addEventListener("click", (e) => checkUpdates(e))' in js
     assert '$("#btn-fit-profiles")?.addEventListener("click", scanConfiguredFits)' in js
+    for binding in ("sendChatMessage", "quantAdvise", "bulkDeleteSelected", "initServerHistoryToggle"):
+        assert binding in js, binding
     assert '$("#vram-budget-gb")?.addEventListener("input", () => {' in js
+
+
+def test_chat_tab_present() -> None:
+    html = (WEB_DIR / "index.html").read_text(encoding="utf-8")
+    assert 'data-tab="chat"' in html
+    assert 'id="tab-chat"' in html
 
 
 def test_system_card_holds_hardware_and_fit_budget() -> None:

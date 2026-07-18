@@ -136,6 +136,29 @@ def main() -> int:
                 # Dark is the app's default look; one light shot shows the toggle.
                 capture("dark", [("", "setup-deploy.png"), ("Benchmark & Compare", "benchmark-compare.png")])
                 capture("light", [("", "setup-deploy-light.png")])
+
+                # Chat playground with a real streamed reply. Needs a model that
+                # can answer, so this shot is skipped (not failed) without Ollama.
+                page = browser.new_page(viewport={"width": 1440, "height": 960})
+                page.add_init_script('window.localStorage.setItem("localdeploy_theme", "dark");')
+                page.goto(f"{base}/ui", wait_until="networkidle")
+                page.get_by_role("tab", name="Chat").click()
+                page.wait_for_timeout(500)
+                try:
+                    try:
+                        page.select_option("#chat-profile", "llama32_3b_ollama")
+                    except Exception:
+                        pass
+                    page.fill("#chat-input", "In one short sentence: why run AI models locally?")
+                    page.click("#btn-chat-send")
+                    page.wait_for_selector(".chat-row.assistant .chat-bubble-meta:not(:empty)", timeout=60000)
+                    page.wait_for_timeout(400)
+                    page.screenshot(path=str(OUT_DIR / "chat-playground.png"))
+                    print(f"wrote {OUT_DIR / 'chat-playground.png'}")
+                except Exception as exc:
+                    print(f"skipped chat-playground.png (no model answered: {exc})")
+                finally:
+                    page.close()
             finally:
                 browser.close()
     finally:

@@ -1,7 +1,6 @@
 """Phase C tests: device-aware warm-up timeout + graceful load-timeout message."""
 from __future__ import annotations
 
-import pytest
 import requests
 
 from localdeploy.control import _ollama

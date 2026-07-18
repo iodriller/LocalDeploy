@@ -90,8 +90,8 @@ def _try_start_ollama() -> bool:
 def install_ollama() -> Dict[str, Any]:
     """Best-effort automatic install via winget, plus a start attempt either way.
 
-    Mirrors /system/install-psutil's shape (success/already_installed/error) so
-    the frontend can reuse the same result-handling pattern. Handles both
+    Returns a consistent success/already_installed/error shape for the
+    frontend. Handles both
     "not installed at all" and "installed but not running" — the two cases the
     pull flow's generic "Ollama is not reachable" error used to lump together.
     """

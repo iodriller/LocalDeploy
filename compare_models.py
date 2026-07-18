@@ -16,8 +16,11 @@ from dotenv import load_dotenv
 from api_server import get_global_limits, load_config, run_local_request
 
 
+from localdeploy.utils import api_auth_headers, api_client_base_url, app_home
+
 APP_DIR = Path(__file__).resolve().parent
-load_dotenv(APP_DIR / ".env")
+APP_HOME = app_home()
+load_dotenv(APP_HOME / ".env")
 
 
 BASIC_PROMPT = "Explain what this local LLM server is doing in 3 bullet points."
@@ -46,14 +49,12 @@ def parse_bool(value: str) -> bool:
 
 
 def server_base_url() -> str:
-    host = os.getenv("API_HOST", "127.0.0.1")
-    port = os.getenv("API_PORT", "8000")
-    return f"http://{host}:{port}"
+    return api_client_base_url()
 
 
 def is_server_running() -> bool:
     try:
-        response = requests.get(f"{server_base_url()}/health", timeout=10)
+        response = requests.get(f"{server_base_url()}/health", headers=api_auth_headers(), timeout=10)
         return response.ok
     except requests.RequestException:
         return False
@@ -114,7 +115,7 @@ def image_to_base64(path: Path) -> Tuple[Optional[str], Optional[str]]:
 def call_server(endpoint: str, payload: Dict[str, Any], timeout: int) -> Dict[str, Any]:
     url = f"{server_base_url()}/{endpoint.lstrip('/')}"
     try:
-        response = requests.post(url, json=payload, timeout=timeout + 10)
+        response = requests.post(url, json=payload, headers=api_auth_headers(), timeout=timeout + 10)
     except requests.Timeout:
         return {
             "success": False,

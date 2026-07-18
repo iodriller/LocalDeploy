@@ -13,6 +13,13 @@ The whole UI also ships with a light theme (toggle in the top bar):
 
 ![Setup & Deploy tab (light)](screenshots/setup-deploy-light.png)
 
+## Chat playground
+
+A real streamed reply from a local model — the meta line separates model-load time
+(`first token`) from generation speed (`tok/s`).
+
+![Chat playground](screenshots/chat-playground.png)
+
 ## Benchmark & Compare
 
 The built-in 25-test bench, profile picker with pulled/not-pulled status per model, and

@@ -24,7 +24,6 @@ from __future__ import annotations
 import argparse
 import ast
 import json
-import os
 import re
 import statistics
 import subprocess
@@ -41,20 +40,17 @@ from dotenv import load_dotenv
 from api_server import load_config
 from localdeploy.grader_sandbox import run_code_fraction
 
-APP_DIR = Path(__file__).resolve().parent
-load_dotenv(APP_DIR / ".env")
+from localdeploy.utils import api_auth_headers, api_client_base_url, app_home
 
-REPORTS_DIR = APP_DIR / "reports"
+APP_DIR = Path(__file__).resolve().parent
+APP_HOME = app_home()
+load_dotenv(APP_HOME / ".env")
+
+REPORTS_DIR = APP_HOME / "reports"
 
 
 def api_base_url() -> str:
-    host = os.getenv("API_HOST", "127.0.0.1")
-    # 0.0.0.0 / :: are bind-all addresses, not valid connect targets on every
-    # platform. The benchmark self-calls /chat, so normalize to loopback.
-    if host in ("0.0.0.0", "::", ""):
-        host = "127.0.0.1"
-    port = os.getenv("API_PORT", "8000")
-    return f"http://{host}:{port}"
+    return api_client_base_url()
 
 
 # ---------------------------------------------------------------------------
@@ -1133,7 +1129,12 @@ def call_chat(
     if num_gpu is not None:
         payload["num_gpu"] = num_gpu
     try:
-        response = requests.post(f"{base_url}/chat", json=payload, timeout=timeout + 10)
+        response = requests.post(
+            f"{base_url}/chat",
+            json=payload,
+            headers=api_auth_headers(),
+            timeout=timeout + 10,
+        )
     except requests.Timeout:
         return {"success": False, "error": f"client-side timeout after {timeout}s", "elapsed_seconds": float(timeout)}
     except requests.ConnectionError:
@@ -1708,7 +1709,7 @@ def main() -> int:
 
     base_url = api_base_url()
     try:
-        health = requests.get(f"{base_url}/health", timeout=10).json()
+        health = requests.get(f"{base_url}/health", headers=api_auth_headers(), timeout=10).json()
     except Exception as exc:
         print(f"API server is not reachable at {base_url}: {exc}")
         print("Start it with: .\\scripts\\start.ps1  (or set $env:API_PORT='8011' first)")

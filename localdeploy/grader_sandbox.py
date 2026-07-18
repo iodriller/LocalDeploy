@@ -1,4 +1,4 @@
-"""Sandboxed execution for the benchmark's code-category graders.
+"""Restricted execution for the benchmark's code-category graders.
 
 Those graders score a model's answer by *running the candidate code* it returned
 (e.g. a `levenshtein` function) against known test cases. Executing model output
@@ -7,6 +7,8 @@ with an infinite loop would hang the grader forever.
 
 This module runs that code in a short-lived child process with:
   - Python's isolated mode (`-I`): ignores env vars, user site-packages, and `$PYTHONPATH`.
+  - AST validation plus a small builtin/import allowlist.
+  - An audit hook blocking filesystem, process, network, registry, and native-library operations.
   - A wall-clock timeout in the parent.
   - CPU-time and address-space rlimits in the child (POSIX; best-effort on others).
   - Candidate stdout/stderr redirected away from the result channel.
@@ -23,7 +25,93 @@ import sys
 # The harnesses + worker that run inside the child. The candidate code is fed in
 # on stdin (never via argv), so there are no escaping/length pitfalls.
 _WORKER_SRC = r'''
-import io, contextlib, json, sys
+import ast, builtins, collections, contextlib, io, json, sys
+
+
+class _SafeCollections:
+    OrderedDict = collections.OrderedDict
+    defaultdict = collections.defaultdict
+    deque = collections.deque
+
+
+_SAFE_COLLECTIONS = _SafeCollections()
+_BANNED_NAMES = {
+    "breakpoint", "compile", "delattr", "dir", "eval", "exec", "getattr",
+    "globals", "help", "input", "locals", "open", "setattr", "vars",
+}
+
+
+def _safe_import(name, globals=None, locals=None, fromlist=(), level=0):
+    if level == 0 and name == "collections":
+        return _SAFE_COLLECTIONS
+    raise ImportError("only selected collections helpers are available")
+
+
+def _validate_candidate(code):
+    if not isinstance(code, str) or len(code) > 50_000:
+        raise ValueError("candidate code is too large")
+    tree = ast.parse(code, mode="exec")
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            if any(alias.name != "collections" for alias in node.names):
+                raise ValueError("import is not allowed")
+        elif isinstance(node, ast.ImportFrom):
+            allowed = {"OrderedDict", "defaultdict", "deque"}
+            if node.level != 0 or node.module != "collections" or any(alias.name not in allowed for alias in node.names):
+                raise ValueError("import is not allowed")
+        elif isinstance(node, ast.Attribute) and node.attr.startswith("_"):
+            raise ValueError("private attributes are not allowed")
+        elif isinstance(node, ast.Name) and (node.id in _BANNED_NAMES or node.id.startswith("__")):
+            raise ValueError("unsafe name is not allowed")
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            if node.name.startswith("_") and node.name != "__init__":
+                raise ValueError("private functions are not allowed")
+    return compile(tree, "<candidate>", "exec")
+
+
+_SAFE_BUILTINS = {
+    "__build_class__": builtins.__build_class__,
+    "__import__": _safe_import,
+    "abs": abs,
+    "all": all,
+    "any": any,
+    "bool": bool,
+    "callable": callable,
+    "dict": dict,
+    "enumerate": enumerate,
+    "Exception": Exception,
+    "float": float,
+    "int": int,
+    "isinstance": isinstance,
+    "KeyError": KeyError,
+    "len": len,
+    "list": list,
+    "map": map,
+    "max": max,
+    "min": min,
+    "next": next,
+    "object": object,
+    "print": print,
+    "range": range,
+    "reversed": reversed,
+    "round": round,
+    "set": set,
+    "sorted": sorted,
+    "str": str,
+    "sum": sum,
+    "tuple": tuple,
+    "ValueError": ValueError,
+    "zip": zip,
+}
+
+
+def _audit(event, args):
+    blocked = (
+        "ctypes.", "os.", "pathlib.", "shutil.", "socket.", "subprocess.",
+        "winreg.",
+    )
+    if event == "open" or event.startswith(blocked):
+        raise PermissionError("candidate side effect blocked")
 
 
 def _h_levenshtein(ns):
@@ -126,12 +214,19 @@ def _main():
         return
 
     _apply_limits()
-    ns = {}
+    try:
+        compiled = _validate_candidate(code)
+    except Exception:
+        emit({"passes": 0, "total": 1})
+        return
+
+    ns = {"__builtins__": _SAFE_BUILTINS, "__name__": "__candidate__"}
     sink = io.StringIO()
     try:
+        sys.addaudithook(_audit)
         # Swallow anything the candidate prints so it can't pollute the result.
         with contextlib.redirect_stdout(sink), contextlib.redirect_stderr(sink):
-            exec(compile(code, "<candidate>", "exec"), ns)
+            exec(compiled, ns)
             passes, total = harness(ns)
     except BaseException:
         emit({"passes": 0, "total": 1})
@@ -144,11 +239,13 @@ _main()
 
 
 def run_code_fraction(code: str, harness: str, timeout: float = 8.0) -> float:
-    """Exec candidate ``code`` in a sandboxed subprocess; return pass fraction [0, 1].
+    """Exec candidate ``code`` in a restricted subprocess; return pass fraction [0, 1].
 
     ``harness`` selects which test battery to run ("levenshtein",
     "merge_intervals", "lru_cache"). Any failure yields 0.0.
     """
+    if not isinstance(code, str) or len(code) > 50_000:
+        return 0.0
     try:
         proc = subprocess.run(
             [sys.executable, "-I", "-c", _WORKER_SRC],
