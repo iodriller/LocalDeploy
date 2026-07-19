@@ -22,6 +22,8 @@ All notable changes to this project should be documented here.
 - Disabled Ollama's separate cloud-model feature in the bundled Docker runtime and in Ollama
   processes started by the Windows launcher. Clarified the boundary between LocalDeploy's offline
   setting and the network settings of a separately managed runtime.
+- Fixed the macOS/Linux launcher so API and Ollama addresses set only in `.env` are used for its
+  health checks, browser link, and server command.
 - Updated client examples to use the configured default profile and optional API token. Marked shell
   entry points executable for clones on macOS and Linux.
 
