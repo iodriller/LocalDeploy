@@ -20,7 +20,7 @@ On macOS or Linux:
 
 For API-only startup on Windows, use `.\scripts\start.ps1 -NoBrowser`. For foreground logs, use `.\scripts\start.ps1 -Foreground`.
 
-The launcher reads `API_HOST` and `API_PORT` from `.env`. When the server binds to `0.0.0.0`, the local browser link still uses `127.0.0.1`.
+The launchers read `API_HOST` and `API_PORT` from `.env`. When the server binds to `0.0.0.0`, the local browser link still uses `127.0.0.1`. On macOS and Linux, `start.sh` starts an installed Ollama server when needed. Use `START_OLLAMA=false` when Ollama is managed elsewhere, and `./scripts/stop.sh --ollama` to stop a server started by the launcher.
 
 llama.cpp is optional. Normal startup skips an incomplete llama.cpp configuration and leaves Ollama features available. Run `.\scripts\start_llamacpp.ps1` when you are intentionally starting a GGUF profile and want configuration errors to stop the launch.
 
@@ -116,6 +116,7 @@ Uploaded question sets contain data only. A fixed registry selects the grader, s
 | `number_within` | `expected`, optional `tolerance` | Passes when a parsed number is within tolerance |
 | `exact_match` | `expected`, optional `case_sensitive` | Passes when the trimmed response matches |
 | `classification_set` | `expected` list | Passes when the returned label set matches |
+| `json_keys_present` | `required` list, optional `allow_extra` | Passes when a JSON object contains the required top-level keys |
 
 ### Import and export
 
@@ -139,9 +140,8 @@ When `API_TOKEN` is set, open `/ui?token=<secret>` once. The UI stores the token
 
 This is a shared local token sent over HTTP. Keep the service on loopback. See [../SECURITY.md](../SECURITY.md) before changing network exposure.
 
-`OFFLINE=true` disables LocalDeploy's model-search and update-check requests. It does not configure a separately started inference runtime. The Docker setup and Windows launcher set `OLLAMA_NO_CLOUD=true` when they start Ollama.
-
-Set `OFFLINE=true` to disable model search requests and the GitHub release check. Local backend calls on loopback continue to work. Run `python scripts/egress_selftest.py` to check this mode.
+`OFFLINE=true` disables LocalDeploy's model-search and update-check requests. It does not configure a separately started inference runtime. The Docker setup and local launchers set `OLLAMA_NO_CLOUD=true` when they start Ollama.
+Run `python scripts/egress_selftest.py` to check this mode.
 
 ## Shortcuts and transport
 

@@ -20,7 +20,7 @@ If `API_HOST` is not a loopback address, startup prints a warning. `REQUIRE_TOKE
 
 ## Data and outbound requests
 
-Prompts, responses, images, hardware details, and benchmark reports are not uploaded by LocalDeploy. Monitor request history contains numeric timing and token counts, not prompt or response text. A separately managed runtime can have its own network behavior. The supplied Docker setup and Windows launcher set `OLLAMA_NO_CLOUD=true` when they start Ollama.
+Prompts, responses, images, hardware details, and benchmark reports are not uploaded by LocalDeploy. Monitor request history contains numeric timing and token counts, not prompt or response text. A separately managed runtime can have its own network behavior. The supplied Docker setup and local launchers set `OLLAMA_NO_CLOUD=true` when they start Ollama.
 
 Model search sends the search text to the Ollama library and Hugging Face. The UI also checks this repository's GitHub releases once per page load. Set `OFFLINE=true` to disable these LocalDeploy requests. Local backend calls continue to work. `python scripts/egress_selftest.py` checks the offline path.
 

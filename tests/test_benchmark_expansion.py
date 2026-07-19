@@ -139,7 +139,7 @@ def test_benchmark_packs_lists_known_packs():
     assert {"general", "coding", "structured", "reasoning"} <= ids
     coding = next(p for p in body["packs"] if p["id"] == "coding")
     assert coding["categories"] == ["code"]
-    assert coding["test_count"] == sum(1 for t in benchmark.TEST_CASES if t.category == "code")
+    assert coding["test_count"] == sum(1 for t in benchmark.builtin_test_cases() if t.category == "code")
 
 
 def test_run_with_pack_expands_to_include_categories(monkeypatch):
