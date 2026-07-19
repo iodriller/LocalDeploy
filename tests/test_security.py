@@ -33,7 +33,8 @@ def test_ui_and_health_stay_open_with_token(monkeypatch):
     monkeypatch.setenv("API_TOKEN", "secret")
     # The page must load (so it can prompt for the token) and health must answer.
     assert client.get("/ui/").status_code == 200
-    assert client.get("/ui/app.js").status_code == 200
+    for module in ("app", "shared", "system", "models", "chat", "benchmark", "benchmark-views"):
+        assert client.get(f"/ui/js/{module}.js").status_code == 200
     assert client.get("/health").status_code == 200
 
 

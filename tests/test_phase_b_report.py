@@ -123,6 +123,85 @@ def test_render_html_no_tps_label_when_absent() -> None:
     assert "tok/s</p>" not in html  # but no aggregate label in the summary line
 
 
+def test_render_html_escapes_injected_summary_and_category_fields() -> None:
+    # Regression: POST /benchmark/export takes an unvalidated JSON body, and
+    # build_card() uses payload["summary"]/payload["category_summary"] as-is
+    # when the caller supplies them. render_html() escaped test rows but
+    # interpolated summary/category numeric-looking fields raw, so a crafted
+    # payload could inject a <script> tag into the exported, shareable HTML.
+    payload = {
+        "profile": "p",
+        "model_id": "m",
+        "tests": _tests(),
+        "repetitions": "<script>evil('reps')</script>",
+        "summary": {
+            "tests": "<script>evil('tests')</script>",
+            "passed": "<script>evil('passed')</script>",
+            "avg_accuracy": "<script>evil('acc')</script>",
+            "avg_latency_s": "<script>evil('lat')</script>",
+            "avg_tokens_per_second": "<script>evil('tps')</script>",
+        },
+        "category_summary": [
+            {
+                "category": "<script>evil('cat')</script>",
+                "tests": "<script>evil('cattests')</script>",
+                "passed": "<script>evil('catpassed')</script>",
+                "avg_accuracy": "<script>evil('catacc')</script>",
+                "avg_latency_s": "<script>evil('catlat')</script>",
+            }
+        ],
+    }
+    card = build_card(payload)
+    html = render_html(card)
+    md = render_md(card)
+    assert "<script>evil(" not in html
+    assert "&lt;script&gt;evil(" in html
+    assert "<script>evil(" not in md
+    assert "&lt;script&gt;evil(" in md
+
+
+def test_render_md_escapes_table_and_inline_code_delimiters() -> None:
+    card = build_card({"profile": "p`oops", "model_id": "m", "tests": [
+        {"name": "left|right", "category": "a", "success": True, "accuracy": 1.0, "elapsed_seconds": 1.0},
+    ]})
+    md = render_md(card)
+    assert "`p\\`oops`" in md
+    assert "left\\|right" in md
+
+
+def test_export_tolerates_malformed_nested_compatibility_fields() -> None:
+    response = client.post("/benchmark/export", json={
+        "profile": {"unexpected": "object"},
+        "device": {"unexpected": "object"},
+        "tests": "not-a-list",
+        "summary": ["not-a-mapping"],
+        "hardware": ["not-a-mapping"],
+        "provenance": {"profiles": []},
+        "category_summary": ["not-a-row"],
+    })
+    assert response.status_code == 200
+    body = response.json()
+    assert body["success"] is True
+    assert body["card"]["tests"] == []
+    assert body["card"]["summary"]["tests"] == 0
+
+
+def test_compare_tolerates_malformed_imported_card_fields() -> None:
+    response = client.post("/benchmark/compare", json={
+        "card_a": {
+            "profile": ["bad-key"], "device": {"bad": "shape"},
+            "tests": ["bad-row", {"name": ["unhashable"], "accuracy": "not-a-number"}],
+            "summary": {"avg_accuracy": "not-a-number"},
+            "provenance": {"profiles": [], "hardware": {"gpus": ["bad-gpu"]}},
+        },
+        "card_b": {"tests": [], "summary": {"avg_accuracy": 1.0}},
+    })
+    assert response.status_code == 200
+    body = response.json()
+    assert body["success"] is True
+    assert body["summary_delta"]["avg_accuracy"] is None
+
+
 # ---- compare: tok/s deltas --------------------------------------------------
 
 def test_compare_includes_tps_delta() -> None:

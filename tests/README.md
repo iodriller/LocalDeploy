@@ -55,7 +55,8 @@ pytest tests/test_guardrails.py -v
 **Web API & UI**
 - `test_api_routes.py` — HTTP-level routes via TestClient (models, profiles, streaming SSE, 501s).
 - `test_web_endpoints.py` — web control-plane routes (serve, stop, switch, hardware, status, recommend).
-- `test_web_assets.py` — JS parses as valid JavaScript, cache-busting version strings are correct, UI controls have expected IDs.
+- `test_web_assets.py` — all seven native ES modules parse, import without browser side effects, follow the allowed acyclic dependency graph, and share one cache-busting token.
+- `test_web_js_units.py` / `js/*.test.mjs` — dependency-free Node tests for pure model normalization, benchmark summaries, and benchmark view builders.
 - `test_web_differentiators.py` — report card export and A/B compare endpoints.
 - `test_ui_playwright.py` — **browser** smoke tests: launches the real app and drives `/ui` in
   headless Chromium (tab switching, benchmark run-library per-run delete, clear-history confirm).

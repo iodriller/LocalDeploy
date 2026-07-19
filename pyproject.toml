@@ -73,7 +73,7 @@ version = { attr = "localdeploy.__version__" }
 include = ["localdeploy*"]
 
 [tool.setuptools.package-data]
-localdeploy = ["web/*"]
+localdeploy = ["web/*", "web/js/*.js"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

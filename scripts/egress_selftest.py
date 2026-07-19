@@ -39,7 +39,7 @@ socket.socket.connect = _guarded_connect  # type: ignore[assignment]
 
 def main() -> int:
     # Import after the guard is installed.
-    from localdeploy.control import fit, hardware, registry
+    from localdeploy.control import fit, hardware, registry, updates
     from localdeploy.control.fit import FitRequest
     from localdeploy.control.registry import CheckUpdatesRequest
 
@@ -47,14 +47,17 @@ def main() -> int:
     hardware.detect_hardware()
     fit.fit_check(FitRequest(profile="gemma3_4b_ollama_safe", free_vram_mb=8192))
 
-    # The one internet-egress action; in offline mode it must be skipped (no socket).
+    # The internet-egress actions; in offline mode both must be skipped (no socket).
     result = registry.check_updates(CheckUpdatesRequest(queries=["gemma"]))
+    update_result = updates.update_check()
 
     online = result.get("online")
+    update_checked = update_result.get("checked")
     print(f"check-updates online flag: {online}")
+    print(f"update-check checked flag: {update_checked}")
     print(f"non-loopback egress attempts: {_blocked or 'none'}")
 
-    ok = (not _blocked) and (online is False)
+    ok = (not _blocked) and (online is False) and (update_checked is False)
     print("OFFLINE_SELFTEST_PASS" if ok else "OFFLINE_SELFTEST_FAIL")
     return 0 if ok else 1
 

@@ -16,7 +16,6 @@ except ImportError:  # pragma: no cover
 
 from api_server import app
 from localdeploy.control import _ollama, calibration, hardware, monitor
-from localdeploy.control import fit as fit_mod
 
 client = TestClient(app)
 
@@ -67,13 +66,15 @@ def test_note_stop_without_serve_state_is_none():
     assert monitor.note_stop("never-served:1b") is None
 
 
-def test_note_stop_feeds_calibration(monkeypatch):
-    monkeypatch.setattr(fit_mod, "detect_hardware", lambda: _hw())
+def test_note_stop_does_not_calibrate_from_system_wide_vram():
+    # Hardware sampling reports whole-machine GPU usage, not this model's
+    # allocation. Session summaries may retain the peak for diagnostics, but
+    # only Ollama's model-specific size_vram reading is valid calibration input.
     monitor.note_serve("qwen3:8b", "GPU")
     monitor._hw_history.append({"ts": time.time(), "vram_used_mb": 9000, "vram_total_mb": 16384, "vram_pct": 55.0})
-    monitor.note_stop("qwen3:8b")
-    stats = calibration.stats()
-    assert stats["samples"] >= 1
+    summary = monitor.note_stop("qwen3:8b")
+    assert summary["peak_vram_mb"] == 9000
+    assert calibration.stats()["samples"] == 0
 
 
 def test_model_card_aggregates_recent_requests():
@@ -91,6 +92,75 @@ def test_model_card_aggregates_recent_requests():
     assert card["failure_count"] == 1
     assert card["median_tokens_per_second"] == 20.0
     assert card["uptime_seconds"] is not None
+
+
+def test_model_card_active_requests_counts_only_in_flight_calls():
+    monitor.note_serve("qwen3:8b", None)
+    first = monitor.note_request_start("qwen3:8b")
+    second = monitor.note_request_start("qwen3:8b")
+    monitor.record_request(
+        profile="p", model="qwen3:8b", backend="ollama", kind="chat", success=True,
+        elapsed_seconds=0.2, metrics={"tokens_per_second": 20.0}, context_limit=4096,
+    )
+    card = monitor._model_card({"name": "qwen3:8b", "placement": "GPU"})
+    assert card["active_requests"] == 2
+    monitor.note_request_end("qwen3:8b", first)
+    card = monitor._model_card({"name": "qwen3:8b", "placement": "GPU"})
+    assert card["active_requests"] == 1
+    monitor.note_request_end("qwen3:8b", first)  # duplicate finish is idempotent
+    assert monitor._model_card({"name": "qwen3:8b"})["active_requests"] == 1
+    monitor.note_request_end("qwen3:8b", second)
+    assert monitor._model_card({"name": "qwen3:8b"})["active_requests"] == 0
+    assert card["request_count"] == 1
+
+
+def test_model_card_active_requests_feeds_the_concurrency_alert():
+    card = {
+        "name": "qwen3:8b", "requested_device": None, "placement": "GPU",
+        "median_tokens_per_second": None, "recent_tokens_per_second": None, "active_requests": 2,
+    }
+    alerts = monitor._alerts({}, [card])
+    assert any("simultaneous requests" in a["text"] for a in alerts)
+
+
+def test_find_serve_state_exact_match():
+    monitor.note_serve("gemma3:4b", "GPU")
+    state = monitor._find_serve_state("gemma3:4b")
+    assert state is not None
+    assert state["requested_device"] == "GPU"
+
+
+def test_find_serve_state_falls_back_to_fuzzy_match():
+    # note_serve was called with a bare/tagless name; Ollama reports the
+    # fully-qualified ":latest" form back via /api/ps — the exact dict key
+    # 'llama3' won't match 'llama3:latest' but the two clearly refer to the
+    # same deployment.
+    monitor.note_serve("llama3", "CPU")
+    state = monitor._find_serve_state("llama3:latest")
+    assert state is not None
+    assert state["requested_device"] == "CPU"
+
+
+def test_find_serve_state_no_match_returns_none():
+    monitor.note_serve("gemma3:4b", "GPU")
+    assert monitor._find_serve_state("qwen3:8b") is None
+
+
+def test_model_card_uses_fuzzy_serve_state_for_uptime():
+    monitor.note_serve("llama3", None)
+    card = monitor._model_card({"name": "llama3:latest", "placement": "GPU"})
+    assert card["uptime_seconds"] is not None
+
+
+def test_model_card_matches_request_history_across_latest_alias():
+    monitor.note_serve("llama3", None)
+    monitor.record_request(
+        profile="p", model="llama3", backend="ollama", kind="chat", success=True,
+        elapsed_seconds=0.2, metrics={"tokens_per_second": 20.0}, context_limit=4096,
+    )
+    card = monitor._model_card({"name": "llama3:latest", "placement": "GPU"})
+    assert card["request_count"] == 1
+    assert card["median_tokens_per_second"] == 20.0
 
 
 def test_alerts_placement_mismatch():

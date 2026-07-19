@@ -630,6 +630,7 @@ def models_switch(req: SwitchRequest) -> Dict[str, Any]:
         try:
             _ollama.unload_model(req.from_model)
             unloaded = req.from_model
+            monitor.note_stop(req.from_model)
         except (BackendCallError, requests.RequestException):
             unloaded = None  # best-effort; serving the new model is what matters
 

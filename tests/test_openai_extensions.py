@@ -105,6 +105,86 @@ def test_responses_stream_emits_progressive_typed_events(monkeypatch) -> None:
     assert '"output_text": "hello world"' in response.text
 
 
+def test_chat_completions_stream_feeds_monitor(monkeypatch) -> None:
+    # Regression: streaming responses bypassed run_local_request entirely, so
+    # the Monitor tab's request log/alerts never saw streamed traffic — likely
+    # the majority of real OpenAI-compatible client usage (Continue, Cline, etc).
+    from localdeploy.control import monitor
+
+    monkeypatch.setattr(
+        api_server,
+        "stream_ollama_events",
+        lambda prepared: iter(
+            [
+                {"content": "hi", "tool_calls": [], "done": False, "metrics": None},
+                {"content": "", "tool_calls": [], "done": True, "done_reason": "stop",
+                 "metrics": {"prompt_eval_count": 5, "eval_count": 3, "tokens_per_second": 12.0}},
+            ]
+        ),
+    )
+    calls = []
+    monkeypatch.setattr(monitor, "record_request", lambda **kwargs: calls.append(kwargs))
+    response = client.post(
+        "/v1/chat/completions",
+        json={"model": "gemma3_4b_ollama_safe", "messages": [{"role": "user", "content": "hi"}], "stream": True},
+    )
+    assert response.headers["content-type"].startswith("text/event-stream")
+    assert len(calls) == 1
+    assert calls[0]["success"] is True
+    assert calls[0]["kind"] == "chat"
+    assert calls[0]["metrics"]["tokens_per_second"] == 12.0
+    assert monitor._active_requests == {}
+
+
+def test_chat_completions_stream_error_still_feeds_monitor(monkeypatch) -> None:
+    from localdeploy.backends.ollama import BackendCallError
+    from localdeploy.control import monitor
+
+    def _boom(prepared):
+        raise BackendCallError("Ollama is not running or is unreachable.")
+        yield  # pragma: no cover - unreachable, keeps this a generator
+
+    monkeypatch.setattr(api_server, "stream_ollama_events", _boom)
+    calls = []
+    monkeypatch.setattr(monitor, "record_request", lambda **kwargs: calls.append(kwargs))
+    response = client.post(
+        "/v1/chat/completions",
+        json={"model": "gemma3_4b_ollama_safe", "messages": [{"role": "user", "content": "hi"}], "stream": True},
+    )
+    assert response.headers["content-type"].startswith("text/event-stream")
+    assert len(calls) == 1
+    assert calls[0]["success"] is False
+    assert "unreachable" in calls[0]["error"]
+    assert monitor._active_requests == {}
+
+
+def test_responses_stream_feeds_monitor(monkeypatch) -> None:
+    from localdeploy.control import monitor
+
+    monkeypatch.setattr(
+        api_server,
+        "stream_ollama_events",
+        lambda prepared: iter(
+            [
+                {"content": "hello ", "tool_calls": [], "done": False, "metrics": None},
+                {"content": "world", "tool_calls": [], "done": True, "done_reason": "stop",
+                 "metrics": {"prompt_eval_count": 3, "eval_count": 2, "ttft_ms": 150.0}},
+            ]
+        ),
+    )
+    calls = []
+    monkeypatch.setattr(monitor, "record_request", lambda **kwargs: calls.append(kwargs))
+    response = client.post(
+        "/v1/responses",
+        json={"model": "gemma3_4b_ollama_safe", "input": "Say hello", "stream": True},
+    )
+    assert response.headers["content-type"].startswith("text/event-stream")
+    assert len(calls) == 1
+    assert calls[0]["success"] is True
+    assert calls[0]["metrics"]["ttft_ms"] == 150.0
+    assert monitor._active_requests == {}
+
+
 def test_embeddings_base64_is_little_endian_float32(monkeypatch) -> None:
     monkeypatch.setattr(
         api_server,
