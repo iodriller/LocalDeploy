@@ -53,9 +53,8 @@ Use the released version in place of `0.5.1`.
 GitHub does not expose some public-repository security settings while this repository is private. After changing visibility, enable these settings before announcing the project:
 
 - Private vulnerability reporting under Settings / Security / Advanced Security.
-- Dependabot alerts and security updates.
 - Secret scanning and push protection when GitHub offers them for the repository.
 - A ruleset for `main` that requires the CI workflow and blocks force pushes and deletion.
 - Automatically delete head branches after pull requests merge.
 
-The repository contains `.github/dependabot.yml`, so version-update pull requests can begin after Dependabot is enabled. The security policy explains the supported private reporting route.
+The security policy explains the supported private reporting route.
