@@ -2,7 +2,7 @@
 # server's loopback-only backend guard is preserved. One container, one URL.
 # Pinned (not :latest) so a fresh `docker compose build` is reproducible; bump
 # deliberately when picking up a newer Ollama release.
-FROM ollama/ollama:0.31.1@sha256:f1a705f2bd113fb8d15f85f7c217f0dc5f6bebda6b0cc42b82c3ad165ffcb9dc
+FROM ollama/ollama:0.32.1@sha256:6345fbc18bd73a1e16404be681dbc6fd291a027cab43ed541abe78c4c81051b0
 
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update \
