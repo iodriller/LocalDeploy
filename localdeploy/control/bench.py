@@ -11,7 +11,6 @@ hard import-order coupling.
 """
 from __future__ import annotations
 
-import dataclasses
 import json
 import threading
 from datetime import datetime, timezone
@@ -43,7 +42,7 @@ def _bench():
     if _bench_module is None:
         with _bench_lock:
             if _bench_module is None:
-                import benchmark  # avoids importing the big module + TEST_CASES at boot
+                import benchmark  # avoids importing the benchmark engine at boot
 
                 _bench_module = benchmark
     return _bench_module
@@ -57,7 +56,7 @@ def benchmark_example() -> Dict[str, Any]:
 @router.get("/benchmark/test-bench")
 def benchmark_test_bench() -> Dict[str, Any]:
     bench = _bench()
-    tests = list(bench.TEST_CASES)
+    tests = bench.builtin_test_cases()
     categories: Dict[str, int] = {}
     for test in tests:
         categories[test.category] = categories.get(test.category, 0) + 1
@@ -117,7 +116,8 @@ BENCHMARK_PACKS: Dict[str, Dict[str, Any]] = {
 @router.get("/benchmark/packs")
 def benchmark_packs() -> Dict[str, Any]:
     bench = _bench()
-    known_categories = {t.category for t in bench.TEST_CASES}
+    tests = bench.builtin_test_cases()
+    known_categories = {t.category for t in tests}
     packs = []
     for key, pack in BENCHMARK_PACKS.items():
         cats = [c for c in pack["categories"] if c in known_categories]
@@ -127,7 +127,7 @@ def benchmark_packs() -> Dict[str, Any]:
                 "label": pack["label"],
                 "description": pack["description"],
                 "categories": cats,
-                "test_count": sum(1 for t in bench.TEST_CASES if t.category in cats),
+                "test_count": sum(1 for t in tests if t.category in cats),
             }
         )
     return {"success": True, "packs": packs}
@@ -156,9 +156,8 @@ def benchmark_run(req: RunRequest):
     if not selected:
         return {"success": False, "error": "No profiles selected or enabled in config."}
 
-    # Build the test list. Copies are used so the shared module-level TEST_CASES
-    # are never mutated by a request (the CLI mutates in-place for a single run;
-    # a long-lived server must not).
+    # Build a fresh test list so request-specific limits and filtering cannot
+    # mutate the built-in definitions used by another request.
     if req.questions is not None:
         report = bench.validate_question_set(req.questions)
         if not report["valid"]:
@@ -170,8 +169,8 @@ def benchmark_run(req: RunRequest):
         if not include and req.pack and req.pack in BENCHMARK_PACKS:
             include = set(BENCHMARK_PACKS[req.pack]["categories"])
         tests = [
-            dataclasses.replace(t)
-            for t in bench.TEST_CASES
+            t
+            for t in bench.builtin_test_cases()
             if t.category not in skip and (not include or t.category in include)
         ]
     if not tests:
@@ -466,7 +465,7 @@ def benchmark_context_sweep(req: ContextSweepRequest):
             return
 
         profile = profiles_map[req.profile]
-        tests = sorted(bench.TEST_CASES, key=lambda t: t.max_output_tokens)[: max(1, req.sample_size)]
+        tests = sorted(bench.builtin_test_cases(), key=lambda t: t.max_output_tokens)[: max(1, req.sample_size)]
         base_url = bench.api_base_url()
         contexts = sorted(dict.fromkeys(c for c in req.contexts if c > 0))
         yield sse(

@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
-# Local (non-Docker) launcher for macOS/Linux: sets up a venv, installs deps,
-# and starts the API + UI. Requires Ollama installed and running separately
-# (https://ollama.com). For a zero-setup all-in-one, use `docker compose up`.
+# Local (non-Docker) launcher for macOS/Linux: sets up a venv, starts Ollama
+# when it is installed but not running, then starts the API and UI.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -49,9 +48,12 @@ fi
 
 # Match the Python server's dotenv behavior without sourcing .env as shell code.
 # Explicit shell values still win over the file, just as they do in start.ps1.
-IFS=$'\t' read -r HOST PORT OLLAMA_URL < <(
-  "$PYTHON" - "${API_HOST:-}" "${API_PORT:-}" "${OLLAMA_BASE_URL:-}" <<'PY'
+IFS=$'\t' read -r HOST PORT OLLAMA_URL START_OLLAMA_VALUE OLLAMA_NO_CLOUD_VALUE OLLAMA_HOST_VALUE < <(
+  "$PYTHON" - "${API_HOST:-}" "${API_PORT:-}" "${OLLAMA_BASE_URL:-}" \
+    "${START_OLLAMA:-}" "${OLLAMA_NO_CLOUD:-}" <<'PY'
 import sys
+from ipaddress import ip_address
+from urllib.parse import urlsplit
 
 from dotenv import dotenv_values
 
@@ -60,6 +62,8 @@ requested = (
     (sys.argv[1], "API_HOST", "127.0.0.1"),
     (sys.argv[2], "API_PORT", "8000"),
     (sys.argv[3], "OLLAMA_BASE_URL", "http://127.0.0.1:11434"),
+    (sys.argv[4], "START_OLLAMA", "true"),
+    (sys.argv[5], "OLLAMA_NO_CLOUD", "true"),
 )
 resolved = []
 for explicit, name, default in requested:
@@ -68,13 +72,75 @@ for explicit, name, default in requested:
         raise SystemExit(f"Invalid control character in {name}")
     resolved.append(value)
 resolved[2] = resolved[2].rstrip("/")
-print("\t".join(resolved))
+for index, name in ((3, "START_OLLAMA"), (4, "OLLAMA_NO_CLOUD")):
+    normalized = resolved[index].lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        resolved[index] = "true"
+    elif normalized in {"0", "false", "no", "off"}:
+        resolved[index] = "false"
+    else:
+        raise SystemExit(f"{name} must be true or false")
+parsed = urlsplit(resolved[2])
+if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+    raise SystemExit("OLLAMA_BASE_URL must be an HTTP URL")
+if parsed.username or parsed.password or parsed.query or parsed.fragment or parsed.path not in {"", "/"}:
+    raise SystemExit("OLLAMA_BASE_URL must contain only a local host and optional port")
+hostname = (parsed.hostname or "").lower()
+try:
+    is_loopback = hostname == "localhost" or ip_address(hostname).is_loopback
+    parsed.port  # validates the optional port
+except ValueError:
+    is_loopback = False
+if not is_loopback:
+    raise SystemExit("OLLAMA_BASE_URL must use localhost or a loopback IP address")
+print("\t".join([*resolved, parsed.netloc]))
 PY
 )
 
-if ! command -v ollama >/dev/null 2>&1 && ! curl -fsS --max-time 2 "${OLLAMA_URL}/api/tags" >/dev/null 2>&1; then
-  echo "[start] NOTE: Ollama was not found. Install it from https://ollama.com/download -"
-  echo "        the UI will start anyway and shows Ollama's status on the Setup tab."
+ollama_ready() {
+  curl -fsS --max-time 2 "${OLLAMA_URL}/api/tags" >/dev/null 2>&1
+}
+
+if ! ollama_ready; then
+  if ! command -v ollama >/dev/null 2>&1; then
+    echo "[start] NOTE: Ollama was not found. Install it from https://ollama.com/download."
+    echo "        The UI will start anyway and shows Ollama's status on the Setup tab."
+  elif [ "$START_OLLAMA_VALUE" = "false" ]; then
+    echo "[start] Ollama is not reachable and automatic startup is disabled (START_OLLAMA=false)."
+  else
+    mkdir -p logs
+    managed_pid=""
+    if [ -f logs/ollama.pid ]; then
+      managed_pid="$(cat logs/ollama.pid 2>/dev/null || true)"
+      case "$managed_pid" in
+        ''|*[!0-9]*) managed_pid="" ;;
+        *) kill -0 "$managed_pid" 2>/dev/null || managed_pid="" ;;
+      esac
+    fi
+    if [ -z "$managed_pid" ]; then
+      rm -f logs/ollama.pid
+      echo "[start] starting Ollama ..."
+      OLLAMA_NO_CLOUD="$OLLAMA_NO_CLOUD_VALUE" OLLAMA_HOST="$OLLAMA_HOST_VALUE" \
+        nohup ollama serve >logs/ollama.out.log 2>logs/ollama.err.log &
+      managed_pid=$!
+      printf '%s\n' "$managed_pid" > logs/ollama.pid
+    else
+      echo "[start] waiting for the Ollama process started earlier (PID $managed_pid) ..."
+    fi
+    for ((attempt = 0; attempt < 20; attempt++)); do
+      ollama_ready && break
+      kill -0 "$managed_pid" 2>/dev/null || break
+      sleep 0.75
+    done
+    if ollama_ready; then
+      echo "[start] Ollama is ready at $OLLAMA_URL"
+    elif ! kill -0 "$managed_pid" 2>/dev/null; then
+      rm -f logs/ollama.pid
+      echo "[start] WARNING: Ollama exited during startup. Check logs/ollama.err.log." >&2
+    else
+      echo "[start] WARNING: Ollama has not answered yet. Check logs/ollama.err.log." >&2
+    fi
+  fi
 fi
 
 BROWSE_HOST="$HOST"
@@ -84,6 +150,7 @@ case "$BROWSE_HOST" in
 esac
 UI_URL="http://${BROWSE_HOST}:${PORT}/ui"
 echo "[start] LocalDeploy UI:  $UI_URL"
+echo "[start] Stop: ./scripts/stop.sh  (add --ollama to stop a managed Ollama process)"
 
 # Open the UI once the server answers (set NO_BROWSER=1 to skip).
 if [ -z "${NO_BROWSER:-}" ]; then
@@ -92,7 +159,7 @@ if [ -z "${NO_BROWSER:-}" ]; then
   command -v open >/dev/null 2>&1 && opener="open"
   if [ -n "$opener" ]; then
     (
-      for _ in $(seq 1 60); do
+      for ((attempt = 0; attempt < 60; attempt++)); do
         if curl -fsS "http://${BROWSE_HOST}:${PORT}/health" >/dev/null 2>&1; then
           "$opener" "$UI_URL" >/dev/null 2>&1 || true
           break
@@ -103,4 +170,6 @@ if [ -z "${NO_BROWSER:-}" ]; then
   fi
 fi
 
+mkdir -p logs
+printf '%s\n' "$$" > logs/api_server.pid
 exec uvicorn api_server:app --host "$HOST" --port "$PORT"

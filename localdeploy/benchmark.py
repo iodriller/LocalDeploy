@@ -1620,6 +1620,7 @@ GRADER_TYPES = [
     "number_within",
     "exact_match",
     "classification_set",
+    "json_keys_present",
 ]
 
 
@@ -1698,6 +1699,34 @@ def build_grader(spec: Any) -> Callable[[str], float]:
             return 1.0 if got == expected_set else 0.0
 
         return grade_set
+
+    if gtype == "json_keys_present":
+        required = spec.get("required")
+        if not isinstance(required, list) or not required:
+            raise ValueError("json_keys_present requires a non-empty 'required' list")
+        if len(required) > 100:
+            raise ValueError("json_keys_present accepts at most 100 required keys")
+        if any(not isinstance(key, str) or not key.strip() or len(key) > 256 for key in required):
+            raise ValueError("json_keys_present keys must be non-empty strings up to 256 characters")
+        if len(set(required)) != len(required):
+            raise ValueError("json_keys_present 'required' keys must be unique")
+        allow_extra = spec.get("allow_extra", True)
+        if not isinstance(allow_extra, bool):
+            raise ValueError("json_keys_present 'allow_extra' must be a boolean")
+        required_keys = set(required)
+
+        def grade_keys(text: str) -> float:
+            data = _extract_json(text)
+            if not isinstance(data, dict):
+                return 0.0
+            actual_keys = set(data)
+            if not required_keys.issubset(actual_keys):
+                return 0.0
+            if not allow_extra and actual_keys != required_keys:
+                return 0.0
+            return 1.0
+
+        return grade_keys
 
     if gtype == "builtin":
         name = spec.get("name")
@@ -1781,7 +1810,70 @@ def build_test_cases(payload: Dict[str, Any]) -> List[TestCase]:
 GRADER_TYPES = tuple(dict.fromkeys([*GRADER_TYPES, "builtin"]))
 
 
+BUILTIN_DATA_QUESTIONS: List[Dict[str, Any]] = [
+    {
+        "name": "plan_incident_triage_array",
+        "category": "planning",
+        "prompt": (
+            "A checkout API has a sudden error-rate spike. Return a JSON array containing at least four "
+            "ordered triage steps, starting with the cheapest observation. JSON only."
+        ),
+        "max_output_tokens": 300,
+        "grader": {"type": "json_array_min_len", "min": 4},
+        "grader_explainer": "Valid JSON array with at least four ordered triage steps.",
+    },
+    {
+        "name": "cls_incident_signals",
+        "category": "classification",
+        "prompt": (
+            "A service returns HTTP 503 for 30% of requests and its p95 response time doubled. "
+            "Choose every matching label from [availability, latency, correctness, security]. "
+            "Return a JSON array of labels only."
+        ),
+        "max_output_tokens": 40,
+        "grader": {"type": "classification_set", "expected": ["availability", "latency"]},
+        "grader_explainer": "Label set is exactly availability and latency.",
+    },
+    {
+        "name": "code_merge_sort_complexity",
+        "category": "code",
+        "prompt": (
+            "State the worst-case time complexity and auxiliary space complexity of merge sort on an array. "
+            "Use Big O notation and include no implementation."
+        ),
+        "max_output_tokens": 80,
+        "grader": {"type": "contains_all", "keywords": ["O(n log n)", "O(n)"]},
+        "grader_explainer": "Contains O(n log n) time and O(n) auxiliary space.",
+    },
+    {
+        "name": "math_percentage_increase",
+        "category": "math",
+        "prompt": "A latency value rises from 80 ms to 100 ms. What is the percentage increase? Reply with the number only.",
+        "max_output_tokens": 32,
+        "grader": {"type": "number_within", "expected": 25, "tolerance": 0.1},
+        "grader_explainer": "Answer is within 0.1 of 25.",
+    },
+    {
+        "name": "json_release_metadata_keys",
+        "category": "structured",
+        "prompt": (
+            "Return a JSON object describing a software release with keys version, date, changes, and breaking. "
+            "Use an array for changes and a boolean for breaking. JSON only."
+        ),
+        "max_output_tokens": 180,
+        "grader": {
+            "type": "json_keys_present",
+            "required": ["version", "date", "changes", "breaking"],
+        },
+        "grader_explainer": "JSON object contains version, date, changes, and breaking keys.",
+    },
+]
+
+
 BUILTIN_GRADER_BY_NAME = {test.name: test.grader for test in TEST_CASES}
+BUILTIN_GRADER_BY_NAME.update(
+    {question["name"]: build_grader(question["grader"]) for question in BUILTIN_DATA_QUESTIONS}
+)
 
 
 BUILTIN_QUESTION_SET: Dict[str, Any] = {
@@ -1796,8 +1888,17 @@ BUILTIN_QUESTION_SET: Dict[str, Any] = {
             "grader_explainer": test.grader_explainer,
         }
         for test in TEST_CASES
-    ],
+    ] + [dict(question) for question in BUILTIN_DATA_QUESTIONS],
 }
+
+
+def builtin_test_cases() -> List[TestCase]:
+    """Return a fresh set of every built-in benchmark case.
+
+    Building new objects for each caller keeps request-specific token limits
+    and filtering from mutating the shared grader definitions.
+    """
+    return build_test_cases(BUILTIN_QUESTION_SET)
 
 
 EXAMPLE_QUESTION_SET: Dict[str, Any] = {
@@ -1842,7 +1943,11 @@ def main() -> int:
 
     skip = {c.strip() for c in (args.skip_categories or "").split(",") if c.strip()}
     include = {c.strip() for c in (args.include_categories or "").split(",") if c.strip()}
-    tests = [t for t in TEST_CASES if t.category not in skip and (not include or t.category in include)]
+    tests = [
+        t
+        for t in builtin_test_cases()
+        if t.category not in skip and (not include or t.category in include)
+    ]
     if args.max_output_tokens:
         for t in tests:
             if t.category != "classification":

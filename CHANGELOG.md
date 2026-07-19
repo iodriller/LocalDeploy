@@ -24,6 +24,12 @@ All notable changes to this project should be documented here.
   setting and the network settings of a separately managed runtime.
 - Fixed the macOS/Linux launcher so API and Ollama addresses set only in `.env` are used for its
   health checks, browser link, and server command.
+- Added managed Ollama startup to the macOS/Linux launcher and a conservative `stop.sh` that only
+  stops processes launched by this checkout.
+- Consolidated runtime dependency metadata around `requirements.txt`; development tools now live
+  only in the `.[dev]` package extra.
+- Expanded the starter catalog with verified Qwen 3.5 local tags, added five data-only benchmark
+  questions, and added a safe `json_keys_present` grader for custom question sets.
 - Updated client examples to use the configured default profile and optional API token. Marked shell
   entry points executable for clones on macOS and Linux.
 
@@ -179,7 +185,7 @@ actually on your machine.
   "pull a model first" instead of "Unknown profile 'gemma3_4b_ollama_safe'".
 - UI hides profiles whose model isn't on the machine. The benchmark model picker
   hides them by default behind a "Show N hidden (model not pulled)" toggle, the
-  profile dropdowns annotate them, and a new **Remove not-pulled profiles** button
+  profile dropdowns annotate them, and a new Remove not-pulled profiles button
   (Advanced → All run profiles) deletes them in one click. For llama.cpp profiles the
   server now reports whether the GGUF file exists (`model_file_exists` on `/profiles`),
   so dead file paths get the same treatment as un-pulled Ollama models.
@@ -251,12 +257,12 @@ First public release.
   Split). It now warns and proceeds, recording the run with its actual placement.
 - Benchmark history/queue management: per-run delete (×) in the run library, a confirm on
   Clear history, and the ability to dismiss finished/failed queue rows (individually or via
-  **Clear finished**); failed rows show their error reason inline. The running-model **Kill**
-  button is now **Unload** for consistency.
+  Clear finished); failed rows show their error reason inline. The running-model Kill
+  button is now Unload for consistency.
 - Browser UI smoke tests (`tests/test_ui_playwright.py`): optional Playwright-driven checks
   that load the real `/ui` in headless Chromium and exercise tab switching and the benchmark
   history controls. They skip cleanly when Playwright or its browser isn't installed; added
-  `playwright` to `requirements-dev.txt`.
+  `playwright` to the development dependencies.
 - Fixed: the web UI was completely broken: `web/app.js` contained smart/curly quotes
   (`“ ”`) used as string delimiters in the "Check New Models" function, a `SyntaxError` that
   prevented the *entire* script from parsing (blank/dead UI). Replaced with straight quotes.
@@ -265,7 +271,7 @@ First public release.
 - Benchmark workspace V2: the benchmark tab is now a local experiment workspace with a
   multi-profile Run Builder, sequential run queue, leaderboard, category heatmap, SVG
   speed/quality scatter, per-test matrix, local browser history, selected-run comparison, and
-  report-card import/export. **CPU + GPU** now creates two queued benchmark batches instead of a
+  report-card import/export. CPU + GPU now creates two queued benchmark batches instead of a
   separate special-case button.
 - Benchmark queue UX: waiting benchmark rows can now be moved up/down or removed before they
   run, while the active run appears only in the main progress panel with elapsed time.
@@ -279,31 +285,31 @@ First public release.
 - Quieter device auto-detect (inline note instead of a per-run toast); the run progress bar is
   now an ARIA `progressbar` so screen readers announce progress.
 
-- Honest device tag: the benchmark Device tag now defaults to **Auto (detect)** and is
+- Honest device tag: the benchmark Device tag now defaults to Auto (detect) and is
   resolved from the model's *actual* placement (GPU/CPU/Split via `/system/status`) after the
   run, so report cards can't be silently mislabelled. Manual GPU/CPU stays an override and warns
   if it disagrees with what's detected.
 - Apple Silicon (Metal) detection: `/system/hardware` now reports Apple Silicon GPUs instead
   of claiming "CPU-only" on a Mac. Unified memory is surfaced as such (no false VRAM figure; fit
   checks use system RAM). NVIDIA still takes precedence where present.
-- Pull fit-gate respects the tiered warnings: a model that won't fit VRAM but **runs on CPU**
+- Pull fit-gate respects the tiered warnings: a model that won't fit VRAM but runs on CPU
   is no longer blocked behind the override: the gate now hard-blocks only the "fits nowhere"
   (`severity: hard`) case and notes the CPU fallback for the soft case.
 - Tune for my GPU labels skipped CPU-capable profiles as "CPU-only (skipped for GPU tuning)"
   instead of the misleading "won't fit VRAM".
 - Run table: detailed benchmark rows now live below the dashboard and can be filtered by
   model, category, pass/fail, and slowest failures.
-- Warm-up robustness: Deploy/replace actions now show a **live "Loading…Ns" counter** (with a
+- Warm-up robustness: Deploy/replace actions now show a live "Loading…Ns" counter (with a
   "large models on CPU can take a minute" hint when targeting CPU) instead of an apparently
-  frozen button. The server's load timeout **scales with the device** (longer for CPU offload)
+  frozen button. The server's load timeout scales with the device (longer for CPU offload)
   and is overridable via `OLLAMA_LOAD_TIMEOUT`; a load timeout returns a clear "it may still be
   loading: click Refresh status" message rather than a generic failure.
 - Decision-grade run results: the benchmark workspace shows queued model/device variants,
-  live progress, **Cancel**, **tok/s** per test, inline failure reasons, response previews,
+  live progress, Cancel, tok/s per test, inline failure reasons, response previews,
   leaderboard ranking, per-category heatmap, and per-test matrix views.
 - Report cards & compare carry speed: exported cards now include `avg_tokens_per_second`,
-  a per-test **tok/s** column, and a **By category** table. The A/B compare view adds a
-  **tok/s (A → B)** column and aggregate tok/s delta, so a "Qwen/GPU vs Qwen/CPU" diff
+  a per-test tok/s column, and a By category table. The A/B compare view adds a
+  tok/s (A → B) column and aggregate tok/s delta, so a "Qwen/GPU vs Qwen/CPU" diff
   shows the speed difference directly.
 - Better discovery (Phase 5): "New on Hugging Face" now has a search box, results-per-query
   limit, and GGUF-only toggle: the API already accepted `queries`/`limit`/`gguf_only`, the UI
@@ -317,18 +323,18 @@ First public release.
  : green (comfortable), yellow (tight, or won't-fit-GPU-but-runs-on-CPU), red (too big anywhere) -
   using system RAM to judge CPU deployability. The coarse `verdict` is unchanged (backward-compatible).
 - Model management: `POST /models/delete` (remove a model from disk) and `POST /models/free`
-  (unload all models from memory/VRAM), with **Delete** buttons per installed model, a **Free memory**
-  button, and a **Cancel** button to abort an in-flight pull.
+  (unload all models from memory/VRAM), with Delete buttons per installed model, a Free memory
+  button, and a Cancel button to abort an in-flight pull.
 - Hardware panel now shows CPU + RAM (`/system/hardware`): CPU model, physical/logical cores,
   and system RAM total/available via `psutil` (graceful fallback when absent).
 - Choose CPU vs GPU at deploy time: the Serve panel has a *Deploy to* selector (Auto / GPU /
   CPU). Forces Ollama `num_gpu` (0 = CPU, max = GPU); Auto is unchanged from before. `/system/status`
   now labels each running model's placement (GPU / CPU / Split N%). Additive and backwards-compatible.
-- Added **opt-in token auth**: set `API_TOKEN` to require it (`X-API-Token` /
+- Added opt-in token auth: set `API_TOKEN` to require it (`X-API-Token` /
   `Authorization: Bearer` / `?token=`); no auth and zero overhead when unset.
-- "Check New Models" now filters to GGUF repos and offers a one-click **Pull** via Ollama's
+- "Check New Models" now filters to GGUF repos and offers a one-click Pull via Ollama's
   `hf.co/<id>` shortcut.
-- Added an optional **web UI** at `/ui` (two tabs: Serve & Diagnose, Deploy & Benchmark);
+- Added an optional web UI at `/ui` (two tabs: Serve & Diagnose, Deploy & Benchmark);
   static, no build step, gated by `ENABLE_WEB_UI` (default on). See `docs/UI.md`.
 - Added a control-plane API: `/system/hardware`, `/system/fit-check`, `/system/status`,
   `/system/recommend`, `/system/set-default`, `/registry/installed`, `/registry/check-updates`,

@@ -103,7 +103,7 @@ def bakeoff_run(req: BakeoffRequest):
         bench = _bench()
         pack_id = req.pack or _USE_CASE_PACK.get(req.use_case or "", _DEFAULT_PACK)
         pack_categories = (BENCHMARK_PACKS.get(pack_id) or BENCHMARK_PACKS[_DEFAULT_PACK])["categories"]
-        tests = [t for t in bench.TEST_CASES if t.category in pack_categories]
+        tests = [t for t in bench.builtin_test_cases() if t.category in pack_categories]
         tests = sorted(tests, key=lambda t: t.max_output_tokens)[: max(1, req.sample_size)]
         base_url = bench.api_base_url()
 
