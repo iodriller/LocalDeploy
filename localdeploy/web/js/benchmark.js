@@ -1,7 +1,7 @@
 "use strict";
 
-import { $, $$, busy, downloadFile, esc, fmtMb, getJSON, postJSON, postMaybeStream, simpleModal, toast } from "./shared.js?v=20260718-ui30";
-import { renderHeatmap, renderLeaderboard, renderMatrix, renderResponseComparison, renderScatter, renderWinners } from "./benchmark-views.js?v=20260718-ui30";
+import { $, $$, busy, downloadFile, esc, fmtMb, getJSON, postJSON, postMaybeStream, simpleModal, toast } from "./shared.js?v=20260719-ui31";
+import { renderHeatmap, renderLeaderboard, renderMatrix, renderResponseComparison, renderScatter, renderWinners } from "./benchmark-views.js?v=20260719-ui31";
 
 const state = {
   profiles: [], profileData: {}, profileModels: {}, defaultProfile: null,

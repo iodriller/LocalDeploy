@@ -1017,7 +1017,9 @@ table.results td.num, table.results th.num { text-align: right; font-variant-num
 .catalog-actions .btn { margin-left: 0.25rem; }
 .badge.src-ollama { border-color: rgba(52, 211, 153, 0.35); }
 .badge.src-hf { border-color: rgba(251, 191, 36, 0.35); }
+.badge.src-modelscope { border-color: rgba(96, 165, 250, 0.35); }
 .source-dot { width: 0.42rem; height: 0.42rem; border-radius: 50%; background: currentColor; }
+.field-divider { border: none; border-top: 1px solid var(--border); margin: 1.1rem 0; }
 .exact-pull-row {
   display: flex;
   align-items: center;

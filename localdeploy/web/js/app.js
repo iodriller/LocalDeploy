@@ -1,10 +1,10 @@
 "use strict";
 
-import { $, $$, initSharedUI, toast } from "./shared.js?v=20260718-ui30";
-import { getSystemSnapshot, initSystem, refreshSystem, setMonitorActive, subscribeToSystemChanges, updateModelContext as updateSystemModelContext } from "./system.js?v=20260718-ui30";
-import { getModelSnapshot, initModels, refreshModels, setDefaultProfile, subscribeToModelChanges, updateSystemContext as updateModelsSystemContext } from "./models.js?v=20260718-ui30";
-import { initChat, updateModelContext as updateChatModelContext } from "./chat.js?v=20260718-ui30";
-import { initBenchmark, refreshBenchmarkMetadata, updateModelContext as updateBenchmarkModelContext, updateSystemContext as updateBenchmarkSystemContext } from "./benchmark.js?v=20260718-ui30";
+import { $, $$, initSharedUI, toast } from "./shared.js?v=20260719-ui31";
+import { getSystemSnapshot, initSystem, refreshSystem, setMonitorActive, subscribeToSystemChanges, updateModelContext as updateSystemModelContext } from "./system.js?v=20260719-ui31";
+import { getModelSnapshot, initModels, refreshModels, setDefaultProfile, subscribeToModelChanges, updateSystemContext as updateModelsSystemContext } from "./models.js?v=20260719-ui31";
+import { initChat, updateModelContext as updateChatModelContext } from "./chat.js?v=20260719-ui31";
+import { initBenchmark, refreshBenchmarkMetadata, updateModelContext as updateBenchmarkModelContext, updateSystemContext as updateBenchmarkSystemContext } from "./benchmark.js?v=20260719-ui31";
 
 function propagateSystem(snapshot = getSystemSnapshot()) {
   updateModelsSystemContext(snapshot);

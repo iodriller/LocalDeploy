@@ -50,6 +50,26 @@ function Stop-PidFile {
     Remove-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
 }
 
+function Get-PythonAncestorIds {
+    # Some Windows Python setups (notably a venv created from a Conda base
+    # interpreter) transparently relaunch a script under a *different*
+    # interpreter as a child process - the venv's own python.exe stays alive
+    # as an orphaned parent while its child actually binds the port. Walking
+    # up while every ancestor is still a python-family process catches both,
+    # instead of leaving the parent running after the child is killed.
+    param([int]$ProcessId)
+    $ids = [System.Collections.Generic.List[int]]::new()
+    $current = Get-CimInstance Win32_Process -Filter "ProcessId = $ProcessId" -ErrorAction SilentlyContinue
+    while ($current) {
+        $ids.Add([int]$current.ProcessId)
+        if (-not $current.ParentProcessId) { break }
+        $parent = Get-CimInstance Win32_Process -Filter "ProcessId = $($current.ParentProcessId)" -ErrorAction SilentlyContinue
+        if (-not $parent -or $parent.Name -notmatch "^(python|python3|pythonw|py)(\.exe)?$") { break }
+        $current = $parent
+    }
+    return $ids
+}
+
 function Stop-ApiListener {
     param([int]$Port)
     if (-not (Get-Command Get-NetTCPConnection -ErrorAction SilentlyContinue)) { return }
@@ -58,15 +78,18 @@ function Stop-ApiListener {
     $listeners = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue
     foreach ($listener in $listeners) {
         $proc = Get-CimInstance Win32_Process -Filter "ProcessId = $($listener.OwningProcess)" -ErrorAction SilentlyContinue
-        if (
-            $proc -and
-            $proc.Name -match "^(python|python3|pythonw|py)(\.exe)?$" -and
-            $proc.CommandLine -like "*api_server.py*" -and
-            $proc.CommandLine -like "*$ProjectRoot*"
-        ) {
-            Stop-Process -Id $proc.ProcessId -Force -ErrorAction SilentlyContinue
-            Write-Step "Stopped API server listener on port $Port (PID: $($proc.ProcessId))"
+        # Match by process family + script name, not a full path substring: a
+        # relaunched child (see Get-PythonAncestorIds) can carry a *relative*
+        # "api_server.py" argument, so the project's absolute path never
+        # appears verbatim in its own command line.
+        if (-not $proc -or $proc.Name -notmatch "^(python|python3|pythonw|py)(\.exe)?$" -or $proc.CommandLine -notlike "*api_server.py*") {
+            continue
         }
+        $killIds = Get-PythonAncestorIds -ProcessId $proc.ProcessId
+        foreach ($killId in $killIds) {
+            Stop-Process -Id $killId -Force -ErrorAction SilentlyContinue
+        }
+        Write-Step "Stopped API server listener on port $Port (PID $($killIds -join ', '))"
     }
 }
 

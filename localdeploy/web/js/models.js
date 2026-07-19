@@ -1,6 +1,6 @@
 "use strict";
 
-import { $, $$, busy, currentTheme, downloadFile, esc, fmtBytes, fmtDuration, fmtMb, formatExpires, getJSON, postJSON, postMaybeStream, simpleModal, skeletonHtml, startElapsed, toast, vramBarHtml } from "./shared.js?v=20260718-ui30";
+import { $, $$, busy, currentTheme, downloadFile, esc, fmtBytes, fmtDuration, fmtMb, formatExpires, getJSON, postJSON, postMaybeStream, simpleModal, skeletonHtml, startElapsed, toast, vramBarHtml } from "./shared.js?v=20260719-ui31";
 
 const state = {
   profiles: [], profileData: {}, profileModels: {}, defaultProfile: null,
@@ -1676,14 +1676,19 @@ function remoteCatalogSearchButton(source) {
 
 function exactTagQuery(query) {
   if (/^hf\.co\//i.test(query)) return query;
+  if (/^modelscope\.cn\//i.test(query) && /:[\w.\-]+\.gguf$/i.test(query)) return query;
   if (/^[\w.\-]+(?:\/[\w.\-]+)?:[\w.\-]+$/.test(query)) return query;
   return null;
 }
 
 function sourceBadge(source) {
-  return source === "huggingface"
-    ? `<span class="badge src-hf" title="Hugging Face models are pulled through Ollama's hf.co/ shortcut"><span class="source-dot"></span>Hugging Face</span>`
-    : `<span class="badge src-ollama" title="Official Ollama model library"><span class="source-dot"></span>Ollama</span>`;
+  if (source === "huggingface") {
+    return `<span class="badge src-hf" title="Hugging Face models are pulled through Ollama's hf.co/ shortcut"><span class="source-dot"></span>Hugging Face</span>`;
+  }
+  if (source === "modelscope") {
+    return `<span class="badge src-modelscope" title="ModelScope models are pulled through Ollama's modelscope.cn/ shortcut (requires Ollama 0.30+)"><span class="source-dot"></span>ModelScope</span>`;
+  }
+  return `<span class="badge src-ollama" title="Official Ollama model library"><span class="source-dot"></span>Ollama</span>`;
 }
 
 // "270m" / "0.8b" / "7b" -> billions of parameters (null when unparseable).
@@ -1824,9 +1829,10 @@ function remoteCatalogRow(row) {
   const quantAction = row.params_b != null
     ? `<button class="btn compact quant-jump-btn" data-model="${esc(row.source === "ollama" && row.size_label ? `${row.family}:${row.size_label}` : row.name)}" data-params="${esc(row.params_b)}" data-source="${esc(row.source)}" data-family="${esc(row.family)}">Compare quants</button>`
     : "";
+  const quant = row.quant ? quantLabelHtml(row.quant, "badge model-quant") : "";
   return `<tr data-catalog-row="${esc(row.row_id)}">
     <td class="catalog-model-cell" data-label="Model">
-      <div class="catalog-result-title"><a href="${esc(row.url)}" target="_blank" rel="noopener">${esc(row.name)}</a>${installed}</div>
+      <div class="catalog-result-title"><a href="${esc(row.url)}" target="_blank" rel="noopener">${esc(row.name)}</a>${quant}${installed}</div>
       <div class="catalog-caps">${caps}</div>
       ${row.description ? `<div class="muted small catalog-description" title="${esc(row.description)}">${esc(row.description)}</div>` : ""}
     </td>
@@ -1892,7 +1898,7 @@ async function searchUnifiedModels(source) {
   const seq = ++state.unifiedSearchSeq;
   busy(btn, true);
   state.remoteCatalogLoaded = true;
-  body.innerHTML = `<div class="muted"><span class="spin-inline"></span> Searching the Ollama library and Hugging Face…</div>`;
+  body.innerHTML = `<div class="muted"><span class="spin-inline"></span> Searching the Ollama library, Hugging Face, and ModelScope...</div>`;
   try {
     const data = await postJSON("/registry/search-models", { query, limit: 30 });
     if (seq !== state.unifiedSearchSeq) return; // a newer keystroke superseded this
@@ -2046,7 +2052,7 @@ function dismissPullProgress() {
   $("#btn-pull-dismiss").hidden = true;
 }
 
-function showPullTerminal(kind, model, message) {
+function showPullTerminal(kind, model, message, onRetry) {
   const actions = $("#pull-progress-actions");
   const retry = kind === "cancelled" || kind === "failed" || kind === "blocked";
   actions.innerHTML = `<div>
@@ -2062,7 +2068,7 @@ function showPullTerminal(kind, model, message) {
   $("#btn-pull-close")?.addEventListener("click", dismissPullProgress);
   $("#btn-pull-retry")?.addEventListener("click", () => {
     actions.classList.add("hidden");
-    pullModel(model);
+    (onRetry || (() => pullModel(model)))();
   });
 }
 
@@ -2264,6 +2270,158 @@ async function pullModel(modelArg, triggerBtn) {
       btn.innerHTML = cardOriginalHtml;
     }
     if (ollamaUnreachable) showOllamaHelp(model, triggerBtn);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Tab 1 - Import a GGUF file (local path, or a direct URL download)
+// ---------------------------------------------------------------------------
+
+async function importLocalGguf() {
+  const btn = $("#btn-import-local-gguf");
+  const input = $("#local-gguf-path");
+  const path = input.value.trim();
+  if (!path) {
+    toast("Enter a local GGUF file path.", "error");
+    return;
+  }
+  busy(btn, true);
+  try {
+    const check = await postJSON("/system/check-local-gguf", { path });
+    if (!check.success || !check.exists) {
+      toast(check.error || "File not found.", "error");
+      return;
+    }
+    const sizeGb = check.size_bytes ? (check.size_bytes / 1e9).toFixed(1) : null;
+    const res = await postJSON("/profiles/upsert", {
+      model_id: check.path,
+      backend: "llamacpp",
+      fields: { description: `Imported local GGUF file${sizeGb ? ` (${sizeGb} GB)` : ""}.` },
+    });
+    if (!res.success) {
+      toast(res.error || "Could not create a profile for this file.", "error");
+      return;
+    }
+    toast(`Imported. Profile "${res.profile}" created - start llama-server, then Deploy.`, "success");
+    input.value = "";
+    await loadProfiles();
+  } catch (err) {
+    toast(`Import failed: ${err.message}`, "error");
+  } finally {
+    busy(btn, false);
+  }
+}
+
+async function importGgufFromUrl() {
+  const btn = $("#btn-import-url-gguf");
+  const url = $("#import-gguf-url").value.trim();
+  const nameOverride = $("#import-gguf-name").value.trim();
+  if (!url) {
+    toast("Enter a GGUF file URL.", "error");
+    return;
+  }
+  hideOllamaHelp();
+  const panel = $("#pull-progress");
+  state.pullRetry = null;
+  $("#pull-progress-done").classList.add("hidden");
+  $("#pull-progress-done").innerHTML = "";
+  $("#pull-progress-actions").classList.add("hidden");
+  $("#pull-progress-actions").innerHTML = "";
+  $("#btn-pull-dismiss").hidden = true;
+  $("#pull-progress-title").textContent = nameOverride || url;
+  $("#pull-progress-dest").textContent = "";
+  setPullProgress({ percent: 0, status: "Starting…", stats: "" });
+  panel.classList.remove("hidden");
+  panel.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  const log = $("#pull-log");
+  log.textContent = "";
+  const append = (line) => {
+    log.textContent += line + "\n";
+    log.scrollTop = log.scrollHeight;
+  };
+
+  busy(btn, true);
+  const cancelBtn = $("#btn-pull-cancel");
+  const controller = new AbortController();
+  cancelBtn.hidden = false;
+  const onCancel = () => {
+    cancelBtn.disabled = true;
+    cancelBtn.textContent = "Cancelling…";
+    controller.abort();
+  };
+  cancelBtn.addEventListener("click", onCancel);
+
+  let sawError = false;
+  let ollamaUnreachable = false;
+  const checkOllamaError = (msg) => /ollama is (not running|installed but not reachable)|not reachable at/i.test(msg || "");
+  let importedModel = null;
+
+  try {
+    const out = await postMaybeStream(
+      "/models/import-url",
+      { url, model: nameOverride || null },
+      (evt) => {
+        if (evt.model) importedModel = evt.model;
+        if (evt.error) {
+          append(`error: ${evt.error}`);
+          sawError = true;
+          if (checkOllamaError(evt.error)) ollamaUnreachable = true;
+          setPullProgress({ status: `Error: ${evt.error}` });
+          return;
+        }
+        if (evt.status) {
+          const pct = evt.total ? Math.round((evt.completed / evt.total) * 100) : null;
+          append(`${evt.status}${pct != null ? ` ${pct}%` : ""}`);
+          if (evt.total) {
+            setPullProgress({
+              percent: (evt.completed / evt.total) * 100,
+              status: evt.status,
+              stats: `${fmtBytes(evt.completed)} / ${fmtBytes(evt.total)}`,
+            });
+          } else {
+            setPullProgress({ percent: evt.completed ? null : 0, status: evt.status, stats: evt.completed ? fmtBytes(evt.completed) : "" });
+          }
+        }
+      },
+      controller.signal
+    );
+    if (!out.streamed) {
+      const msg = out.json?.error || "Import could not start.";
+      append(msg);
+      setPullProgress({ status: `Error: ${msg}` });
+      showPullTerminal("failed", null, msg, () => importGgufFromUrl());
+    } else if (sawError) {
+      showPullTerminal("failed", null, "The import failed. Open Raw log for details.", () => importGgufFromUrl());
+    } else {
+      append("done.");
+      setPullProgress({ percent: 100, status: "Imported successfully.", stats: "" });
+      await Promise.all([loadProfiles({ notify: false }), refreshLiveModelState(true, { notify: false })]);
+      notifyModelChanges("pull", true);
+      if (importedModel) {
+        markModelInstalledInUI(importedModel);
+        showPullDone(importedModel);
+        highlightInstalledModel(importedModel);
+      }
+      toast(`Imported ${importedModel || "model"}.`, "success");
+    }
+  } catch (err) {
+    if (err.name === "AbortError") {
+      append("cancelled.");
+      setPullProgress({ percent: 0, status: "Cancelled." });
+      showPullTerminal("cancelled", null, "The import stopped.", () => importGgufFromUrl());
+      toast("Import cancelled.", "info");
+    } else {
+      append(`error: ${err.message}`);
+      setPullProgress({ status: `Error: ${err.message}` });
+      showPullTerminal("failed", null, err.message, () => importGgufFromUrl());
+    }
+  } finally {
+    cancelBtn.hidden = true;
+    cancelBtn.disabled = false;
+    cancelBtn.textContent = "Cancel";
+    cancelBtn.removeEventListener("click", onCancel);
+    busy(btn, false);
+    if (ollamaUnreachable) showOllamaHelp(null, null, "Ollama isn't reachable, so the import couldn't finish.");
   }
 }
 
@@ -2581,6 +2739,10 @@ export function initModels() {
   $("#btn-pull-dismiss")?.addEventListener("click", dismissPullProgress);
   $("#fit-filter")?.addEventListener("change", () => { if (!$("#fit-finder-body").textContent.includes("not been scanned")) void scanConfiguredFits(); });
   $("#pull-model")?.addEventListener("keydown", (event) => { if (event.key === "Enter") { event.preventDefault(); void pullModel(); } });
+  $("#btn-import-local-gguf")?.addEventListener("click", () => void importLocalGguf());
+  $("#local-gguf-path")?.addEventListener("keydown", (event) => { if (event.key === "Enter") { event.preventDefault(); void importLocalGguf(); } });
+  $("#btn-import-url-gguf")?.addEventListener("click", () => void importGgufFromUrl());
+  $("#import-gguf-url")?.addEventListener("keydown", (event) => { if (event.key === "Enter") { event.preventDefault(); void importGgufFromUrl(); } });
 }
 
 export async function refreshModels(options = {}) {

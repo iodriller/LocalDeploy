@@ -3,9 +3,10 @@
 GET  /registry/installed      -> models pulled locally (Ollama /api/tags)
 POST /registry/check-updates  -> matching models from Hugging Face
 
-The Hugging Face call is a generic catalog search (popular-first) rather than a
-per-model lookup table, so it stays a single mechanism instead of a chain of
-special cases. Network/dependency failures degrade to a clear "offline" result.
+The Hugging Face and ModelScope calls are generic catalog searches (popular-
+first) rather than per-model lookup tables, so each stays a single mechanism
+instead of a chain of special cases. Network/dependency failures degrade to a
+clear "offline" result.
 """
 from __future__ import annotations
 
@@ -495,6 +496,164 @@ def _hf_rows(query: str, limit: int) -> Tuple[List[Dict[str, Any]], Optional[str
         return [], f"Hugging Face unreachable: {exc}"
 
 
+# --- ModelScope GGUF search (modelscope.cn) -----------------------------------
+# Ollama 0.30+ can pull ModelScope GGUF repos directly (`ollama pull
+# modelscope.cn/<owner>/<repo>:<exact-file>.gguf`), so - like Hugging Face -
+# this only needs a discovery source; `/models/pull` is unchanged. The search
+# endpoint is ModelScope's public OpenAPI (verified live: GET .../openapi/v1/
+# models returns {"data": {"models": [...]}}), and the exact pullable filename
+# needs a second call per repo (the search response doesn't list files).
+
+_MODELSCOPE_SEARCH_URL = "https://modelscope.cn/openapi/v1/models"
+_MODELSCOPE_FILES_URL = "https://modelscope.cn/api/v1/models/{repo_id}/repo/files"
+_MODELSCOPE_FILE_LOOKUPS = 10  # cap per search: bounds latency (one HTTP call per repo)
+
+
+def _modelscope_list_gguf_files(repo_id: str) -> Tuple[List[Dict[str, Any]], Optional[str]]:
+    """GGUF files in one ModelScope repo, smallest first. Best-effort: a repo
+    whose file tree can't be read is skipped by the caller, not fatal."""
+    import requests
+
+    try:
+        resp = requests.get(
+            _MODELSCOPE_FILES_URL.format(repo_id=repo_id),
+            params={"Revision": "master", "Recursive": "True"},
+            headers={"User-Agent": "LocalDeploy (+https://github.com/iodriller/LocalDeploy)"},
+            timeout=10,
+        )
+    except requests.RequestException as exc:
+        return [], str(exc)
+    if not resp.ok:
+        return [], f"HTTP {resp.status_code}"
+    try:
+        files = ((resp.json().get("Data") or {}).get("Files")) or []
+    except ValueError as exc:
+        return [], str(exc)
+    # mmproj files are a vision projector companion to a main GGUF, not a
+    # standalone-pullable model; imatrix files are quantization calibration
+    # data. Neither is something `ollama pull ...:<file>.gguf` should offer.
+    _NON_MODEL_GGUF = ("mmproj", "imatrix")
+    ggufs = [
+        {"name": f.get("Name"), "size": f.get("Size")}
+        for f in files
+        if isinstance(f, dict)
+        and str(f.get("Name") or "").lower().endswith(".gguf")
+        and f.get("Type") == "blob"
+        and not any(marker in str(f.get("Name") or "").lower() for marker in _NON_MODEL_GGUF)
+    ]
+    ggufs.sort(key=lambda f: f.get("size") or 0)
+    return ggufs, None
+
+
+# A repo re-quantized by tools like unsloth can ship 20+ files (every IQ/dynamic
+# variant plus every "_XL"/"_S" size within a quant family). Expanding every one
+# into its own catalog row makes a single repo dominate a results page with
+# near-duplicate rows a typical user can't meaningfully tell apart. Curating
+# down to this common ladder (same set the quant advisor already uses) keeps
+# the practical range of choice without the noise.
+_PREFERRED_QUANTS = ("Q3_K_M", "Q4_K_M", "Q5_K_M", "Q6_K", "Q8_0", "F16")
+
+
+def _curate_gguf_files(files: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    preferred = [f for f in files if _quant_from_name(str(f.get("name") or "")) in _PREFERRED_QUANTS]
+    return preferred or files
+
+
+def _modelscope_repo_row(repo: Dict[str, Any], gguf_files: List[Dict[str, Any]]) -> Dict[str, Any]:
+    repo_id = str(repo.get("id") or "")
+    downloads = repo.get("downloads")
+    modified = repo.get("last_modified")
+    tags = [str(t).lower() for t in (repo.get("tags") or [])]
+    # ModelScope reports an exact integer parameter count (e.g. 9197093888),
+    # not a human-rounded one - round for display/sort, or a table column
+    # sized for "9.2B" instead renders "9.197093888B" and visually collides
+    # with whatever sits next to it.
+    raw_params = repo.get("params") or 0
+    repo_params_b = round(raw_params / 1_000_000_000, 2) or None
+    capabilities = _catalog_capabilities(repo_id, tags, str((repo.get("tasks") or [None])[0] or ""))
+    curated_files = _curate_gguf_files(gguf_files)
+    # Unlike an HF/Ollama repo's "variants" (one per parameter size), a
+    # ModelScope repo's variants are one per *quant* of the same parameter
+    # count - so the quant, not the size, is the label that must distinguish
+    # rows in the UI (params_b is identical across all of a repo's variants).
+    variants = [
+        {
+            "label": _quant_from_name(f["name"]),
+            "params_b": repo_params_b,
+            "pull_name": f"modelscope.cn/{repo_id}:{f['name']}",
+            "quant": _quant_from_name(f["name"]),
+            "download_bytes": f.get("size"),
+            "context": None,
+        }
+        for f in curated_files
+        if f.get("name")
+    ]
+    return {
+        "source": "modelscope",
+        "name": repo_id,
+        "provider": "modelscope",
+        "publisher": repo_id.split("/", 1)[0] if "/" in repo_id else None,
+        "description": repo.get("description") or None,
+        "family": repo_id,
+        "sizes": [],
+        "capabilities": capabilities,
+        "pulls": _fmt_count(downloads),
+        "popularity": int(downloads) if isinstance(downloads, (int, float)) else None,
+        "updated": str(modified)[:10] if modified else None,
+        "pullable": bool(variants),
+        "pull_name": variants[0]["pull_name"] if variants else None,
+        "url": f"https://modelscope.cn/models/{repo_id}",
+        "variants": variants
+        or [{"label": None, "params_b": repo_params_b, "pull_name": None, "quant": None, "download_bytes": None, "context": None}],
+    }
+
+
+def _modelscope_rows(query: str, limit: int) -> Tuple[List[Dict[str, Any]], Optional[str]]:
+    """ModelScope GGUF repos matching `query`, normalized like `_hf_rows`.
+
+    A blank query still needs a search term: ModelScope's `search` param has no
+    "list everything" mode, and appending "gguf" is the only way (verified
+    live) to bias results toward GGUF repos - there is no working library/type
+    filter parameter as of this writing.
+    """
+    if offline_mode():
+        return [], "offline"
+    import requests
+
+    search_text = f"{query} gguf".strip() if "gguf" not in query.lower() else query
+    try:
+        resp = requests.get(
+            _MODELSCOPE_SEARCH_URL,
+            params={"search": search_text, "sort": "downloads", "page_number": 1, "page_size": max(1, limit)},
+            headers={"User-Agent": "LocalDeploy (+https://github.com/iodriller/LocalDeploy)"},
+            timeout=15,
+        )
+        resp.raise_for_status()
+        payload = resp.json()
+    except requests.RequestException as exc:
+        return [], f"ModelScope unreachable: {exc}"
+    except ValueError as exc:
+        return [], f"ModelScope returned invalid JSON: {exc}"
+    if not payload.get("success", True):
+        return [], str(payload.get("message") or "ModelScope search failed.")
+
+    repos = [
+        m
+        for m in ((payload.get("data") or {}).get("models") or [])
+        if isinstance(m, dict) and m.get("id") and "library:gguf" in [str(t).lower() for t in (m.get("tags") or [])]
+    ]
+
+    rows: List[Dict[str, Any]] = []
+    lookups = repos[:_MODELSCOPE_FILE_LOOKUPS]
+    with ThreadPoolExecutor(max_workers=min(5, max(1, len(lookups)))) as executor:
+        file_results = list(executor.map(lambda r: _modelscope_list_gguf_files(str(r["id"])), lookups)) if lookups else []
+    for repo, (files, _err) in zip(lookups, file_results):
+        rows.append(_modelscope_repo_row(repo, files))
+    for repo in repos[_MODELSCOPE_FILE_LOOKUPS:]:
+        rows.append(_modelscope_repo_row(repo, []))
+    return rows, None
+
+
 def _fmt_count(value: Any) -> Optional[str]:
     try:
         n = float(value)
@@ -541,7 +700,7 @@ def _format_params_token(params_b: Optional[float]) -> Optional[str]:
 
 
 def _quant_from_name(value: str) -> Optional[str]:
-    match = re.search(r"(?:^|[-_])(IQ\d+_[A-Z0-9_]+|Q\d+(?:_[A-Z0-9_]+)?)(?:$|[-_.])", value, re.I)
+    match = re.search(r"(?:^|[-_.])(IQ\d+_[A-Z0-9_]+|Q\d+(?:_[A-Z0-9_]+)?|BF16|F16|F32)(?:$|[-_.])", value, re.I)
     return match.group(1).upper() if match else None
 
 
@@ -566,9 +725,9 @@ def _catalog_capabilities(name: str, tags: List[str], pipeline: str) -> List[str
 
 @router.post("/registry/search-models")
 def search_models(req: UnifiedSearchRequest) -> Dict[str, Any]:
-    """One query, every source: the Ollama library and Hugging Face GGUF repos,
-    fetched in parallel and returned as one normalized list (source is a field,
-    not a user decision)."""
+    """One query, every source: the Ollama library, Hugging Face GGUF repos, and
+    ModelScope GGUF repos, fetched in parallel and returned as one normalized
+    list (source is a field, not a user decision)."""
     if offline_mode():
         return {
             "success": True,
@@ -579,27 +738,30 @@ def search_models(req: UnifiedSearchRequest) -> Dict[str, Any]:
         }
     query = req.query.strip()
     limit = max(1, min(req.limit, 50))
-    with ThreadPoolExecutor(max_workers=2) as executor:
+    with ThreadPoolExecutor(max_workers=3) as executor:
         lib_future = executor.submit(_library_rows, query, limit)
         hf_future = executor.submit(_hf_rows, query, limit)
+        ms_future = executor.submit(_modelscope_rows, query, limit)
         lib_rows, lib_error = lib_future.result()
         hf_rows, hf_error = hf_future.result()
+        ms_rows, ms_error = ms_future.result()
 
     installed, _ = _ollama.list_installed()
     installed_bases = {(m.get("name") or "").split(":")[0] for m in installed}
     signatures = [_installed_signature(m.get("name") or "") for m in installed if m.get("name")]
     for row in lib_rows:
         row["installed_match"] = row["name"] in installed_bases
-    for row in hf_rows:
+    for row in hf_rows + ms_rows:
         row["installed_match"] = _candidate_matches_installed(row["name"], signatures)
 
-    results = lib_rows + hf_rows
-    online = not (lib_error and hf_error)
+    results = lib_rows + hf_rows + ms_rows
+    online = not (lib_error and hf_error and ms_error)
+    errors = [e for e in (lib_error, hf_error, ms_error) if e]
     message = None
-    if lib_error and hf_error:
-        message = f"No source reachable. {lib_error} / {hf_error}"
-    elif lib_error or hf_error:
-        message = f"Partial results: {lib_error or hf_error}"
+    if lib_error and hf_error and ms_error:
+        message = f"No source reachable. {' / '.join(errors)}"
+    elif errors:
+        message = f"Partial results: {' / '.join(errors)}"
     return {
         "success": True,
         "online": online,
@@ -607,6 +769,7 @@ def search_models(req: UnifiedSearchRequest) -> Dict[str, Any]:
         "sources": {
             "ollama": {"online": lib_error is None, "count": len(lib_rows), "error": lib_error},
             "huggingface": {"online": hf_error is None, "count": len(hf_rows), "error": hf_error},
+            "modelscope": {"online": ms_error is None, "count": len(ms_rows), "error": ms_error},
         },
         "message": message,
     }
