@@ -3,10 +3,21 @@
 POST /system/fit-check answers "will this model fit?" with a transparent,
 deliberately conservative estimate (see PUBLIC_LAUNCH_PLAN.md, Appendix B):
 
-    required_GB = weights_GB + kv_cache_GB + overhead_GB
+    required_GB = weights_GB + kv_cache_GB + vision_overhead_GB + overhead_GB
 
 The numbers are approximate by design; the breakdown is always returned so the
 verdict is never a black box. The real proof is a short warmup (Step 6).
+
+Release R2 adds three things on top of the original formula, all additive and
+never silently changing what "fits" means:
+
+  - ``confidence``: how much this estimate should be trusted (metadata known +
+    calibration samples on file), separate from the fit tier itself.
+  - ``calibration``: the measured correction for this exact {GPU, runtime,
+    family, quant, context} from ``calibration.py``, shown alongside — never
+    substituted into — the raw formula estimate.
+  - ``/system/fit-table``: the same estimate swept across common context
+    lengths in one call, instead of one context per request.
 """
 from __future__ import annotations
 
@@ -16,6 +27,8 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
+from . import calibration
+from ._config import _looks_like_vision
 from .hardware import detect_hardware, estimate_gpu_placement
 
 router = APIRouter()
@@ -35,10 +48,22 @@ _WEIGHT_GB_PER_B = {
 _DEFAULT_WEIGHT_GB_PER_B = 0.55  # unknown/default Ollama quant ~= Q4_K_M
 
 # KV-cache scaling: per-token cost grows with model size; reduced by KV quant.
+# This is a flat per-parameter coefficient, not an architecture-aware (GQA
+# head count) model — real KV cache varies a lot by attention design. Rather
+# than hardcoding per-family head-count assumptions this repo can't verify,
+# the calibration store (see below) empirically corrects for that drift per
+# {GPU, family, quant, context} from real measurements.
 _KV_MB_PER_TOKEN_PER_B = 0.07  # fp16 baseline, conservative
 _KV_QUANT_FACTOR = {"f16": 1.0, "fp16": 1.0, "q8": 0.5, "q4": 0.25}
 _OVERHEAD_GB = 0.8  # CUDA context + activations
+_VISION_OVERHEAD_GB = 0.6  # approximate vision-tower (encoder + projector) footprint
 _COMFORTABLE_MARGIN_GB = 1.0  # VRAM headroom above which a fit is "comfortable"
+
+# Common context tiers for /system/fit-table. Kept in sync with
+# calibration._CONTEXT_BUCKETS so a table row's calibration lookup is exact.
+FIT_TABLE_CONTEXTS = [4096, 8192, 16384, 32768, 65536]
+
+_RUNTIME = "ollama"  # calibration key runtime component; the estimator is Ollama-centric today
 
 
 class FitRequest(BaseModel):
@@ -49,6 +74,7 @@ class FitRequest(BaseModel):
     context: Optional[int] = Field(default=None, gt=0, le=10_000_000)
     free_vram_mb: Optional[int] = Field(default=None, ge=0, le=100_000_000)
     size_bytes: Optional[int] = Field(default=None, gt=0, le=1_000_000_000_000_000)
+    vision: Optional[bool] = None  # None = auto-detect from model_id/profile name
 
 
 def _parse_params_b(text: Optional[str]) -> Optional[float]:
@@ -86,6 +112,16 @@ def _parse_quant(text: Optional[str]) -> Optional[str]:
     lowered = text.lower()
     match = re.search(r"\b(iq[2345]_[a-z0-9_]+|q[234568](?:_[a-z0-9_]+)?)\b", lowered)
     return match.group(1).upper() if match else None
+
+
+def _base_family(model_id: Optional[str]) -> Optional[str]:
+    """'gemma3:12b' -> 'gemma3'; 'hf.co/org/Repo' -> None (not an Ollama library name)."""
+    if not model_id:
+        return None
+    base = model_id.split(":")[0].strip().lower()
+    if not base or "/" in base:
+        return None
+    return base
 
 
 def _round(value: float) -> float:
@@ -173,6 +209,7 @@ def _resolve_from_profile(req: FitRequest) -> Dict[str, Any]:
         "context": req.context,
         "kv_quant": None,
         "size_bytes": req.size_bytes,
+        "vision": req.vision,
     }
     if not req.profile:
         return resolved
@@ -192,7 +229,115 @@ def _resolve_from_profile(req: FitRequest) -> Dict[str, Any]:
     if resolved["context"] is None:
         resolved["context"] = profile.get("safe_context_limit") or profile.get("context_limit")
     resolved["kv_quant"] = profile.get("kv_cache_type_k") or profile.get("kv_cache_type_v")
+    if resolved["vision"] is None:
+        resolved["vision"] = bool(profile.get("supports_vision"))
     return resolved
+
+
+def _confidence(*, size_known: bool, quant_known: bool, calibration_samples: int) -> str:
+    """How much this estimate should be trusted — separate from the fit tier.
+
+    Starts at metadata completeness (do we know real size vs. a guessed
+    params_b, is the quant known vs. assumed default), then rises with
+    calibration coverage for this exact configuration.
+    """
+    if not size_known:
+        return "low"
+    base = "medium" if quant_known else "low"
+    if calibration_samples >= 10:
+        return "high"
+    if calibration_samples >= 3:
+        return "medium" if base == "low" else "high"
+    return base
+
+
+def _estimate(
+    *,
+    params_b: Optional[float],
+    quant: Optional[str],
+    context: int,
+    kv_quant: Optional[str],
+    size_bytes: Optional[int],
+    vision: bool,
+    model_id: Optional[str],
+    hw: Dict[str, Any],
+    free_vram_mb: Optional[int],
+) -> Dict[str, Any]:
+    """Core estimate + classification, shared by fit_check and fit_table.
+
+    Pure aside from the calibration store read (best-effort, never raises).
+    """
+    vision_overhead_gb = _VISION_OVERHEAD_GB if vision else 0.0
+    if size_bytes:
+        # Installed Ollama/GGUF size is a much better load-footprint anchor than
+        # guessing from parameter count. Keep KV cache out of this load estimate;
+        # long prompts can still need more memory, which the note makes explicit.
+        weights_gb = size_bytes / 1_000_000_000.0
+        kv_cache_gb = 0.0
+        note = (
+            "Estimate uses installed model size plus runtime overhead. Long context "
+            "windows can need extra memory during generation."
+        )
+        size_known = True
+    else:
+        weights_gb = (params_b or 0.0) * _weight_gb_per_b(quant)
+        kv_factor = _kv_quant_factor(kv_quant)
+        kv_cache_gb = _KV_MB_PER_TOKEN_PER_B * (params_b or 0.0) * kv_factor * context / 1024.0
+        note = "Conservative estimate. The real proof is a short warmup via /models/serve."
+        size_known = bool(params_b)
+    required_gb = weights_gb + kv_cache_gb + vision_overhead_gb + _OVERHEAD_GB
+
+    free_vram_mb = free_vram_mb if free_vram_mb is not None else _detected_vram_pool_mb(hw)
+    ram_available_mb = (hw.get("system") or {}).get("ram_available_mb")
+    free_vram_gb = (free_vram_mb / 1024.0) if free_vram_mb is not None else None
+    ram_available_gb = (ram_available_mb / 1024.0) if ram_available_mb is not None else None
+
+    cls = _classify(required_gb, free_vram_gb, ram_available_gb)
+    placement = estimate_gpu_placement(required_gb, hw.get("gpus") or [])
+    if placement["mode"] == "multi_gpu_split" and cls["verdict"] == "FITS":
+        cls = dict(cls, tier="multi_gpu", headline="Fits only by splitting the model across compatible GPUs.")
+
+    family = _base_family(model_id)
+    corr = calibration.get_correction(
+        gpu=calibration.gpu_key(hw), runtime=_RUNTIME, family=family, quant=quant, context=context
+    )
+    calibrated_required_gb = _round(required_gb * corr["factor"]) if corr["applied"] else None
+
+    confidence = _confidence(
+        size_known=size_known, quant_known=bool(quant), calibration_samples=corr["sample_count"]
+    )
+
+    estimate = {
+        "weights": _round(weights_gb),
+        "kv_cache": _round(kv_cache_gb),
+        "vision_overhead": _round(vision_overhead_gb),
+        "overhead": _OVERHEAD_GB,
+        "required": _round(required_gb),
+        "calibrated_required": calibrated_required_gb,
+    }
+    if size_bytes:
+        estimate["size_gb"] = _round(size_bytes / 1_000_000_000.0)
+
+    return {
+        "verdict": cls["verdict"],
+        "tier": cls["tier"],
+        "severity": cls["severity"],
+        "headline": cls["headline"],
+        "cpu_deployable": cls["cpu_deployable"],
+        "estimate_gb": estimate,
+        "free_vram_gb": _round(free_vram_gb) if free_vram_gb is not None else None,
+        "ram_available_gb": _round(ram_available_gb) if ram_available_gb is not None else None,
+        "margin_gb": _round(free_vram_gb - required_gb) if free_vram_gb is not None else None,
+        "calibrated_margin_gb": (
+            _round(free_vram_gb - calibrated_required_gb)
+            if free_vram_gb is not None and calibrated_required_gb is not None
+            else None
+        ),
+        "placement": placement,
+        "confidence": confidence,
+        "calibration": corr,
+        "note": note,
+    }
 
 
 # --- batch fit (one call colors a whole catalog page) -------------------------
@@ -356,16 +501,6 @@ def quant_advisor(req: QuantAdviceRequest) -> Dict[str, Any]:
     }
 
 
-def _base_family(model_id: Optional[str]) -> Optional[str]:
-    """'gemma3:12b' -> 'gemma3'; 'hf.co/org/Repo' -> None (not an Ollama library name)."""
-    if not model_id:
-        return None
-    base = model_id.split(":")[0].strip().lower()
-    if not base or "/" in base:
-        return None
-    return base
-
-
 @router.post("/system/fit-check")
 def fit_check(req: FitRequest) -> Dict[str, Any]:
     resolved = _resolve_from_profile(req)
@@ -385,89 +520,132 @@ def fit_check(req: FitRequest) -> Dict[str, Any]:
 
     context = resolved["context"] or 4096
     quant = resolved["quant"] or _parse_quant(resolved.get("model_id"))
+    vision = resolved["vision"]
+    if vision is None:
+        vision = _looks_like_vision(resolved.get("model_id") or "")
 
-    size_bytes = resolved.get("size_bytes")
-    if size_bytes:
-        # Installed Ollama/GGUF size is a much better load-footprint anchor than
-        # guessing from parameter count. Keep KV cache out of this load estimate;
-        # long prompts can still need more memory, which the note makes explicit.
-        weights_gb = size_bytes / 1_000_000_000.0
-        kv_cache_gb = 0.0
-        note = (
-            "Estimate uses installed model size plus runtime overhead. Long context "
-            "windows can need extra memory during generation."
-        )
-    else:
-        weights_gb = params_b * _weight_gb_per_b(quant)
-        kv_factor = _kv_quant_factor(resolved.get("kv_quant"))
-        kv_cache_gb = _KV_MB_PER_TOKEN_PER_B * params_b * kv_factor * context / 1024.0
-        note = "Conservative estimate. The real proof is a short warmup via /models/serve."
-    required_gb = weights_gb + kv_cache_gb + _OVERHEAD_GB
-
-    # Pull both VRAM and system RAM from the hardware probe (Phase 1). RAM lets us
-    # tell "won't fit GPU but runs on CPU" apart from "too big for this machine".
     hw = detect_hardware()
-    free_vram_mb = req.free_vram_mb
-    if free_vram_mb is None:
-        free_vram_mb = _detected_vram_pool_mb(hw)
-    ram_available_mb = (hw.get("system") or {}).get("ram_available_mb")
+    result = _estimate(
+        params_b=params_b,
+        quant=quant,
+        context=context,
+        kv_quant=resolved.get("kv_quant"),
+        size_bytes=resolved.get("size_bytes"),
+        vision=bool(vision),
+        model_id=resolved.get("model_id"),
+        hw=hw,
+        free_vram_mb=req.free_vram_mb,
+    )
 
-    estimate = {
-        "weights": _round(weights_gb),
-        "kv_cache": _round(kv_cache_gb),
-        "overhead": _OVERHEAD_GB,
-        "required": _round(required_gb),
-    }
-    model_info = {
-        "params_b": params_b,
-        "quant": quant or "default (~Q4)",
-        "context": context,
-    }
-    if size_bytes:
-        model_info["size_gb"] = _round(size_bytes / 1_000_000_000.0)
-    free_vram_gb = (free_vram_mb / 1024.0) if free_vram_mb is not None else None
-    ram_available_gb = (ram_available_mb / 1024.0) if ram_available_mb is not None else None
-    cls = _classify(required_gb, free_vram_gb, ram_available_gb)
-    placement = estimate_gpu_placement(required_gb, hw.get("gpus") or [])
-    if req.free_vram_mb is not None and cls["verdict"] == "FITS" and not placement["supported"]:
+    placement = result["placement"]
+    if req.free_vram_mb is not None and result["verdict"] == "FITS" and not placement["supported"]:
         placement = {
             "mode": "manual_budget",
             "supported": True,
-            "required_mb": int(required_gb * 1024),
+            "required_mb": int(result["estimate_gb"]["required"] * 1024),
             "available_mb": req.free_vram_mb,
             "gpu_indexes": [],
             "allocations": [],
-            "utilization_pct": round(required_gb * 1024 / max(1, req.free_vram_mb) * 100, 1),
+            "utilization_pct": round(
+                result["estimate_gb"]["required"] * 1024 / max(1, req.free_vram_mb) * 100, 1
+            ),
             "note": "The supplied manual budget fits; automatic GPU placement could not be verified.",
         }
-    if placement["mode"] == "multi_gpu_split" and cls["verdict"] == "FITS":
-        cls["tier"] = "multi_gpu"
-        cls["headline"] = "Fits only by splitting the model across compatible GPUs."
+        result["placement"] = placement
 
     suggestions = []
-    if cls["severity"] in ("soft", "hard") and cls["tier"] != "tight":
+    if result["severity"] in ("soft", "hard") and result["tier"] != "tight":
         suggestions = [
             "Use a smaller quantization (e.g. Q4 or Q3).",
             "Lower the context window (try the profile's safe_context_limit).",
             "Deploy to CPU (slower) — pick CPU in the serve panel.",
         ]
 
+    model_info = {"params_b": params_b, "quant": quant or "default (~Q4)", "context": context}
+    if result["estimate_gb"].get("size_gb") is not None:
+        model_info["size_gb"] = result["estimate_gb"]["size_gb"]
+
     return {
         "success": True,
         # verdict stays coarse + backward-compatible (FITS / WONT_FIT / UNKNOWN);
         # tier/severity/headline carry the new soft-vs-hard nuance for the UI.
-        "verdict": cls["verdict"],
-        "tier": cls["tier"],
-        "severity": cls["severity"],
-        "headline": cls["headline"],
-        "cpu_deployable": cls["cpu_deployable"],
+        "verdict": result["verdict"],
+        "tier": result["tier"],
+        "severity": result["severity"],
+        "headline": result["headline"],
+        "cpu_deployable": result["cpu_deployable"],
+        "confidence": result["confidence"],
+        "calibration": result["calibration"],
         "model": model_info,
-        "estimate_gb": estimate,
-        "free_vram_gb": _round(free_vram_gb) if free_vram_gb is not None else None,
-        "ram_available_gb": _round(ram_available_gb) if ram_available_gb is not None else None,
-        "margin_gb": _round(free_vram_gb - required_gb) if free_vram_gb is not None else None,
-        "placement": placement,
+        "estimate_gb": result["estimate_gb"],
+        "free_vram_gb": result["free_vram_gb"],
+        "ram_available_gb": result["ram_available_gb"],
+        "margin_gb": result["margin_gb"],
+        "calibrated_margin_gb": result["calibrated_margin_gb"],
+        "placement": result["placement"],
         "gpu_summary": hw.get("gpu_summary") or {},
-        "note": note,
+        "note": result["note"],
         "suggestions": suggestions,
+    }
+
+
+@router.post("/system/fit-table")
+def fit_table(req: FitRequest) -> Dict[str, Any]:
+    """The same estimate as /system/fit-check, swept across common context
+    lengths in one call — "will this fit at 8K? 32K? 64K?" without one
+    request per tier."""
+    resolved = _resolve_from_profile(req)
+    if resolved.get("error"):
+        return {"success": False, "verdict": "UNKNOWN", "message": resolved["error"]}
+
+    params_b = resolved["params_b"] or _parse_params_b(resolved.get("model_id"))
+    if not params_b and not resolved.get("size_bytes"):
+        return {
+            "success": False,
+            "message": (
+                "Could not determine parameter count. Pass 'params_b' explicitly "
+                "or use a profile/model_id that encodes size (e.g. '12b')."
+            ),
+        }
+
+    quant = resolved["quant"] or _parse_quant(resolved.get("model_id"))
+    vision = resolved["vision"]
+    if vision is None:
+        vision = _looks_like_vision(resolved.get("model_id") or "")
+    hw = detect_hardware()  # one probe, reused for every context tier
+
+    rows = []
+    for context in FIT_TABLE_CONTEXTS:
+        result = _estimate(
+            params_b=params_b,
+            quant=quant,
+            context=context,
+            kv_quant=resolved.get("kv_quant"),
+            size_bytes=resolved.get("size_bytes"),
+            vision=bool(vision),
+            model_id=resolved.get("model_id"),
+            hw=hw,
+            free_vram_mb=req.free_vram_mb,
+        )
+        rows.append(
+            {
+                "context": context,
+                "verdict": result["verdict"],
+                "tier": result["tier"],
+                "severity": result["severity"],
+                "headline": result["headline"],
+                "estimate_gb": result["estimate_gb"],
+                "margin_gb": result["margin_gb"],
+                "calibrated_margin_gb": result["calibrated_margin_gb"],
+                "confidence": result["confidence"],
+            }
+        )
+
+    free_vram_mb = req.free_vram_mb if req.free_vram_mb is not None else _detected_vram_pool_mb(hw)
+    return {
+        "success": True,
+        "model": {"model_id": resolved.get("model_id"), "params_b": params_b, "quant": quant or "default (~Q4)"},
+        "free_vram_gb": _round(free_vram_mb / 1024.0) if free_vram_mb is not None else None,
+        "rows": rows,
+        "note": "Same weights+KV+overhead formula as /system/fit-check, one row per context length.",
     }

@@ -1,6 +1,7 @@
 # Local environment and machine-specific config
 .env
 config.json
+calibration.json
 
 # Python
 __pycache__/

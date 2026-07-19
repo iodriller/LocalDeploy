@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import threading
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
@@ -22,11 +23,30 @@ from pydantic import BaseModel, Field
 
 router = APIRouter()
 
+_bench_lock = threading.Lock()
+_bench_module = None
+
 
 def _bench():
-    import benchmark  # lazy: avoids importing the big module + TEST_CASES at boot
+    """Lazy, memoized import of the top-level `benchmark` module.
 
-    return benchmark
+    FastAPI runs each request handler in a threadpool worker, so the first
+    few requests after startup (e.g. a page load firing several /benchmark/*
+    calls at once) can call this concurrently from different threads before
+    `benchmark` has ever been imported. A bare `import benchmark` in that
+    window is not reliably safe against concurrent first-import from
+    multiple threads; double-checked locking here makes the import happen
+    exactly once, with every other caller blocking on the lock rather than
+    racing it.
+    """
+    global _bench_module
+    if _bench_module is None:
+        with _bench_lock:
+            if _bench_module is None:
+                import benchmark  # avoids importing the big module + TEST_CASES at boot
+
+                _bench_module = benchmark
+    return _bench_module
 
 
 @router.get("/benchmark/example")
@@ -65,6 +85,54 @@ async def benchmark_validate(request: Request) -> Dict[str, Any]:
     return _bench().validate_question_set(payload)
 
 
+# --- benchmark packs (Release R4) --------------------------------------------
+# A pack is a named, reusable preset over /benchmark/run's existing
+# `include_categories` filter — not a new engine. "all" (the default UI
+# behaviour today) intentionally has no entry here; omit include_categories
+# for that.
+BENCHMARK_PACKS: Dict[str, Dict[str, Any]] = {
+    "general": {
+        "label": "General assistant",
+        "categories": ["planning", "classification"],
+        "description": "Planning and classification — everyday assistant tasks.",
+    },
+    "coding": {
+        "label": "Coding",
+        "categories": ["code"],
+        "description": "Non-trivial Python/SQL, graded by AST parsing and unit tests.",
+    },
+    "structured": {
+        "label": "JSON and structured extraction",
+        "categories": ["structured", "structured_hard"],
+        "description": "Schema-shaped JSON output, including nested/conditional schemas.",
+    },
+    "reasoning": {
+        "label": "Reasoning",
+        "categories": ["math", "planning"],
+        "description": "Multi-step math and planning tasks that reward chain-of-thought.",
+    },
+}
+
+
+@router.get("/benchmark/packs")
+def benchmark_packs() -> Dict[str, Any]:
+    bench = _bench()
+    known_categories = {t.category for t in bench.TEST_CASES}
+    packs = []
+    for key, pack in BENCHMARK_PACKS.items():
+        cats = [c for c in pack["categories"] if c in known_categories]
+        packs.append(
+            {
+                "id": key,
+                "label": pack["label"],
+                "description": pack["description"],
+                "categories": cats,
+                "test_count": sum(1 for t in bench.TEST_CASES if t.category in cats),
+            }
+        )
+    return {"success": True, "packs": packs}
+
+
 class RunRequest(BaseModel):
     profiles: Optional[List[str]] = None
     questions: Optional[Dict[str, Any]] = None
@@ -73,6 +141,7 @@ class RunRequest(BaseModel):
     timeout: int = 240
     skip_categories: Optional[List[str]] = None
     include_categories: Optional[List[str]] = None
+    pack: Optional[str] = None  # convenience: expands to include_categories via BENCHMARK_PACKS
     repetitions: int = Field(default=1, ge=1, le=10)
 
 
@@ -98,6 +167,8 @@ def benchmark_run(req: RunRequest):
     else:
         skip = set(req.skip_categories or [])
         include = set(req.include_categories or [])
+        if not include and req.pack and req.pack in BENCHMARK_PACKS:
+            include = set(BENCHMARK_PACKS[req.pack]["categories"])
         tests = [
             dataclasses.replace(t)
             for t in bench.TEST_CASES
@@ -269,6 +340,15 @@ def benchmark_run(req: RunRequest):
                         )
                         return
 
+            peak_vram_by_profile: Dict[str, int] = {}
+
+            def _track_peak_vram(profile_name: str) -> None:
+                # Best-effort (nvidia-smi only, same as the CLI's VRAM sampling);
+                # a missing/failed reading just means no peak_vram_mb is reported.
+                used = bench.nvidia_smi_used_mb()
+                if used is not None:
+                    peak_vram_by_profile[profile_name] = max(peak_vram_by_profile.get(profile_name, 0), used)
+
             for event in bench.iter_run(
                 base_url,
                 profiles_map,
@@ -318,10 +398,15 @@ def benchmark_run(req: RunRequest):
                         deploy_end["warning"] = served["warning"]
                     yield sse(deploy_end)
 
+                if event.get("event") == "test_result":
+                    _track_peak_vram(str(event.get("profile") or ""))
                 if event.get("event") == "profile_end":
-                    actual = current_placement(str(event.get("profile") or ""))
+                    profile_name = str(event.get("profile") or "")
+                    actual = current_placement(profile_name)
                     if actual:
                         event["actual_device"] = actual
+                    if profile_name in peak_vram_by_profile and isinstance(event.get("summary"), dict):
+                        event["summary"]["peak_vram_mb"] = peak_vram_by_profile[profile_name]
                 yield sse(event)
                 if event.get("event") in {"profile_end", "profile_aborted"}:
                     unload_event = unload_profile(str(event.get("profile") or ""))
@@ -342,6 +427,91 @@ def benchmark_run(req: RunRequest):
                     ensure_model_routes()._ollama.unload_model(model_id)
                 except Exception:
                     pass
+        yield "data: [DONE]\n\n"
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
+# --- context-scaling sweep (Release R4) --------------------------------------
+# "How does memory, prompt-processing speed, first-token latency, and
+# generation speed change with context?" — the same profile, the same short
+# test subset used by /system/recommend, run once per context tier via the
+# /chat endpoint's existing context_limit override. No separate estimation or
+# grading logic: this reuses execute_test, so numbers agree with every other
+# benchmark surface in the app.
+DEFAULT_SWEEP_CONTEXTS = [4096, 8192, 16384, 32768, 65536]
+
+
+class ContextSweepRequest(BaseModel):
+    profile: str
+    contexts: List[int] = Field(default_factory=lambda: list(DEFAULT_SWEEP_CONTEXTS))
+    sample_size: int = Field(default=3, ge=1, le=10)
+    timeout: int = Field(default=120, ge=1, le=3_600)
+
+
+@router.post("/benchmark/context-sweep")
+def benchmark_context_sweep(req: ContextSweepRequest):
+    bench = _bench()
+    from api_server import load_config  # lazy: api_server owns config loading
+
+    profiles_map = load_config().get("profiles", {})
+
+    def event_stream():
+        def sse(event: Dict[str, Any]) -> str:
+            return f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+
+        if req.profile not in profiles_map:
+            yield sse({"event": "error", "error": f"Unknown profile '{req.profile}'."})
+            yield "data: [DONE]\n\n"
+            return
+
+        profile = profiles_map[req.profile]
+        tests = sorted(bench.TEST_CASES, key=lambda t: t.max_output_tokens)[: max(1, req.sample_size)]
+        base_url = bench.api_base_url()
+        contexts = sorted(dict.fromkeys(c for c in req.contexts if c > 0))
+        yield sse(
+            {
+                "event": "sweep_start", "profile": req.profile, "contexts": contexts,
+                "sample_tests": [t.name for t in tests],
+            }
+        )
+
+        for context in contexts:
+            yield sse({"event": "context_start", "context": context})
+            results = []
+            for t in tests:
+                try:
+                    item = bench.execute_test(base_url, req.profile, profile, t, req.timeout, context_override=context)
+                except Exception:
+                    item = bench.TestResult(
+                        name=t.name, category=t.category, success=False, elapsed_seconds=0.0,
+                        response_length=0, response_preview="", accuracy=0.0, error="execute_test error",
+                    )
+                results.append(item)
+                yield sse(
+                    {
+                        "event": "test_result", "context": context, "name": item.name,
+                        "success": item.success, "elapsed_seconds": item.elapsed_seconds,
+                        "context_limit_used": item.context_limit_used, "metrics": item.metrics,
+                    }
+                )
+            successes = [r for r in results if r.success]
+            rates = [r.approx_tokens_per_second for r in successes if r.approx_tokens_per_second is not None]
+            ttft_values = [r.metrics.get("ttft_ms") for r in successes if r.metrics.get("ttft_ms") is not None]
+            actual_contexts = {r.context_limit_used for r in successes if r.context_limit_used}
+            yield sse(
+                {
+                    "event": "context_end",
+                    "context": context,
+                    "actual_context_used": next(iter(actual_contexts), None) if len(actual_contexts) == 1 else None,
+                    "passed": len(successes),
+                    "tests": len(results),
+                    "mean_tokens_per_second": round(sum(rates) / len(rates), 2) if rates else None,
+                    "mean_ttft_ms": round(sum(ttft_values) / len(ttft_values), 1) if ttft_values else None,
+                    "vram_used_mb": bench.nvidia_smi_used_mb(),
+                }
+            )
+        yield sse({"event": "sweep_end", "profile": req.profile})
         yield "data: [DONE]\n\n"
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")

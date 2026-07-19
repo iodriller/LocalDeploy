@@ -19,7 +19,7 @@ from fastapi import APIRouter
 
 router = APIRouter()
 
-_NVIDIA_SMI_FIELDS = "name,memory.total,memory.free,memory.used,driver_version"
+_NVIDIA_SMI_FIELDS = "name,memory.total,memory.free,memory.used,driver_version,utilization.gpu"
 _VENDOR_IDS = {"0x10de": "NVIDIA", "0x1002": "AMD", "0x8086": "Intel"}
 
 
@@ -83,6 +83,7 @@ def _cpu_and_memory() -> Dict[str, Any]:
         "physical_cores": None,
         "ram_total_mb": None,
         "ram_available_mb": None,
+        "cpu_percent": None,
         "psutil_available": False,
         "ram_probe_message": "RAM details are unavailable because the system probe failed.",
     }
@@ -97,6 +98,10 @@ def _cpu_and_memory() -> Dict[str, Any]:
         vm = psutil.virtual_memory()
         info["ram_total_mb"] = int(vm.total / (1024 * 1024))
         info["ram_available_mb"] = int(vm.available / (1024 * 1024))
+        # Non-blocking (interval=None): compares against the last call rather than
+        # sleeping, so this never adds latency to a hardware probe. The first call
+        # in a process's lifetime returns 0.0 — meaningful readings need a second.
+        info["cpu_percent"] = psutil.cpu_percent(interval=None)
     except Exception:
         pass
     return info
@@ -114,6 +119,7 @@ def _gpu(
     unified: bool = False,
     source: str,
     estimated: bool = False,
+    utilization_pct: Optional[float] = None,
 ) -> Dict[str, Any]:
     if free is None and total is not None and used is not None:
         free = max(0, total - used)
@@ -130,6 +136,9 @@ def _gpu(
         "unified_memory": unified,
         "memory_source": source,
         "vram_estimated": estimated,
+        # Compute (SM) utilization, not memory bandwidth — only available from
+        # vendor CLIs (nvidia-smi today). None on sources that can't report it.
+        "utilization_pct": utilization_pct,
     }
 
 
@@ -144,8 +153,12 @@ def _query_nvidia_smi() -> List[Dict[str, Any]]:
         if len(parts) < 5:
             continue
         name, total, free, used, driver = parts[:5]
+        utilization = _to_int(parts[5]) if len(parts) > 5 else None
         gpus.append(
-            _gpu(name, "NVIDIA", "CUDA", _to_int(total), _to_int(free), _to_int(used), driver, source="nvidia-smi")
+            _gpu(
+                name, "NVIDIA", "CUDA", _to_int(total), _to_int(free), _to_int(used), driver,
+                source="nvidia-smi", utilization_pct=float(utilization) if utilization is not None else None,
+            )
         )
     return gpus
 

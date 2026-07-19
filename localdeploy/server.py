@@ -684,6 +684,30 @@ def make_success_response(
     )
 
 
+def _note_monitor_request(
+    prepared: Dict[str, Any], kind: str, success: bool, elapsed: float,
+    details: Optional[Dict[str, Any]] = None, error: Optional[str] = None,
+) -> None:
+    """Best-effort numeric-only request record for the Monitor tab (Release
+    R3). Never raises — monitoring must never affect the actual response."""
+    try:
+        from .control import monitor as monitor_mod
+
+        monitor_mod.record_request(
+            profile=prepared.get("profile_name"),
+            model=prepared.get("model"),
+            backend=prepared.get("backend"),
+            kind=kind,
+            success=success,
+            elapsed_seconds=elapsed,
+            metrics=(details or {}).get("metrics"),
+            context_limit=prepared.get("context_limit_used"),
+            error=error,
+        )
+    except Exception:
+        pass
+
+
 def run_local_request(kind: str, request_data: Dict[str, Any]) -> Dict[str, Any]:
     prepared, error_response = prepare_request(kind, request_data, require_enabled=True)
     if error_response:
@@ -710,6 +734,7 @@ def run_local_request(kind: str, request_data: Dict[str, Any]) -> Dict[str, Any]
             raise BackendCallError(f"Unsupported backend '{prepared['backend']}'.")
     except BackendCallError as exc:
         elapsed = time.perf_counter() - start
+        _note_monitor_request(prepared, kind, False, elapsed, error=str(exc))
         return make_error_response(
             error=str(exc),
             backend=prepared["backend"],
@@ -726,6 +751,7 @@ def run_local_request(kind: str, request_data: Dict[str, Any]) -> Dict[str, Any]
         # Any unexpected backend error degrades to a graceful failure response
         # instead of a raw 500 (e.g. an unwrapped JSON/parse error from a backend).
         elapsed = time.perf_counter() - start
+        _note_monitor_request(prepared, kind, False, elapsed, error=str(exc))
         return make_error_response(
             error=f"Unexpected backend error: {exc}",
             backend=prepared["backend"],
@@ -739,6 +765,7 @@ def run_local_request(kind: str, request_data: Dict[str, Any]) -> Dict[str, Any]
             warning=prepared.get("warning"),
         )
     elapsed = time.perf_counter() - start
+    _note_monitor_request(prepared, kind, True, elapsed, details=details)
     return make_success_response(prepared, content, elapsed, details)
 
 

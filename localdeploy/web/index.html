@@ -26,9 +26,11 @@
         <button class="tab active" data-tab="serve" role="tab" aria-selected="true">🖥 Setup &amp; Deploy</button>
         <button class="tab" data-tab="chat" role="tab" aria-selected="false">💬 Chat</button>
         <button class="tab" data-tab="bench" role="tab" aria-selected="false">📊 Benchmark &amp; Compare</button>
+        <button class="tab" data-tab="monitor" role="tab" aria-selected="false">📈 Monitor</button>
       </nav>
       <div class="topbar-right">
         <div id="hw-chip" class="chip hidden" title="Detected GPU / VRAM"></div>
+        <button id="update-chip" class="chip hidden" type="button" title="Check for LocalDeploy updates"></button>
         <div class="conn" id="conn-pill" title="API connection">API: …</div>
         <button class="btn theme-toggle" id="btn-theme" type="button" title="Toggle light/dark theme" aria-label="Toggle light/dark theme">◐</button>
       </div>
@@ -115,10 +117,82 @@
 
           <div class="seg-panel" data-seg-panel="recommended">
             <div class="section-title">
-              <p class="muted small">Hand-picked, known-good models that fit your detected GPU (or system RAM), with a safety margin so they don't just barely fit. Good first pull if you're not sure where to start.</p>
-              <button class="btn primary" id="btn-starter-pack" data-icon="★">Recommend models for my hardware</button>
+              <p class="muted small">Tell us what you're doing with it — we'll pick from hand-picked, known-good models that fit your detected GPU (or system RAM), with a safety margin so they don't just barely fit.</p>
             </div>
-            <div id="starter-pack-body" class="muted">Detect hardware first, then run this to see curated picks for your budget.</div>
+            <div class="row gap wrap recommend-inputs">
+              <label class="field compact-field">
+                <span>Use case</span>
+                <select id="rec-use-case">
+                  <option value="">General assistant</option>
+                  <option value="coding">Coding</option>
+                  <option value="document_analysis">Document analysis</option>
+                  <option value="structured_extraction">Structured extraction</option>
+                  <option value="reasoning">Reasoning</option>
+                  <option value="vision">Vision</option>
+                  <option value="multilingual">Multilingual</option>
+                  <option value="tool_calling">Tool calling</option>
+                </select>
+              </label>
+              <label class="field compact-field">
+                <span>Priority</span>
+                <select id="rec-priority">
+                  <option value="balanced">Balanced</option>
+                  <option value="best_quality">Best quality</option>
+                  <option value="fastest">Fastest</option>
+                  <option value="lowest_memory">Lowest memory</option>
+                  <option value="longest_context">Longest context</option>
+                </select>
+              </label>
+              <label class="field compact-field">
+                <span>Expected context <span class="help-tip" tabindex="0" role="button" aria-expanded="false" aria-label="The approximate amount of text, conversation history, or code the model must handle at one time." data-tooltip="Context represents the approximate amount of text, conversation history, or code the model must handle at one time.">?</span></span>
+                <select id="rec-context">
+                  <option value="4096">4K</option>
+                  <option value="8192" selected>8K</option>
+                  <option value="16384">16K</option>
+                  <option value="32768">32K</option>
+                  <option value="65536">64K</option>
+                  <option value="131072">128K+</option>
+                </select>
+              </label>
+              <label class="field compact-field">
+                <span>Usage</span>
+                <select id="rec-usage-mode">
+                  <option value="single_user_chat">Single-user chat</option>
+                  <option value="local_api">Local API</option>
+                  <option value="multi_request">Multiple simultaneous requests</option>
+                </select>
+              </label>
+              <button class="btn primary" id="btn-recommend-models" data-icon="★" style="align-self:flex-end">Recommend models for me</button>
+            </div>
+            <div id="starter-pack-body" class="muted">Pick a use case and priority above, then run this to see three explained picks for your budget.</div>
+
+            <!-- "Compare top models for me" (automated bakeoff, Release R6) — disabled per product
+                 decision; kept here commented out rather than deleted so it's easy to re-enable.
+            <div class="bakeoff-zone">
+              <div class="card-head" style="padding:0;border:none">
+                <div>
+                  <h3 class="sub">Compare top models for me</h3>
+                  <p class="muted small">Automates the full workflow: download a few fit-safe candidates for the use case above, deploy and benchmark each in turn, then keep the winner running.</p>
+                </div>
+              </div>
+              <div class="row gap wrap">
+                <label class="field compact-field">
+                  <span>Download budget</span>
+                  <select id="bakeoff-budget">
+                    <option value="10">Small test — up to 10 GB</option>
+                    <option value="30" selected>Standard comparison — up to 30 GB</option>
+                    <option value="custom">Extended — custom</option>
+                  </select>
+                </label>
+                <label class="field compact-field hidden" id="bakeoff-budget-custom-wrap">
+                  <span>Custom budget (GB)</span>
+                  <input type="number" id="bakeoff-budget-custom" value="50" min="1" max="1000" />
+                </label>
+                <button class="btn primary" id="btn-bakeoff-run" data-icon="⚔">Compare top models for me</button>
+              </div>
+              <div id="bakeoff-body" class="muted"></div>
+            </div>
+            -->
           </div>
 
           <div class="seg-panel hidden" data-seg-panel="hf">
@@ -311,6 +385,26 @@
           <div id="status-body" class="muted">No served-model status has been loaded yet.</div>
           <div id="serve-result" class="result"></div>
         </div>
+
+        <!-- ============ 5b. DEPLOYMENT MANIFESTS (Release R5) ============ -->
+        <details class="card advanced-zone" id="manifest-zone">
+          <summary class="advanced-summary">
+            <h2>Deployment manifest</h2>
+            <span class="muted small">Export the exact configuration of a running model, or import one to recreate it here.</span>
+          </summary>
+          <div class="row gap wrap" style="margin-top:0.75rem">
+            <label class="field grow">
+              <span>Paste a manifest JSON (or use "Export deployment" on a running model above)</span>
+              <textarea id="manifest-import-text" rows="6" placeholder='{"schema_version": 1, "model": {"name": "qwen3:14b", ...}, ...}'></textarea>
+            </label>
+          </div>
+          <div class="row gap wrap">
+            <label class="btn file">Load file <input type="file" id="manifest-import-file" accept=".json,.yaml,.yml" hidden /></label>
+            <button class="btn primary" id="btn-manifest-validate">Check compatibility</button>
+            <button class="btn primary" id="btn-manifest-recreate" disabled title="Check compatibility first">Recreate deployment</button>
+          </div>
+          <div id="manifest-body" class="muted">No manifest loaded yet.</div>
+        </details>
 
         <!-- Auto-pick a profile -->
         <!-- ============ 6. ADVANCED (tuning, saved profiles, GPU auto-pick) ============ -->
@@ -525,6 +619,7 @@
             <div class="row gap">
               <button class="btn danger" id="btn-run-cancel" hidden>Cancel</button>
               <button class="btn" id="btn-export" disabled title="Select a completed run">Export run</button>
+              <button class="btn" id="btn-contribute" disabled title="Select a completed run">Contribute anonymized benchmark</button>
             </div>
           </div>
           <div class="bench-summary-grid">
@@ -571,6 +666,12 @@
                 <option value="gpu">GPU</option>
                 <option value="cpu">CPU</option>
                 <option value="both">CPU + GPU</option>
+              </select>
+            </label>
+            <label class="field" title="Run only the tests for a specific use case instead of the full built-in suite.">
+              <span>Test pack</span>
+              <select id="bench-pack">
+                <option value="">Full suite</option>
               </select>
             </label>
             <label class="field">
@@ -697,6 +798,61 @@
               <tbody></tbody>
             </table>
           </div>
+        </div>
+      </section>
+
+      <!-- ===================== TAB 4: Monitor ===================== -->
+      <section id="tab-monitor" class="tab-panel">
+        <div class="hint">This tab polls the server every 5 seconds while it's open, so leave it open a while to build up rolling history and sustained-usage alerts.</div>
+
+        <div id="monitor-alerts" class="monitor-alerts hidden"></div>
+
+        <div class="card">
+          <div class="card-head">
+            <h2>Overview</h2>
+            <span id="monitor-ollama-pill" class="chip"></span>
+          </div>
+          <div id="monitor-overview" class="monitor-overview-grid"></div>
+          <div class="monitor-charts">
+            <div class="monitor-chart-card">
+              <div class="muted small">VRAM usage</div>
+              <div id="monitor-chart-vram"></div>
+            </div>
+            <div class="monitor-chart-card">
+              <div class="muted small">GPU utilization</div>
+              <div id="monitor-chart-gpu"></div>
+            </div>
+            <div class="monitor-chart-card">
+              <div class="muted small">Generation throughput (tok/s)</div>
+              <div id="monitor-chart-tps"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-head">
+            <h2>Loaded models</h2>
+          </div>
+          <div id="monitor-models" class="fit-grid">
+            <div class="monitor-empty">
+              <p class="muted">Nothing to monitor yet — this fills in once a model is running.</p>
+              <p class="muted small">Head to Setup &amp; Deploy, pull or pick a model, and deploy it. Come back here to watch its VRAM, throughput, and request history live.</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-head">
+            <h2>Recent requests</h2>
+            <span class="muted small">Numerical metadata only — prompts and responses are never stored here.</span>
+          </div>
+          <div class="table-wrap">
+            <table id="monitor-requests-table" class="results">
+              <thead><tr><th>Time</th><th>Model</th><th>Source</th><th>Result</th><th class="num">Prompt tok</th><th class="num">Output tok</th><th class="num">TTFT</th><th class="num">tok/s</th><th class="num">Latency</th></tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+          <div id="monitor-requests-empty" class="muted small">No requests recorded yet — this fills in once you chat with or benchmark a loaded model.</div>
         </div>
       </section>
     </main>

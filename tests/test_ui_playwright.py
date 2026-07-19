@@ -413,3 +413,312 @@ def test_catalog_keeps_clicked_size_and_renders_json_inspector(live_server, brow
         sync_api.expect(page.locator("#json-test-node .json-raw")).to_contain_text('"scores"')
     finally:
         page.close()
+
+
+def _recommend_candidate(bucket, model_id, why):
+    return {
+        "id": model_id, "pull_name": model_id, "family": model_id.split(":")[0], "params_b": 8.0,
+        "tier": 4, "vision": False, "use_case": "mid/general", "workload_tags": ["general"],
+        "context_native": 32768, "description": f"Test description for {model_id}.",
+        "required_gb": 6.5, "margin_gb": 1.5, "bucket": bucket, "why_summary": why,
+        "confidence": "medium",
+        "reasons": [
+            {"text": "Fits your VRAM budget with ~1.5 GB headroom (~6.5 GB estimated)", "kind": "estimated"},
+            {"text": "Published context window: 32K tokens", "kind": "published"},
+        ],
+    }
+
+
+def test_guided_recommend_renders_three_labeled_buckets(live_server, browser):
+    page = browser.new_page()
+    calls = []
+
+    def recommend_route(route):
+        calls.append(route.request.post_data_json)
+        route.fulfill(
+            json={
+                "success": True,
+                "budget_source": "vram",
+                "raw_budget_gb": 10.0,
+                "budget_gb": 8.0,
+                "margin_relaxed": False,
+                "use_case": "coding",
+                "priority": "balanced",
+                "expected_context": 8192,
+                "recommended": _recommend_candidate("recommended", "qwen2.5-coder:7b", "Best balance for what you asked for."),
+                "faster": _recommend_candidate("faster", "llama3.2:3b", "Smaller and faster, some quality trade-off."),
+                "higher_quality": _recommend_candidate("higher_quality", "qwen3:14b", "Strongest quality that still fits."),
+                "hardware": {"gpu_available": True, "gpus": []},
+                "message": None,
+            },
+        )
+
+    page.route("**/registry/recommend", recommend_route)
+    page.route("**/registry/installed", lambda route: route.fulfill(json={"success": True, "installed": [], "error": None}))
+    try:
+        page.goto(f"{live_server}/ui", wait_until="domcontentloaded")
+        page.locator("#rec-use-case").select_option("coding")
+        page.locator("#btn-recommend-models").click()
+        page.wait_for_selector(".recommendation-card")
+        cards = page.locator(".recommendation-card")
+        sync_api.expect(cards).to_have_count(3)
+        sync_api.expect(page.locator(".bucket-label")).to_have_count(3)
+        assert "recommended" in page.locator(".bucket-label").first.inner_text().lower()
+        # "Why this model?" is a <details> disclosure — its reasons are present in the DOM.
+        sync_api.expect(cards.first.locator(".reason-item").first).to_contain_text("Fits your VRAM budget")
+        assert calls[-1]["use_case"] == "coding"
+    finally:
+        page.close()
+
+
+def _seed_regression_runs():
+    def run(run_id, backend_version, peak_vram_mb, tps):
+        return {
+            "id": run_id,
+            "createdAt": "2026-06-24T00:00:00.000Z",
+            "profile": "p",
+            "modelId": "qwen3:8b",
+            "source": "restored-history",
+            "peakVramMb": peak_vram_mb,
+            "provenance": {
+                "localdeploy_version": "0.5.1",
+                "profiles": {"p": {"backend_version": backend_version, "model_digest": "sha256:aaa", "quant": "Q4_K_M", "context": 8192}},
+                "hardware": {"gpus": [{"name": "RTX 4090"}]},
+            },
+            "tests": [
+                {"name": "t1", "category": "code", "success": True, "accuracy": 1.0, "elapsed_seconds": 1.0,
+                 "approx_tokens_per_second": tps, "metrics": {"ttft_ms": 300.0 if tps > 30 else 340.0}},
+            ],
+            "summary": {"tests": 1, "passed": 1, "avg_accuracy": 1.0, "avg_latency_s": 1.0, "avg_tokens_per_second": tps},
+        }
+
+    return json.dumps([run("run-a", "0.11.0", 12000, 40.0), run("run-b", "0.12.0", 12800, 30.0)])
+
+
+def test_regression_panel_and_pack_selector(live_server, browser):
+    page = browser.new_page()
+    try:
+        page.add_init_script(f'window.localStorage.setItem("localdeploy.benchmarkRuns.v1", {json.dumps(_seed_regression_runs())});')
+        page.goto(f"{live_server}/ui", wait_until="domcontentloaded")
+        page.get_by_role("tab", name="Benchmark & Compare").click()
+
+        # Pack selector is populated from the real /benchmark/packs endpoint.
+        page.wait_for_function("document.querySelector('#bench-pack')?.options.length > 1")
+        options = page.locator("#bench-pack option").all_inner_texts()
+        assert any("Coding" in o for o in options)
+
+        page.wait_for_selector(".run-library-row")
+        checkboxes = page.locator(".run-library-pick input[type=checkbox]")
+        sync_api.expect(checkboxes).to_have_count(2)
+        checkboxes.nth(0).check()
+        checkboxes.nth(1).check()
+        page.get_by_role("button", name="Compare selected").click()
+
+        page.wait_for_selector("#regression-diffs table")
+        panel_text = page.locator("#regression-diffs").inner_text()
+        assert "Runtime version" in panel_text
+        assert "0.11.0" in panel_text and "0.12.0" in panel_text
+        sync_api.expect(page.locator("#regression-diffs tr.regression-changed")).to_have_count(1)
+    finally:
+        page.close()
+
+
+def test_monitor_tab_renders_snapshot(live_server, browser):
+    page = browser.new_page()
+    page.route(
+        "**/system/monitor",
+        lambda route: route.fulfill(
+            json={
+                "success": True,
+                "ollama_reachable": True,
+                "hardware": {
+                    "vram_used_mb": 6144, "vram_total_mb": 8192, "vram_pct": 75.0,
+                    "gpu_utilization_pct": 42.0, "ram_used_mb": 8192, "ram_total_mb": 32768, "cpu_percent": 12.0,
+                },
+                "history": {"hardware": [{"vram_pct": 70.0, "gpu_utilization_pct": 40.0}, {"vram_pct": 75.0, "gpu_utilization_pct": 42.0}]},
+                "models": [
+                    {
+                        "name": "gemma3:4b", "placement": "GPU", "gpu_percent": 100, "size_mb": 4000,
+                        "size_vram_mb": 3900, "expires_at": "2099-01-01T00:00:00Z", "requested_device": "GPU",
+                        "uptime_seconds": 1500, "request_count": 4, "active_requests": 0, "failure_count": 0,
+                        "median_tokens_per_second": 35.0, "recent_tokens_per_second": 33.0, "median_ttft_ms": 220.0,
+                    }
+                ],
+                "requests": [
+                    {
+                        "ts": 1750000000.0, "profile": "gemma3_4b", "model": "gemma3:4b", "backend": "ollama",
+                        "source": "chat", "success": True, "elapsed_seconds": 1.2, "prompt_tokens": 50,
+                        "output_tokens": 80, "ttft_ms": 220.0, "tokens_per_second": 33.0, "context_limit": 4096,
+                        "error": None,
+                    }
+                ],
+                "alerts": [{"level": "warning", "text": "VRAM usage has remained above 95% for 3 minute(s)."}],
+                "note": "test",
+            }
+        ),
+    )
+    try:
+        page.goto(f"{live_server}/ui", wait_until="domcontentloaded")
+        page.get_by_role("tab", name="Monitor").click()
+        page.wait_for_selector(".monitor-alert")
+        sync_api.expect(page.locator(".monitor-alert")).to_contain_text("VRAM usage has remained above")
+        sync_api.expect(page.locator("#monitor-models .model-title")).to_contain_text("gemma3:4b")
+        sync_api.expect(page.locator("#monitor-requests-table tbody tr")).to_have_count(1)
+        sync_api.expect(page.locator("#monitor-requests-table tbody tr")).to_contain_text("gemma3:4b")
+        # Switching away must stop polling — the interval id is cleared.
+        page.get_by_role("tab", name="Setup & Deploy").click()
+        assert page.evaluate("state.monitor.timer") is None
+    finally:
+        page.close()
+
+
+def test_update_chip_shows_when_update_available(live_server, browser):
+    page = browser.new_page()
+    page.route(
+        "**/system/update-check",
+        lambda route: route.fulfill(
+            json={
+                "success": True, "checked": True, "current_version": "0.5.1", "latest_version": "9.9.9",
+                "update_available": True, "version_comparable": True, "channel": "stable", "prerelease": False,
+                "url": "https://github.com/iodriller/LocalDeploy/releases/tag/v9.9.9",
+                "published_at": "2026-01-01T00:00:00Z", "notes": "Big release.",
+            }
+        ),
+    )
+    try:
+        page.goto(f"{live_server}/ui", wait_until="domcontentloaded")
+        chip = page.locator("#update-chip")
+        sync_api.expect(chip).to_be_visible()
+        sync_api.expect(chip).to_contain_text("9.9.9")
+    finally:
+        page.close()
+
+
+def test_update_chip_hidden_when_up_to_date(live_server, browser):
+    page = browser.new_page()
+    page.route(
+        "**/system/update-check",
+        lambda route: route.fulfill(
+            json={"success": True, "checked": True, "current_version": "0.5.1", "latest_version": "0.5.1",
+                  "update_available": False, "version_comparable": True, "channel": "stable"}
+        ),
+    )
+    try:
+        page.goto(f"{live_server}/ui", wait_until="domcontentloaded")
+        page.wait_for_timeout(300)
+        sync_api.expect(page.locator("#update-chip")).to_be_hidden()
+    finally:
+        page.close()
+
+
+def test_manifest_export_modal_shows_yaml(live_server, browser):
+    page = browser.new_page()
+    page.route(
+        "**/system/status",
+        lambda route: route.fulfill(
+            json={
+                "success": True,
+                "ollama": {
+                    "reachable": True,
+                    "running": [
+                        {"name": "gemma3:4b", "size": 4_000_000_000, "size_vram": 3_900_000_000,
+                         "placement": "GPU", "gpu_percent": 100, "expires_at": "2099-01-01T00:00:00Z",
+                         "activity": "loaded"}
+                    ],
+                    "error": None,
+                },
+                "served_models": ["gemma3:4b"],
+                "hardware": {"gpu_available": False, "gpus": [], "system": {}},
+            }
+        ),
+    )
+    page.route(
+        "**/system/manifest/export",
+        lambda route: route.fulfill(
+            json={
+                "success": True,
+                "manifest": {"schema_version": 1, "model": {"name": "gemma3:4b"}},
+                "yaml": "schema_version: 1\nmodel:\n  name: gemma3:4b\n",
+                "json": '{"schema_version": 1, "model": {"name": "gemma3:4b"}}',
+            }
+        ),
+    )
+    try:
+        page.goto(f"{live_server}/ui", wait_until="domcontentloaded")
+        page.get_by_role("button", name="Refresh status").click()
+        page.wait_for_selector(".export-manifest-btn")
+        page.locator(".export-manifest-btn").click()
+        page.wait_for_selector(".modal-card")
+        sync_api.expect(page.locator(".modal-card")).to_contain_text("gemma3:4b")
+        sync_api.expect(page.locator(".manifest-yaml")).to_contain_text("schema_version: 1")
+    finally:
+        page.close()
+
+
+@pytest.mark.skip(reason="'Compare top models for me' UI is disabled (commented out) per product decision")
+def test_bakeoff_progress_and_winner_render(live_server, browser):
+    page = browser.new_page()
+    sse_body = "\n".join(
+        [
+            'data: {"event": "bakeoff_start", "candidates": ["qwen2.5:7b", "llama3.2:3b"], "pack": "general", "sample_tests": []}',
+            "",
+            'data: {"event": "candidate_start", "model": "qwen2.5:7b", "download_gb": 4.4}',
+            "",
+            'data: {"event": "candidate_end", "model": "qwen2.5:7b", "avg_accuracy": 0.9, "avg_latency_s": 1.1, "passed": 3, "tests": 3, "margin_gb": 5.0}',
+            "",
+            'data: {"event": "bakeoff_end", "pack": "general", "ranked": [{"profile": "qwen2.5:7b", "avg_accuracy": 0.9, "avg_latency_s": 1.1, "passed": 3, "tests": 3, "margin_gb": 5.0, "score": 0.9}], "winner": "qwen2.5:7b", "losers": [], "winner_deployed": true}',
+            "",
+            "data: [DONE]",
+            "",
+        ]
+    )
+    page.route(
+        "**/system/bakeoff/run",
+        lambda route: route.fulfill(status=200, content_type="text/event-stream", body=sse_body),
+    )
+    try:
+        page.goto(f"{live_server}/ui", wait_until="domcontentloaded")
+        page.locator("#btn-bakeoff-run").click()
+        page.wait_for_selector(".bakeoff-winner-card")
+        sync_api.expect(page.locator(".bakeoff-winner-card")).to_contain_text("qwen2.5:7b")
+        sync_api.expect(page.locator("#bakeoff-body")).to_contain_text("Winner")
+    finally:
+        page.close()
+
+
+def test_contribute_benchmark_preview_modal(live_server, browser):
+    page = browser.new_page()
+    page.route(
+        "**/system/community/preview",
+        lambda route: route.fulfill(
+            json={
+                "success": True,
+                "would_share": {"schema_version": 1, "model": {"id": "gemma3:4b"}, "hardware": {"gpu": "RTX 4090"}},
+                "excluded_fields": ["model prompts", "model responses", "local profile name"],
+                "note": "Preview only — nothing is sent anywhere. LocalDeploy has no community server yet.",
+            }
+        ),
+    )
+    try:
+        seed = [
+            {
+                "id": "run-a", "createdAt": "2026-06-24T00:00:00.000Z", "profile": "p", "modelId": "gemma3:4b",
+                "source": "restored-history",
+                "tests": [{"name": "t1", "category": "code", "success": True, "accuracy": 1.0, "elapsed_seconds": 1.0, "approx_tokens_per_second": 10.0}],
+                "summary": {"tests": 1, "passed": 1, "avg_accuracy": 1.0, "avg_latency_s": 1.0, "avg_tokens_per_second": 10.0},
+            }
+        ]
+        page.add_init_script(f'window.localStorage.setItem("localdeploy.benchmarkRuns.v1", {json.dumps(json.dumps(seed))});')
+        page.goto(f"{live_server}/ui", wait_until="domcontentloaded")
+        page.get_by_role("tab", name="Benchmark & Compare").click()
+        page.wait_for_selector(".run-library-row")
+        # Selecting a run (as a user would, via its checkbox) is what makes it
+        # "active" — Export/Contribute stay disabled until a run is picked.
+        page.locator(".run-library-pick input[type=checkbox]").first.check()
+        page.wait_for_function("!document.querySelector('#btn-contribute')?.disabled")
+        page.locator("#btn-contribute").click()
+        page.wait_for_selector(".modal-card")
+        sync_api.expect(page.locator(".modal-card")).to_contain_text("gemma3:4b")
+        sync_api.expect(page.locator(".modal-card")).to_contain_text("Never included")
+    finally:
+        page.close()

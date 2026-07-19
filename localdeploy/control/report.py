@@ -20,6 +20,19 @@ from pydantic import BaseModel
 router = APIRouter()
 
 
+def _ttft_values(tests: List[Dict[str, Any]]) -> List[float]:
+    values = []
+    for t in tests:
+        metrics = t.get("metrics") or {}
+        ttft = metrics.get("ttft_ms")
+        if ttft is not None:
+            try:
+                values.append(float(ttft))
+            except (TypeError, ValueError):
+                continue
+    return values
+
+
 def _summary(tests: List[Dict[str, Any]]) -> Dict[str, Any]:
     accs = [float(t.get("accuracy") or 0) for t in tests]
     lats = [float(t.get("elapsed_seconds") or 0) for t in tests]
@@ -29,12 +42,14 @@ def _summary(tests: List[Dict[str, Any]]) -> Dict[str, Any]:
         for t in tests
         if t.get("approx_tokens_per_second") is not None
     ]
+    ttft = _ttft_values(tests)
     return {
         "tests": len(tests),
         "passed": sum(1 for t in tests if t.get("success")),
         "avg_accuracy": round(mean(accs), 3) if accs else 0.0,
         "avg_latency_s": round(mean(lats), 3) if lats else 0.0,
         "avg_tokens_per_second": round(mean(tps), 2) if tps else None,
+        "avg_ttft_ms": round(mean(ttft), 1) if ttft else None,
     }
 
 
@@ -89,6 +104,7 @@ def build_card(payload: Dict[str, Any]) -> Dict[str, Any]:
         "variance": payload.get("variance") or {},
         "aggregates": payload.get("aggregates") or [],
         "repetitions": payload.get("repetitions") or 1,
+        "peak_vram_mb": payload.get("peak_vram_mb"),
         "tests": tests,
         "summary": payload.get("summary") or _summary(tests),
         "category_summary": payload.get("category_summary") or _category_summary(tests),
@@ -254,6 +270,37 @@ def _delta(a: Any, b: Any) -> Any:
     return round(float(b) - float(a), 3)
 
 
+# A "regression" is only meaningful once you know what else changed (an
+# Ollama upgrade, a different driver, a different quant) — these are the
+# provenance dimensions worth calling out explicitly between two runs.
+def _dimension_diffs(card_a: Dict[str, Any], card_b: Dict[str, Any]) -> List[Dict[str, Any]]:
+    prov_a = card_a.get("provenance") or {}
+    prov_b = card_b.get("provenance") or {}
+    profile_a = (prov_a.get("profiles") or {}).get(card_a.get("profile"), {})
+    profile_b = (prov_b.get("profiles") or {}).get(card_b.get("profile"), {})
+    hw_a = prov_a.get("hardware") or {}
+    hw_b = prov_b.get("hardware") or {}
+
+    def gpu_name(hw: Dict[str, Any]) -> Any:
+        gpus = hw.get("gpus") or []
+        return gpus[0].get("name") if gpus else None
+
+    fields = [
+        ("LocalDeploy version", prov_a.get("localdeploy_version"), prov_b.get("localdeploy_version")),
+        ("Runtime version", profile_a.get("backend_version"), profile_b.get("backend_version")),
+        ("Model digest", profile_a.get("model_digest"), profile_b.get("model_digest")),
+        ("Quant", profile_a.get("quant"), profile_b.get("quant")),
+        ("Context", profile_a.get("context"), profile_b.get("context")),
+        ("GPU", gpu_name(hw_a), gpu_name(hw_b)),
+        ("Device", card_a.get("device"), card_b.get("device")),
+    ]
+    return [
+        {"dimension": name, "a": a, "b": b, "changed": a != b}
+        for name, a, b in fields
+        if a is not None or b is not None
+    ]
+
+
 @router.post("/benchmark/compare")
 def benchmark_compare(req: CompareRequest) -> Dict[str, Any]:
     a = {t.get("name"): t for t in (req.card_a.get("tests") or [])}
@@ -297,10 +344,15 @@ def benchmark_compare(req: CompareRequest) -> Dict[str, Any]:
             "avg_tokens_per_second": _delta(
                 sa.get("avg_tokens_per_second"), sb.get("avg_tokens_per_second")
             ),
+            "avg_ttft_ms": _delta(sa.get("avg_ttft_ms"), sb.get("avg_ttft_ms")),
+            "peak_vram_mb": _delta(req.card_a.get("peak_vram_mb"), req.card_b.get("peak_vram_mb")),
             "tps_a": sa.get("avg_tokens_per_second"),
             "tps_b": sb.get("avg_tokens_per_second"),
             "passed_a": sa.get("passed"),
             "passed_b": sb.get("passed"),
         },
+        # Regression detection: what else changed between these two runs, so a
+        # tok/s drop can be attributed to "Ollama upgrade" rather than noise.
+        "dimension_diffs": _dimension_diffs(req.card_a, req.card_b),
         "tests": rows,
     }
