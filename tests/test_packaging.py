@@ -1,7 +1,11 @@
 """Packaging guards: app-home resolution, CLI entry point, version consistency."""
 from __future__ import annotations
 
+import hashlib
+import os
 from pathlib import Path
+import shutil
+import subprocess
 
 import pytest
 
@@ -67,3 +71,62 @@ def test_bundled_ollama_cloud_models_are_disabled():
     assert "OLLAMA_NO_CLOUD=true" in dockerfile
     assert "OLLAMA_NO_CLOUD=true" in compose
     assert "OLLAMA_NO_CLOUD=true" in env_example
+
+
+@pytest.mark.skipif(os.name == "nt" or shutil.which("bash") is None, reason="Unix launcher test")
+def test_unix_launcher_reads_addresses_from_dotenv(tmp_path):
+    scripts_dir = tmp_path / "scripts"
+    scripts_dir.mkdir()
+    shutil.copy2(PROJECT_ROOT / "scripts" / "start.sh", scripts_dir / "start.sh")
+
+    requirements = tmp_path / "requirements.txt"
+    requirements.write_text("", encoding="utf-8")
+    marker_dir = tmp_path / ".venv"
+    (marker_dir / "bin").mkdir(parents=True)
+    (marker_dir / "bin" / "activate").write_text("", encoding="utf-8")
+    (marker_dir / "requirements.sha256").write_text(
+        hashlib.sha256(b"").hexdigest() + "\n", encoding="utf-8"
+    )
+    (tmp_path / ".env").write_text(
+        "API_HOST=0.0.0.0\n"
+        "API_PORT=8123\n"
+        "OLLAMA_BASE_URL=http://127.0.0.1:19999/\n",
+        encoding="utf-8",
+    )
+
+    fake_bin = tmp_path / "fake-bin"
+    fake_bin.mkdir()
+    curl_log = tmp_path / "curl-args.txt"
+    uvicorn_log = tmp_path / "uvicorn-args.txt"
+    fake_curl = fake_bin / "curl"
+    fake_curl.write_text(f'#!/usr/bin/env bash\nprintf "%s" "$*" > "{curl_log}"\n', encoding="utf-8")
+    fake_uvicorn = fake_bin / "uvicorn"
+    fake_uvicorn.write_text(
+        f'#!/usr/bin/env bash\nprintf "%s" "$*" > "{uvicorn_log}"\n', encoding="utf-8"
+    )
+    fake_curl.chmod(0o755)
+    fake_uvicorn.chmod(0o755)
+
+    env = os.environ.copy()
+    for name in ("API_HOST", "API_PORT", "OLLAMA_BASE_URL"):
+        env.pop(name, None)
+    env.update(
+        {
+            "NO_BROWSER": "1",
+            "PYTHON": shutil.which("python3") or shutil.which("python") or "python3",
+            "PATH": f"{fake_bin}{os.pathsep}/usr/bin{os.pathsep}/bin",
+        }
+    )
+    result = subprocess.run(
+        ["bash", str(scripts_dir / "start.sh")],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=True,
+    )
+
+    assert "LocalDeploy UI:  http://127.0.0.1:8123/ui" in result.stdout
+    assert curl_log.read_text(encoding="utf-8").endswith("http://127.0.0.1:19999/api/tags")
+    assert uvicorn_log.read_text(encoding="utf-8") == "api_server:app --host 0.0.0.0 --port 8123"
