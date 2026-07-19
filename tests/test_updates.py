@@ -89,7 +89,7 @@ def test_update_check_network_failure_is_graceful(monkeypatch):
 
 def test_update_check_never_sends_query_params_or_body():
     # No telemetry: this endpoint takes no request body and forwards nothing
-    # about the local machine — GET with no params is the entire contract.
+    # about the local machine - GET with no params is the entire contract.
     import inspect
 
     sig = inspect.signature(updates_mod.update_check)

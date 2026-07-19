@@ -7,8 +7,8 @@ then drives a short scripted tour with a visible fake cursor while Playwright
 records video. The webm is converted to a GIF with ffmpeg (the copy bundled
 with Playwright is found automatically, so no separate install is needed).
 
-The tour degrades gracefully without Ollama — cards it can't populate are
-simply skipped — but looks best on a machine with a GPU and a few pulled
+The tour degrades gracefully without Ollama - cards it can't populate are
+simply skipped - but looks best on a machine with a GPU and a few pulled
 models.
 
 Usage:
@@ -222,7 +222,7 @@ def main() -> int:
                         )
                         page.wait_for_timeout(1500)
                     except Exception:
-                        pass  # no backend — move on, the tour still works
+                        pass  # no backend - move on, the tour still works
 
             # 4. Benchmark workspace: leaderboard, scatter, heatmap.
             if _glide(page, '.tab[data-tab="bench"]'):

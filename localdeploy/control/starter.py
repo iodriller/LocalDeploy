@@ -3,7 +3,7 @@
 POST /registry/starter-pack takes the detected free VRAM (or system RAM when
 there is no GPU), subtracts a safety margin, and returns the best-fitting
 handful of well-known Ollama models from a small curated catalog. This is
-deliberately a static catalog rather than a live Hugging Face search — a
+deliberately a static catalog rather than a live Hugging Face search - a
 brand-new user's first pull should be something known-good, not whatever is
 newest/most-downloaded this week (that's what /registry/check-updates is for).
 
@@ -31,7 +31,7 @@ router = APIRouter()
 # VRAM estimate off; every entry below is a dense model.
 # Guided-recommend workload tags (Release R1). Matches the "Use case" options
 # in the Recommended-models UI. Hand-curated from each family's public model
-# card/announcement, not measured on any specific machine — treated as
+# card/announcement, not measured on any specific machine - treated as
 # "published" provenance in /registry/recommend's explainability, same as
 # `context_native` below.
 WORKLOAD_TAGS = (
@@ -41,7 +41,7 @@ WORKLOAD_TAGS = (
 
 # Published native context length (tokens), hand-curated from each family's
 # model card. Deliberately rounded to a coarse tier (32768 or 131072) rather
-# than an exact figure this repo can't verify per release — "expected
+# than an exact figure this repo can't verify per release - "expected
 # context" filtering only needs to know roughly which bucket a model reaches.
 STARTER_CATALOG: List[Dict[str, Any]] = [
     {"id": "qwen2.5:0.5b", "family": "qwen2.5", "params_b": 0.5, "tier": 2, "vision": False,
@@ -67,7 +67,7 @@ STARTER_CATALOG: List[Dict[str, Any]] = [
      "description": "Compact Microsoft Phi-4 Mini instruct model."},
     {"id": "gemma3:4b", "family": "gemma3", "params_b": 4.0, "tier": 4, "vision": True,
      "use_case": "small/vision", "workload_tags": ["general", "vision"], "context_native": 131072,
-     "description": "This repo's safe default profile — small, multimodal, dependable."},
+     "description": "This repo's safe default profile - small, multimodal, dependable."},
     {"id": "qwen3-vl:4b-instruct", "family": "qwen3-vl", "params_b": 4.0, "tier": 4, "vision": True,
      "use_case": "small/vision", "workload_tags": ["vision", "general"], "context_native": 32768,
      "description": "Fast small vision-language model, ~2x faster than the 8B at somewhat lower quality."},
@@ -100,7 +100,7 @@ STARTER_CATALOG: List[Dict[str, Any]] = [
      "description": "IBM Granite 3.3 general instruct model."},
     {"id": "gemma3:12b-it-qat", "family": "gemma3", "params_b": 12.0, "tier": 4, "vision": True,
      "use_case": "large/vision", "workload_tags": ["vision", "general"], "context_native": 131072,
-     "description": "Quantization-aware-trained Gemma 3 12B — beats the default Q4 tag at the same speed/VRAM."},
+     "description": "Quantization-aware-trained Gemma 3 12B - beats the default Q4 tag at the same speed/VRAM."},
     {"id": "qwen3:14b", "family": "qwen3", "params_b": 14.0, "tier": 5, "vision": False,
      "use_case": "large/general", "workload_tags": ["general", "reasoning", "multilingual", "tool_calling"],
      "context_native": 32768,
@@ -117,14 +117,14 @@ STARTER_CATALOG: List[Dict[str, Any]] = [
     {"id": "qwen3:32b", "family": "qwen3", "params_b": 32.0, "tier": 5, "vision": False,
      "use_case": "xlarge/general", "workload_tags": ["general", "reasoning", "multilingual", "tool_calling"],
      "context_native": 32768,
-     "description": "Flagship dense Qwen3 size — strong all-around quality for 24GB+ cards."},
+     "description": "Flagship dense Qwen3 size - strong all-around quality for 24GB+ cards."},
     {"id": "llama3.1:70b", "family": "llama3.1", "params_b": 70.0, "tier": 5, "vision": False,
      "use_case": "huge/flagship", "workload_tags": ["general", "reasoning", "tool_calling"],
      "context_native": 131072,
-     "description": "Meta's flagship dense Llama 3.1 — needs a very high-VRAM card or multi-GPU."},
+     "description": "Meta's flagship dense Llama 3.1 - needs a very high-VRAM card or multi-GPU."},
     {"id": "qwen2.5:72b", "family": "qwen2.5", "params_b": 72.0, "tier": 5, "vision": False,
      "use_case": "huge/flagship", "workload_tags": ["general", "multilingual"], "context_native": 32768,
-     "description": "Flagship dense Qwen2.5 size — top-tier quality, needs a very high-VRAM card."},
+     "description": "Flagship dense Qwen2.5 size - top-tier quality, needs a very high-VRAM card."},
 ]
 
 
@@ -158,7 +158,7 @@ def _resolve_budget(
 def _pick(catalog: List[Dict[str, Any]], budget_gb: float, limit: int) -> List[Dict[str, Any]]:
     """Fit-filter the catalog against `budget_gb`, then rank + cap per family.
 
-    Ranking is quality tier first (desc), model size as a tie-break (desc) —
+    Ranking is quality tier first (desc), model size as a tie-break (desc) -
     among equally-rated models, prefer the one that uses more of the
     available headroom. At most 2 picks per family so the top-5 isn't just
     one family's whole size ladder.
@@ -180,7 +180,7 @@ def _pick(catalog: List[Dict[str, Any]], budget_gb: float, limit: int) -> List[D
         if len(picked) >= limit:
             break
     if len(picked) < limit:
-        # Family cap left the list short (e.g. a narrow budget) — top up with
+        # Family cap left the list short (e.g. a narrow budget) - top up with
         # the next-best fitting entries regardless of family.
         picked_ids = {p["id"] for p in picked}
         for entry in fitting:
@@ -222,14 +222,14 @@ def starter_pack(req: StarterPackRequest) -> Dict[str, Any]:
     note: Optional[str] = None
 
     if not candidates:
-        # Nothing fits within the margin — retry against the raw budget so a
+        # Nothing fits within the margin - retry against the raw budget so a
         # user on tight hardware still gets *something*, flagged as tight.
         candidates = _pick(STARTER_CATALOG, raw_budget_gb, limit)
         margin_relaxed = bool(candidates)
         if candidates:
             note = (
                 f"Nothing fit within the {req.margin_gb} GB safety margin, so this list "
-                "uses your full detected budget instead — treat these as tight fits."
+                "uses your full detected budget instead - treat these as tight fits."
             )
         else:
             # Still nothing: hand back the smallest catalog entry as a last resort.
@@ -240,7 +240,7 @@ def starter_pack(req: StarterPackRequest) -> Dict[str, Any]:
             ]
             note = (
                 "Even the smallest starter model may not comfortably fit your detected "
-                "memory. Listing it anyway as a best-effort pick — consider CPU "
+                "memory. Listing it anyway as a best-effort pick - consider CPU "
                 "deployment or freeing memory first."
             )
 
@@ -270,7 +270,7 @@ def starter_pack(req: StarterPackRequest) -> Dict[str, Any]:
 # POST /registry/recommend turns "which model should I install for what I
 # actually want to do?" into three explained picks. It reuses the same
 # catalog, fit formula, and budget resolution as /registry/starter-pack above
-# — this is a second view (workload + priority aware, bucketed into
+# - this is a second view (workload + priority aware, bucketed into
 # Recommended/Faster/Higher quality) over the same data, not a new engine.
 
 _PRIORITIES = ("balanced", "best_quality", "fastest", "lowest_memory", "longest_context")
@@ -288,7 +288,7 @@ class RecommendModelsRequest(BaseModel):
 
 def _priority_score(entry: Dict[str, Any], required_gb: float, budget_gb: float, priority: str) -> float:
     """Higher is better. Each priority is a different lens on the same fitting
-    catalog — none of them re-estimate memory, they just re-rank it."""
+    catalog - none of them re-estimate memory, they just re-rank it."""
     margin = budget_gb - required_gb
     if priority == "fastest":
         return -entry["params_b"] * 10 + entry["tier"]
@@ -305,7 +305,7 @@ def _priority_score(entry: Dict[str, Any], required_gb: float, budget_gb: float,
 
 def _measured_stats(model_id: str) -> Optional[Dict[str, Any]]:
     """Best-effort lookup into saved benchmark history (server.py's opt-in
-    store) for this exact model id, across any backend — this is the
+    store) for this exact model id, across any backend - this is the
     "measured on this machine" signal in a recommendation's explainability."""
     try:
         from .registry import _benchmark_rates  # lazy: avoid import-order coupling
@@ -338,7 +338,7 @@ def _candidate_reasons(
                 {
                     "text": (
                         f"Requested {expected_context}-token context exceeds this model's published "
-                        f"{context_native // 1024}K window — behavior beyond that point is not guaranteed."
+                        f"{context_native // 1024}K window - behavior beyond that point is not guaranteed."
                     ),
                     "kind": "published",
                 }
@@ -385,7 +385,7 @@ def _fitting_candidates(budget: float) -> List[Dict[str, Any]]:
 
 def _with_workload_bias(items: List[Dict[str, Any]], use_case: Optional[str]) -> List[Dict[str, Any]]:
     """Soft workload bias: matching entries sort first, but a non-matching
-    entry is never hidden outright — a user on tight hardware, or a bakeoff
+    entry is never hidden outright - a user on tight hardware, or a bakeoff
     with no exact-match candidate, should still see the best available option."""
     if not use_case:
         return items
@@ -440,7 +440,7 @@ def recommend_models(req: RecommendModelsRequest) -> Dict[str, Any]:
         if fitting:
             note = (
                 f"Nothing fit within the {req.margin_gb} GB safety margin, so these use your full "
-                "detected budget instead — treat them as tight fits."
+                "detected budget instead - treat them as tight fits."
             )
         else:
             return {

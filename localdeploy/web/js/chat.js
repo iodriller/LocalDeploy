@@ -274,11 +274,11 @@ function addChatImages(files) {
   Array.from(files || []).forEach((file) => {
     if (file.type.startsWith("image/")) {
       if (!chatProfileSupportsVision()) {
-        toast("The selected profile isn't marked vision-capable — attach text files instead.", "error");
+        toast("The selected profile isn't marked vision-capable - attach text files instead.", "error");
         return;
       }
       if (file.size > maxImageBytes) {
-        toast(`${file.name} is over 10 MB — skipped.`, "error");
+        toast(`${file.name} is over 10 MB - skipped.`, "error");
         return;
       }
       const reader = new FileReader();
@@ -291,7 +291,7 @@ function addChatImages(files) {
     }
     // Anything else is treated as text and embedded into the message.
     if (file.size > maxTextBytes) {
-      toast(`${file.name} is over 200 KB — too large to embed as text.`, "error");
+      toast(`${file.name} is over 200 KB - too large to embed as text.`, "error");
       return;
     }
     const reader = new FileReader();
@@ -451,7 +451,7 @@ export function renderChatText(container, text) {
 
 // Minimal, escape-first markdown for chat text: headings, bullets, inline
 // code/bold/italic and http(s) links. Everything is built with createElement +
-// textContent — model output can never inject markup.
+// textContent - model output can never inject markup.
 
 const _INLINE_MD = /(`[^`\n]+`|\*\*[^*\n]+\*\*|\*[^*\n]+\*|\[[^\]\n]+\]\(https?:\/\/[^\s)]+\))/g;
 
@@ -751,7 +751,7 @@ function renderChatWelcome() {
 }
 
 // ---------------------------------------------------------------------------
-// Tab 2 — Question set: example / upload / validate
+// Tab 2 - Question set: example / upload / validate
 // ---------------------------------------------------------------------------
 
 export { clearChat };

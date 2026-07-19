@@ -1,9 +1,12 @@
 name: Publish to PyPI
 
+permissions:
+  contents: read
+
 # Builds and uploads the package when a GitHub release is published.
-# Uses PyPI "trusted publishing" (OIDC) — no API token secret needed, but the
-# repo must be registered once at https://pypi.org/manage/account/publishing/
-# (project: localdeploy, workflow: publish.yml, environment: pypi).
+# Uses PyPI "trusted publishing" (OIDC), so no API token secret is needed.
+# The first release needs a pending publisher at
+# https://pypi.org/manage/account/publishing/. See docs/RELEASING.md.
 on:
   release:
     types: [published]
@@ -12,9 +15,9 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.12"
 
@@ -32,7 +35,7 @@ jobs:
             exit 1
           fi
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: dist
           path: dist/
@@ -44,10 +47,10 @@ jobs:
     permissions:
       id-token: write  # OIDC for PyPI trusted publishing
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: dist
           path: dist/
 
       - name: Publish to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
+        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # release/v1

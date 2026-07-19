@@ -1,4 +1,4 @@
-"""Phase 3 — tiered soft/hard deployability warnings."""
+"""Phase 3 - tiered soft/hard deployability warnings."""
 from __future__ import annotations
 
 from localdeploy.control.fit import _classify

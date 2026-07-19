@@ -107,7 +107,7 @@ def test_responses_stream_emits_progressive_typed_events(monkeypatch) -> None:
 
 def test_chat_completions_stream_feeds_monitor(monkeypatch) -> None:
     # Regression: streaming responses bypassed run_local_request entirely, so
-    # the Monitor tab's request log/alerts never saw streamed traffic — likely
+    # the Monitor tab's request log/alerts never saw streamed traffic - likely
     # the majority of real OpenAI-compatible client usage (Continue, Cline, etc).
     from localdeploy.control import monitor
 

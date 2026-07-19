@@ -1,9 +1,9 @@
-"""Automated model bakeoff (Release R6) — "Compare top models for me."
+"""Automated model bakeoff (Release R6) - "Compare top models for me."
 
 POST /system/bakeoff/run streams the strongest end-to-end LocalDeploy workflow
 as one operation: pick fit-safe candidates for a workload within a download
 budget, pull + serve + benchmark each one in turn (sequentially, to avoid
-VRAM contention — same discipline as /benchmark/run), rank them with the
+VRAM contention - same discipline as /benchmark/run), rank them with the
 existing recommend.py scoring formula, then re-serve the winner.
 
 This is orchestration only. Every step reuses an existing engine:
@@ -59,7 +59,7 @@ class BakeoffRequest(BaseModel):
 def _select_candidates(
     use_case: Optional[str], priority: str, budget_gb: float, download_budget_gb: float, max_candidates: int
 ) -> List[Dict[str, Any]]:
-    """Fit-safe, workload-biased, download-budget-capped picks — the same
+    """Fit-safe, workload-biased, download-budget-capped picks - the same
     catalog and ranking recommend.py's guided-recommend endpoint uses, just
     greedily packed against a cumulative download-size cap instead of split
     into three labeled buckets."""

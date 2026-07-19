@@ -8,7 +8,9 @@ From the repository root:
 
 ```powershell
 .\scripts\smoke_test.ps1
+python -m ruff check .
 pytest -q
+node --test tests/js/frontend-modules.test.mjs
 ```
 
 Dependencies come from `requirements-dev.txt` (what `scripts/start.ps1` and CI use), or
@@ -37,3 +39,6 @@ python scripts\egress_selftest.py
 - Python should stay dependency-light and readable.
 - PowerShell scripts should work on Windows 10 PowerShell.
 - Avoid broad refactors unless they directly support the change.
+- Keep documentation direct and avoid em dashes.
+
+Release steps are in [docs/RELEASING.md](docs/RELEASING.md).

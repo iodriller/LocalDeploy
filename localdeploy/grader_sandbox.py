@@ -2,7 +2,7 @@
 
 Those graders score a model's answer by *running the candidate code* it returned
 (e.g. a `levenshtein` function) against known test cases. Executing model output
-in the server process is unsafe — it could have side effects, and a buggy answer
+in the server process is unsafe - it could have side effects, and a buggy answer
 with an infinite loop would hang the grader forever.
 
 This module runs that code in a short-lived child process with:
@@ -186,13 +186,13 @@ _HARNESSES = {
 def _apply_limits():
     try:
         import resource
-        # 5s CPU and 512 MB address space — ample for these tiny problems, but
+        # 5s CPU and 512 MB address space - ample for these tiny problems, but
         # caps runaway loops and allocation bombs in candidate code.
         resource.setrlimit(resource.RLIMIT_CPU, (5, 5))
         cap = 512 * 1024 * 1024
         resource.setrlimit(resource.RLIMIT_AS, (cap, cap))
     except Exception:
-        pass  # not available (e.g. Windows) — rely on the parent's timeout
+        pass  # not available (e.g. Windows) - rely on the parent's timeout
 
 
 def _main():

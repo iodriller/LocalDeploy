@@ -87,14 +87,14 @@ async def benchmark_validate(request: Request) -> Dict[str, Any]:
 
 # --- benchmark packs (Release R4) --------------------------------------------
 # A pack is a named, reusable preset over /benchmark/run's existing
-# `include_categories` filter — not a new engine. "all" (the default UI
+# `include_categories` filter - not a new engine. "all" (the default UI
 # behaviour today) intentionally has no entry here; omit include_categories
 # for that.
 BENCHMARK_PACKS: Dict[str, Dict[str, Any]] = {
     "general": {
         "label": "General assistant",
         "categories": ["planning", "classification"],
-        "description": "Planning and classification — everyday assistant tasks.",
+        "description": "Planning and classification - everyday assistant tasks.",
     },
     "coding": {
         "label": "Coding",
@@ -434,7 +434,7 @@ def benchmark_run(req: RunRequest):
 
 # --- context-scaling sweep (Release R4) --------------------------------------
 # "How does memory, prompt-processing speed, first-token latency, and
-# generation speed change with context?" — the same profile, the same short
+# generation speed change with context?" - the same profile, the same short
 # test subset used by /system/recommend, run once per context tier via the
 # /chat endpoint's existing context_limit override. No separate estimation or
 # grading logic: this reuses execute_test, so numbers agree with every other
