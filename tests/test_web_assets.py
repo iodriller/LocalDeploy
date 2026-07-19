@@ -1,49 +1,138 @@
-"""Guard: the static web UI must parse as valid JavaScript.
-
-The rest of the suite is Python-only and never loads `web/app.js`, so a syntax
-error there (e.g. smart quotes pasted from an editor) would otherwise ship
-silently and break the entire UI. This shells out to `node --check`, which
-parses without executing, and skips cleanly when Node isn't installed.
-"""
+"""Static guards for the native ES-module frontend."""
 from __future__ import annotations
 
 import shutil
 import subprocess
+import re
 from pathlib import Path
 
 import pytest
 
 WEB_DIR = Path(__file__).resolve().parent.parent / "localdeploy" / "web"
+JS_DIR = WEB_DIR / "js"
+MODULE_NAMES = {
+    "app.js",
+    "shared.js",
+    "system.js",
+    "models.js",
+    "chat.js",
+    "benchmark.js",
+    "benchmark-views.js",
+}
+
+
+def js_text(*names: str) -> str:
+    selected = names or tuple(sorted(MODULE_NAMES))
+    return "\n".join((JS_DIR / name).read_text(encoding="utf-8") for name in selected)
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
-def test_app_js_parses() -> None:
-    result = subprocess.run(
-        ["node", "--check", str(WEB_DIR / "app.js")],
-        capture_output=True,
-        text=True,
-    )
-    assert result.returncode == 0, f"web/app.js failed to parse:\n{result.stderr}"
+def test_web_modules_parse_as_esm() -> None:
+    for module in sorted(JS_DIR.glob("*.js")):
+        result = subprocess.run(
+            ["node", "--input-type=module", "--check"],
+            input=module.read_text(encoding="utf-8"),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
+        assert result.returncode == 0, f"{module.name} failed to parse:\n{result.stderr}"
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_feature_modules_have_no_import_time_browser_side_effects() -> None:
+    for name in sorted(MODULE_NAMES - {"app.js"}):
+        module_url = (JS_DIR / name).as_uri()
+        result = subprocess.run(
+            [
+                "node",
+                "--experimental-default-type=module",
+                "-e",
+                f"import({module_url!r}).catch(error => {{ console.error(error); process.exit(1); }})",
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
+        assert result.returncode == 0, f"{name} executed browser work during import:\n{result.stderr}"
+
+
+def test_module_inventory_and_dependency_graph() -> None:
+    assert {path.name for path in JS_DIR.glob("*.js")} == MODULE_NAMES
+    allowed = {
+        "app.js": {"shared.js", "system.js", "models.js", "chat.js", "benchmark.js"},
+        "shared.js": set(),
+        "system.js": {"shared.js"},
+        "models.js": {"shared.js"},
+        "chat.js": {"shared.js"},
+        "benchmark.js": {"shared.js", "benchmark-views.js"},
+        "benchmark-views.js": {"shared.js"},
+    }
+    graph: dict[str, set[str]] = {}
+    for name in MODULE_NAMES:
+        source = (JS_DIR / name).read_text(encoding="utf-8")
+        imports = set(re.findall(r'from "\./([^"?]+\.js)(?:\?v=[\w-]+)?"', source))
+        assert imports <= allowed[name], f"disallowed imports in {name}: {sorted(imports - allowed[name])}"
+        assert all((JS_DIR / target).is_file() for target in imports)
+        graph[name] = imports
+
+    visiting: set[str] = set()
+    visited: set[str] = set()
+
+    def visit(name: str) -> None:
+        assert name not in visiting, f"circular frontend import through {name}"
+        if name in visited:
+            return
+        visiting.add(name)
+        for dependency in graph[name]:
+            visit(dependency)
+        visiting.remove(name)
+        visited.add(name)
+
+    for name in MODULE_NAMES:
+        visit(name)
+
+
+def test_models_module_has_no_transitional_cross_feature_adapters() -> None:
+    source = js_text("models.js")
+    for legacy_name in (
+        "renderChatModelOptions",
+        "renderBenchmarkProfileChips",
+        "updateBenchmarkSummary",
+        "updateChatModelState",
+        "checkHardware",
+    ):
+        assert legacy_name not in source
+
+
+def test_model_matching_and_placement_are_owned_by_models_module() -> None:
+    consumers = js_text("chat.js", "benchmark.js")
+    assert "ollamaModelNamesMatch" not in consumers
+    assert "runningPlacements" not in consumers
+    models_source = js_text("models.js")
+    assert "is_loaded" in models_source
+    assert "running_model" in models_source
+    assert "placement" in models_source
 
 
 def test_no_smart_quotes_as_js_delimiters() -> None:
     """Catch curly quotes used as code (string/attribute delimiters) even when
     Node is unavailable. Display-text curly quotes inside straight-quoted
     strings are fine; these patterns are the fatal ones."""
-    text = (WEB_DIR / "app.js").read_text(encoding="utf-8")
+    text = js_text()
     # Common fatal shapes: $(“  ”)  || “”  join(“  class=”
     offenders = [m for m in ['$(“', '”)', 'class=”', 'join(“', 'split(“'] if m in text]
-    assert not offenders, f"smart quotes used as JS delimiters in web/app.js: {offenders}"
+    assert not offenders, f"smart quotes used as JS delimiters: {offenders}"
 
 
 def test_ui_assets_are_cache_busted_and_no_favicon_404() -> None:
     """Every static asset must carry one shared ?v= token (a stale-cache guard),
     without pinning the token's value so a version bump doesn't break the test."""
-    import re
-
     html = (WEB_DIR / "index.html").read_text(encoding="utf-8")
-    versions = set(re.findall(r'(?:styles\.css|app\.js|favicon\.png|logo\.svg)\?v=([\w-]+)', html))
+    sources = html + "\n" + js_text()
+    versions = set(re.findall(r'(?:\.css|\.js|\.png|\.svg)\?v=([\w-]+)', sources))
     assert len(versions) == 1, f"expected one shared cache-bust token, found: {sorted(versions)}"
+    assert '<script type="module" src="js/app.js?v=' in html
     assert 'rel="icon" type="image/png" href="favicon.png?v=' in html
     assert (WEB_DIR / "favicon.png").is_file()
     assert (WEB_DIR / "logo.svg").is_file()
@@ -57,7 +146,10 @@ def test_benchmark_workspace_v2_labels_are_present() -> None:
 
 def test_new_ui_controls_have_safe_bindings() -> None:
     html = (WEB_DIR / "index.html").read_text(encoding="utf-8")
-    js = (WEB_DIR / "app.js").read_text(encoding="utf-8")
+    models_js = js_text("models.js")
+    chat_js = js_text("chat.js")
+    benchmark_js = js_text("benchmark.js")
+    system_js = js_text("system.js")
     for dom_id in (
         "btn-hf-search", "btn-fit-profiles", "fit-filter", "catalog-source-status", "vram-budget-gb",
         # chat playground
@@ -77,13 +169,15 @@ def test_new_ui_controls_have_safe_bindings() -> None:
         "btn-pull-dismiss", "pull-progress-actions", "chat-session-progress",
     ):
         assert f'id="{dom_id}"' in html, dom_id
-    assert '$("#btn-hf-search")?.addEventListener("click", (e) => searchUnifiedModels(e))' in js
-    assert '$("#btn-fit-profiles")?.addEventListener("click", scanConfiguredFits)' in js
-    for binding in ("sendChatMessage", "quantAdvise", "bulkDeleteSelected", "initServerHistoryToggle"):
-        assert binding in js, binding
-    assert '$("#vram-budget-gb")?.addEventListener("input", () => {' in js
-    assert '["#profile-select", "#bench-profile-select"]' in js
-    assert "#chat-profile" not in js
+    assert "btn-hf-search" in models_js and "searchUnifiedModels" in models_js
+    assert "btn-fit-profiles" in models_js and "scanConfiguredFits" in models_js
+    assert "sendChatMessage" in chat_js
+    for binding in ("quantAdvise", "bulkDeleteSelected"):
+        assert binding in models_js, binding
+    assert "initServerHistoryToggle" in benchmark_js
+    assert "vram-budget-gb" in system_js
+    assert '["#profile-select", "#bench-profile-select"]' in models_js
+    assert "#chat-profile" not in js_text()
 
 
 def test_chat_tab_present() -> None:
@@ -94,26 +188,28 @@ def test_chat_tab_present() -> None:
 
 def test_api_docs_quant_help_and_model_lifecycle_controls_are_present() -> None:
     html = (WEB_DIR / "index.html").read_text(encoding="utf-8")
-    js = (WEB_DIR / "app.js").read_text(encoding="utf-8")
+    models_js = js_text("models.js")
+    chat_js = js_text("chat.js")
+    shared_js = js_text("shared.js")
     css = (WEB_DIR / "styles.css").read_text(encoding="utf-8")
 
-    assert "apiDocsUrl" in js
-    assert "${window.location.origin}/docs" in js
-    assert 'class="btn compact api-docs-link"' in js
-    assert "QUANT_EXPLANATIONS" in js
-    assert "4-bit K-quant, medium variant" in js
+    assert "apiDocsUrl" in models_js
+    assert "${window.location.origin}/docs" in models_js
+    assert 'class="btn compact api-docs-link"' in models_js
+    assert "QUANT_EXPLANATIONS" in models_js
+    assert "4-bit K-quant, medium variant" in models_js
     assert html.count('class="help-tip"') >= 4
     assert 'id="ui-tooltip"' in html
-    assert "initTooltips" in js
+    assert "initTooltips" in shared_js
     assert ".ui-tooltip.is-visible" in css
     assert ".help-tip::after" not in css
     assert ".quant-label" in css
-    assert "unload-installed-btn" in js
-    assert 'postJSON("/models/stop"' in js
-    assert "waitForModelToUnload" in js
-    assert "expandRemoteCatalog" in js
-    assert "renderChatJson" in js
-    assert "Download JSON" in js
+    assert "unload-installed-btn" in models_js
+    assert 'postJSON("/models/stop"' in models_js
+    assert "waitForModelToUnload" in models_js
+    assert "expandRemoteCatalog" in models_js
+    assert "renderChatJson" in chat_js
+    assert "Download JSON" in chat_js
 
 
 def test_system_card_holds_hardware_and_fit_budget() -> None:
@@ -151,7 +247,7 @@ def test_model_discovery_readability_and_tune_progress_styles_exist() -> None:
 
 
 def test_ui_does_not_guess_unattributed_vram_sources() -> None:
-    js = (WEB_DIR / "app.js").read_text(encoding="utf-8")
+    js = js_text("models.js", "system.js")
     assert "Windows, the display" not in js
     assert "browser/GPU apps" not in js
     assert "cannot attribute this VRAM to exact processes" not in js

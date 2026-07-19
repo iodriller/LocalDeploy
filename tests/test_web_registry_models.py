@@ -425,6 +425,22 @@ def test_switch_success_path(monkeypatch) -> None:
     assert unloaded == ["qwen3:8b"]
 
 
+def test_switch_clears_monitor_state_for_the_from_model(monkeypatch) -> None:
+    # Regression: switch used to unload the "from" model via Ollama without
+    # telling monitor.py, leaving a stale _serve_state entry behind forever
+    # (no session summary, and it permanently blocks the "only one model
+    # loaded" calibration guard for every future /models/stop).
+    from localdeploy.control import monitor
+
+    monkeypatch.setattr(models_mod._ollama, "unload_model", lambda m: {})
+    monkeypatch.setattr(models_mod._ollama, "load_model", lambda m, k, num_gpu=None: {})
+    monkeypatch.setattr(models_mod._ollama, "list_running", lambda: ([{"name": "gemma3:4b"}], None))
+    monitor.note_serve("qwen3:8b", "GPU")
+    client.post("/models/switch", json={"to_model": "gemma3:4b", "from_model": "qwen3:8b"})
+    assert "qwen3:8b" not in monitor._serve_state
+    monitor._serve_state.pop("gemma3:4b", None)  # leave module state clean for other tests
+
+
 def test_pull_success_path_streams_events(monkeypatch) -> None:
     def fake_pull(model):
         yield {"status": "pulling manifest"}
