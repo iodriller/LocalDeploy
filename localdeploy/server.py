@@ -181,7 +181,7 @@ def load_config() -> Dict[str, Any]:
 
     A fresh clone deliberately starts with zero profiles: config.json mirrors
     what the user actually has, and pulling a model auto-creates its profile.
-    (config.example.json is documentation/reference only — falling back to it
+    (config.example.json is documentation/reference only - falling back to it
     here would show a dozen models the user never pulled.)
     """
     path = get_config_path()
@@ -314,7 +314,7 @@ def resolve_profile(
     if not profiles:
         return None, None, (
             "No model profiles configured yet. Pull a model first (UI → Get a model, "
-            "or POST /models/pull) — a profile is created automatically."
+            "or POST /models/pull) - a profile is created automatically."
         )
     profile_name = (
         request_data.get("profile")
@@ -689,7 +689,7 @@ def _note_monitor_request(
     details: Optional[Dict[str, Any]] = None, error: Optional[str] = None,
 ) -> None:
     """Best-effort numeric-only request record for the Monitor tab (Release
-    R3). Never raises — monitoring must never affect the actual response."""
+    R3). Never raises - monitoring must never affect the actual response."""
     monitor_mod = None
     try:
         from .control import monitor as monitor_mod

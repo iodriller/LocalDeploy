@@ -1,7 +1,7 @@
 """Console entry point: ``localdeploy`` serves the API + web UI.
 
 For pip/pipx installs there is no repo checkout to anchor to, so runtime state
-(.env, config.json, logs/, reports/) lives in the app home — ~/.localdeploy by
+(.env, config.json, logs/, reports/) lives in the app home - ~/.localdeploy by
 default, or wherever LOCALDEPLOY_HOME points (see ``localdeploy.utils.app_home``).
 Running from a source checkout keeps using the repo root, same as the start
 scripts.
@@ -39,7 +39,7 @@ def main(argv: list[str] | None = None) -> int:
 
     import uvicorn
 
-    from localdeploy.server import app  # noqa: PLC0415 — import after env is settled
+    from localdeploy.server import app  # noqa: PLC0415 - import after env is settled
 
     host = os.getenv("API_HOST", "127.0.0.1")
     port = int(os.getenv("API_PORT", "8000"))

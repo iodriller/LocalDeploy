@@ -86,7 +86,7 @@ export function initTooltips() {
   document.addEventListener("focusout", (event) => {
     const trigger = triggerFor(event.target);
     // event.target usually isn't a tooltip trigger at all (e.g. any other
-    // button losing focus) — trigger is null then, and null === activeTrigger
+    // button losing focus) - trigger is null then, and null === activeTrigger
     // is true exactly when no tooltip is open, so this must bail out before
     // touching trigger.matches(...) instead of relying on the equality check.
     if (!trigger || trigger !== activeTrigger || pinned || trigger.matches(":hover")) return;
@@ -163,7 +163,7 @@ export function toast(message, kind = "info") {
   node.className = `toast ${kind}`;
   node.textContent = message;
   // Errors are announced assertively and get more time on screen, but every
-  // toast eventually fades on its own — a pile of undismissed error toasts
+  // toast eventually fades on its own - a pile of undismissed error toasts
   // is worse than losing one you didn't read in time. Click still dismisses
   // early either way.
   const timeoutMs = kind === "error" ? 9000 : 5000;
@@ -258,7 +258,7 @@ function handle401(resp) {
     const t = window.prompt("This server requires an API token. Enter it:");
     if (t) {
       setToken(t.trim());
-      toast("Token saved — retry your action.", "success");
+      toast("Token saved - retry your action.", "success");
     }
     return true;
   }

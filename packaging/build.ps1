@@ -19,7 +19,7 @@ try {
     }
     pyinstaller packaging/localdeploy.spec --distpath dist --workpath build --noconfirm
     Write-Host "`nBuilt: $repoRoot\dist\LocalDeploy\LocalDeploy.exe"
-    Write-Host "Not done: code signing, an installer wrapper (NSIS/MSI), auto-start-at-login. See docs/ROADMAP.md P0.1 Phase B."
+    Write-Host "Not done: code signing, an installer wrapper (NSIS/MSI), or auto-start-at-login."
 } finally {
     Pop-Location
 }

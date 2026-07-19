@@ -281,7 +281,7 @@ def search_ollama_library(req: LibrarySearchRequest) -> Dict[str, Any]:
             "success": True,
             "online": False,
             "results": [],
-            "message": "offline mode (OFFLINE=true): Ollama library search skipped — no egress",
+            "message": "offline mode (OFFLINE=true): Ollama library search skipped - no egress",
         }
     import requests
 
@@ -303,7 +303,7 @@ def search_ollama_library(req: LibrarySearchRequest) -> Dict[str, Any]:
         item["installed_match"] = item["name"] in installed_bases
     message = None
     if not results:
-        message = "No results parsed — ollama.com may have changed its page layout. Try the library link directly."
+        message = "No results parsed - ollama.com may have changed its page layout. Try the library link directly."
     return {"success": True, "online": True, "results": results, "message": message}
 
 
@@ -344,7 +344,7 @@ class LibraryTagsRequest(BaseModel):
 
 @router.post("/registry/library-tags")
 def library_tags(req: LibraryTagsRequest) -> Dict[str, Any]:
-    """Every published tag of one Ollama library model — so 'pull this exact
+    """Every published tag of one Ollama library model - so 'pull this exact
     quant' is a click on a real tag instead of guessing tag-name conventions."""
     family = req.model.strip().split(":")[0].lower()
     if not re.fullmatch(r"[\w.\-]+(?:/[\w.\-]+)?", family):
@@ -355,7 +355,7 @@ def library_tags(req: LibraryTagsRequest) -> Dict[str, Any]:
             "online": False,
             "family": family,
             "tags": [],
-            "message": "offline mode (OFFLINE=true): tag lookup skipped — no egress",
+            "message": "offline mode (OFFLINE=true): tag lookup skipped - no egress",
         }
     import requests
 
@@ -381,7 +381,7 @@ def library_tags(req: LibraryTagsRequest) -> Dict[str, Any]:
         "online": True,
         "family": family,
         "tags": tags,
-        "message": None if tags else "No tags parsed — the page layout may have changed.",
+        "message": None if tags else "No tags parsed - the page layout may have changed.",
     }
 
 
@@ -424,7 +424,7 @@ def _library_rows(query: str, limit: int) -> Tuple[List[Dict[str, Any]], Optiona
         ]
         row["popularity"] = _parse_compact_count(row.get("pulls"))
     if not rows:
-        return [], "No Ollama library results parsed — the page layout may have changed."
+        return [], "No Ollama library results parsed - the page layout may have changed."
     return rows, None
 
 
@@ -575,7 +575,7 @@ def search_models(req: UnifiedSearchRequest) -> Dict[str, Any]:
             "online": False,
             "results": [],
             "sources": {},
-            "message": "offline mode (OFFLINE=true): remote model search skipped — no egress",
+            "message": "offline mode (OFFLINE=true): remote model search skipped - no egress",
         }
     query = req.query.strip()
     limit = max(1, min(req.limit, 50))
@@ -672,11 +672,11 @@ def _list_hf(
     """Newest HF models matching `query`. Lazy import; returns (items, error).
 
     When `gguf_only` is true, the search is filtered to GGUF repos, which Ollama
-    can pull directly via `ollama pull hf.co/<id>` — so each candidate carries a
+    can pull directly via `ollama pull hf.co/<id>` - so each candidate carries a
     ready-to-use `pull_name`.
     """
     if offline_mode():
-        return None, "offline mode (OFFLINE=true): Hugging Face check skipped — no egress"
+        return None, "offline mode (OFFLINE=true): Hugging Face check skipped - no egress"
     try:
         from huggingface_hub import HfApi
     except Exception as exc:  # pragma: no cover - dependency missing

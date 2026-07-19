@@ -1,7 +1,7 @@
 """Step 3 - VRAM fit-check.
 
 POST /system/fit-check answers "will this model fit?" with a transparent,
-deliberately conservative estimate (see PUBLIC_LAUNCH_PLAN.md, Appendix B):
+deliberately conservative estimate:
 
     required_GB = weights_GB + kv_cache_GB + vision_overhead_GB + overhead_GB
 
@@ -14,8 +14,8 @@ never silently changing what "fits" means:
   - ``confidence``: how much this estimate should be trusted (metadata known +
     calibration samples on file), separate from the fit tier itself.
   - ``calibration``: the measured correction for this exact {GPU, runtime,
-    family, quant, context} from ``calibration.py``, shown alongside — never
-    substituted into — the raw formula estimate.
+    family, quant, context} from ``calibration.py``, shown alongside - never
+    substituted into - the raw formula estimate.
   - ``/system/fit-table``: the same estimate swept across common context
     lengths in one call, instead of one context per request.
 """
@@ -49,7 +49,7 @@ _DEFAULT_WEIGHT_GB_PER_B = 0.55  # unknown/default Ollama quant ~= Q4_K_M
 
 # KV-cache scaling: per-token cost grows with model size; reduced by KV quant.
 # This is a flat per-parameter coefficient, not an architecture-aware (GQA
-# head count) model — real KV cache varies a lot by attention design. Rather
+# head count) model - real KV cache varies a lot by attention design. Rather
 # than hardcoding per-family head-count assumptions this repo can't verify,
 # the calibration store (see below) empirically corrects for that drift per
 # {GPU, family, quant, context} from real measurements.
@@ -162,7 +162,7 @@ def _classify(
                 "headline": f"Fits on the GPU, but headroom is tight (~{_round(margin)} GB).",
                 "cpu_deployable": True,
             }
-        # Doesn't fit VRAM — can it run on CPU+RAM instead?
+        # Doesn't fit VRAM - can it run on CPU+RAM instead?
         if ram_available_gb is not None:
             if required_gb <= ram_available_gb:
                 return {
@@ -180,17 +180,17 @@ def _classify(
             "headline": "Won't fit the GPU (system RAM unknown).", "cpu_deployable": None,
         }
 
-    # No VRAM figure — judge CPU deployability from RAM alone.
+    # No VRAM figure - judge CPU deployability from RAM alone.
     if ram_available_gb is not None:
         if required_gb <= ram_available_gb:
             return {
                 "verdict": "UNKNOWN", "tier": "cpu_only", "severity": "soft",
-                "headline": "No GPU detected — fits in system RAM, can run on CPU (slower).",
+                "headline": "No GPU detected - fits in system RAM, can run on CPU (slower).",
                 "cpu_deployable": True,
             }
         return {
             "verdict": "UNKNOWN", "tier": "cpu_too_big", "severity": "hard",
-            "headline": "No GPU detected — too large for available system RAM.",
+            "headline": "No GPU detected - too large for available system RAM.",
             "cpu_deployable": False,
         }
     return {
@@ -235,7 +235,7 @@ def _resolve_from_profile(req: FitRequest) -> Dict[str, Any]:
 
 
 def _confidence(*, size_known: bool, quant_known: bool, calibration_samples: int) -> str:
-    """How much this estimate should be trusted — separate from the fit tier.
+    """How much this estimate should be trusted - separate from the fit tier.
 
     Starts at metadata completeness (do we know real size vs. a guessed
     params_b, is the quant known vs. assumed default), then rises with
@@ -391,11 +391,11 @@ def fit_batch(req: FitBatchRequest) -> Dict[str, Any]:
 # conventional Ollama tag suffix; actual availability varies per family, so the
 # UI links to the family's tags page rather than promising a pullable name.
 _QUANT_LADDER = [
-    {"quant": "Q2_K", "quality": "heavy quality loss — last resort"},
+    {"quant": "Q2_K", "quality": "heavy quality loss - last resort"},
     {"quant": "Q3_K_M", "quality": "noticeable quality loss"},
-    {"quant": "Q4_K_M", "quality": "good — the usual default pull"},
-    {"quant": "Q5_K_M", "quality": "very good — small step up from Q4"},
-    {"quant": "Q6_K", "quality": "excellent — near Q8 at less memory"},
+    {"quant": "Q4_K_M", "quality": "good - the usual default pull"},
+    {"quant": "Q5_K_M", "quality": "very good - small step up from Q4"},
+    {"quant": "Q6_K", "quality": "excellent - near Q8 at less memory"},
     {"quant": "Q8_0", "quality": "near-lossless"},
     {"quant": "F16", "quality": "reference quality, biggest footprint"},
 ]
@@ -456,7 +456,7 @@ def quant_advisor(req: QuantAdviceRequest) -> Dict[str, Any]:
         )
 
     # Best = highest-quality quant that fits the GPU; note whether that beats
-    # the usual Q4 default. Purely derived from the ladder — no special cases.
+    # the usual Q4 default. Purely derived from the ladder - no special cases.
     gpu_fits = [v for v in variants if v["verdict"] == "FITS"]
     comfortable = [v for v in gpu_fits if v["severity"] == "ok"]
     best = (comfortable or gpu_fits)[-1] if gpu_fits else None
@@ -464,7 +464,7 @@ def quant_advisor(req: QuantAdviceRequest) -> Dict[str, Any]:
     if best is None:
         if any(v["cpu_deployable"] for v in variants):
             recommendation = (
-                "Nothing fits the GPU budget at this size — the smaller quants can "
+                "Nothing fits the GPU budget at this size - the smaller quants can "
                 "still run on CPU (slower), or pick a smaller model size."
             )
         else:
@@ -473,14 +473,14 @@ def quant_advisor(req: QuantAdviceRequest) -> Dict[str, Any]:
         best_idx = next(i for i, v in enumerate(variants) if v["quant"] == best["quant"])
         if best_idx > default_idx:
             recommendation = (
-                f"You have headroom for {best['quant']} (~{best['required_gb']} GB) — "
+                f"You have headroom for {best['quant']} (~{best['required_gb']} GB) - "
                 f"a quality step up from the usual {variants[default_idx]['quant']} default pull."
             )
         elif best_idx == default_idx:
             recommendation = f"The usual {best['quant']} default is also the best fit for your budget."
         else:
             recommendation = (
-                f"The usual Q4_K_M default is too big here — {best['quant']} "
+                f"The usual Q4_K_M default is too big here - {best['quant']} "
                 f"(~{best['required_gb']} GB) is the best quality that fits."
             )
 
@@ -495,7 +495,7 @@ def quant_advisor(req: QuantAdviceRequest) -> Dict[str, Any]:
         "tags_url": f"https://ollama.com/library/{family}/tags" if family else None,
         "note": (
             "Estimates use the same weights+KV+overhead formula as fit checks. "
-            "Exact tag names and availability vary per family — check the tags page. "
+            "Exact tag names and availability vary per family - check the tags page. "
             "Some families also ship QAT tags that keep higher-quant quality at Q4 size."
         ),
     }
@@ -558,7 +558,7 @@ def fit_check(req: FitRequest) -> Dict[str, Any]:
         suggestions = [
             "Use a smaller quantization (e.g. Q4 or Q3).",
             "Lower the context window (try the profile's safe_context_limit).",
-            "Deploy to CPU (slower) — pick CPU in the serve panel.",
+            "Deploy to CPU (slower) - pick CPU in the serve panel.",
         ]
 
     model_info = {"params_b": params_b, "quant": quant or "default (~Q4)", "context": context}
@@ -592,7 +592,7 @@ def fit_check(req: FitRequest) -> Dict[str, Any]:
 @router.post("/system/fit-table")
 def fit_table(req: FitRequest) -> Dict[str, Any]:
     """The same estimate as /system/fit-check, swept across common context
-    lengths in one call — "will this fit at 8K? 32K? 64K?" without one
+    lengths in one call - "will this fit at 8K? 32K? 64K?" without one
     request per tier."""
     resolved = _resolve_from_profile(req)
     if resolved.get("error"):

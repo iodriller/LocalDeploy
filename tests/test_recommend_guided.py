@@ -31,7 +31,7 @@ def _hw(vram_free_mb=None, ram_available_mb=None, gpu_available=None):
 
 @pytest.fixture(autouse=True)
 def no_measured_history(monkeypatch):
-    # Isolate from whatever real benchmark history sits on the dev machine —
+    # Isolate from whatever real benchmark history sits on the dev machine -
     # the "measured on this machine" signal gets its own dedicated test below.
     monkeypatch.setattr(starter, "_measured_stats", lambda model_id: None)
 

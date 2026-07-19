@@ -43,7 +43,7 @@ def test_cli_version_flag_exits_cleanly(capsys):
 def test_changelog_covers_current_version():
     changelog = (PROJECT_ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
     assert f"## {localdeploy.__version__}" in changelog, (
-        "CHANGELOG.md has no section for localdeploy.__version__ — "
+        "CHANGELOG.md has no section for localdeploy.__version__ - "
         "bump both together."
     )
 
@@ -54,3 +54,16 @@ def test_docker_persists_localdeploy_runtime_state():
     assert "LOCALDEPLOY_HOME=/data/localdeploy" in dockerfile
     assert "localdeploy-data:/data/localdeploy" in compose
     assert "localdeploy-data:" in compose
+
+
+def test_bundled_ollama_cloud_models_are_disabled():
+    dockerfile = (PROJECT_ROOT / "Dockerfile").read_text(encoding="utf-8")
+    compose = (PROJECT_ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+    env_example = (PROJECT_ROOT / ".env.example").read_text(encoding="utf-8")
+    windows_launcher = (PROJECT_ROOT / "scripts" / "start.ps1").read_text(encoding="utf-8")
+
+    for content in (dockerfile, compose, env_example, windows_launcher):
+        assert "OLLAMA_NO_CLOUD" in content
+    assert "OLLAMA_NO_CLOUD=true" in dockerfile
+    assert "OLLAMA_NO_CLOUD=true" in compose
+    assert "OLLAMA_NO_CLOUD=true" in env_example

@@ -20,7 +20,7 @@ External clients can call either the native LocalDeploy API or the OpenAI-compat
 }
 ```
 
-The native `/chat` endpoint always returns a single JSON object. For streaming, use the OpenAI-compatible endpoint below with `stream: true`.
+The native `/chat` endpoint returns one JSON object. For streaming, use the OpenAI-compatible endpoint below with `stream: true`.
 
 Important fields:
 
@@ -71,7 +71,7 @@ data: {"id":"chatcmpl-...","object":"chat.completion.chunk","choices":[{"index":
 data: [DONE]
 ```
 
-Streaming is token-by-token for Ollama profiles. For llama.cpp profiles the full response is emitted as a single content delta — same wire format, but no progressive output.
+Streaming is token-by-token for Ollama profiles. For llama.cpp profiles, the full response is emitted as one content delta in the same wire format, without progressive output.
 
 ### Structured output
 
@@ -107,9 +107,12 @@ The API defaults are intentionally conservative. Use `compare_models.py` for nor
 
 ## Limits Resolution Order
 
-For every request the server computes effective limits by combining three sources, in this order. The final value is always the minimum of the request, the profile, and the global cap — a request can never bypass a server-side cap.
+For every request, the server combines three sources in this order. The final value is always bounded by the profile and global caps. A request cannot raise a server-side limit.
 
-1. **Global caps** from environment variables (read into `get_global_limits` in `api_server.py`):
+### 1. Global caps
+
+These environment variables are read by `get_global_limits` in `api_server.py`:
+
    - `GLOBAL_MAX_PROMPT_CHARS` (default 20000)
    - `GLOBAL_MAX_OUTPUT_TOKENS` (default 2048)
    - `GLOBAL_MAX_IMAGES` (default 8; hard server ceiling)
@@ -117,17 +120,23 @@ For every request the server computes effective limits by combining three source
    - `REQUEST_TIMEOUT_SECONDS` (default 180)
    - `SLOW_RESPONSE_SECONDS` (default 60)
 
-2. **Profile limits** from `config.json` for the selected profile:
+### 2. Profile limits
+
+The selected profile in `config.json` supplies:
+
    - `max_prompt_chars`, `max_output_tokens`, `max_images`, `context_limit`, `safe_context_limit`, `timeout_seconds`, `slow_response_seconds`.
 
-3. **Request fields** supplied by the caller:
+### 3. Request fields
+
+The caller can supply:
+
    - `context_limit`, `max_output_tokens`, `timeout_seconds`, `safe_mode`, `allow_clamp`.
 
 ### How the effective value is chosen
 
 | Field | Effective value |
 |---|---|
-| `max_prompt_chars` | `min(profile.max_prompt_chars, GLOBAL_MAX_PROMPT_CHARS)` — request cannot raise it. |
+| `max_prompt_chars` | `min(profile.max_prompt_chars, GLOBAL_MAX_PROMPT_CHARS)`. A request cannot raise it. |
 | `context_limit` | `safe_mode=true`: `min(profile.context_limit, profile.safe_context_limit, request.context_limit)`. `safe_mode=false`: `min(profile.context_limit, request.context_limit)`. |
 | `max_output_tokens` | `min(profile.max_output_tokens, GLOBAL_MAX_OUTPUT_TOKENS, request.max_output_tokens)`. |
 | `timeout_seconds` | `request.timeout_seconds` if set, else `profile.timeout_seconds`, else `REQUEST_TIMEOUT_SECONDS`. |
@@ -148,6 +157,6 @@ The OpenAI-compatible endpoint additionally maps `model` to a profile by matchin
 
 ### Where to change limits
 
-- **Raise a single profile's ceilings**: edit `config.json` and bump the relevant `*_limit` fields.
-- **Raise the server-wide ceiling for everyone**: edit `.env` (or process env) for `GLOBAL_*` vars.
-- **Loosen at request time**: set `safe_mode=false` and/or `allow_clamp=true`. Neither can bypass global caps.
+- Edit `config.json` to raise limits for one profile.
+- Edit `.env` or the process environment to change a `GLOBAL_*` limit.
+- Set `safe_mode=false` or `allow_clamp=true` for a less restrictive request. Neither option bypasses global caps.

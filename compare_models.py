@@ -1,4 +1,4 @@
-"""Compatibility shim — the implementation lives in ``localdeploy.compare_models``.
+"""Compatibility shim - the implementation lives in ``localdeploy.compare_models``.
 
 ``sys.modules`` aliasing makes ``import compare_models`` yield the *same* module object
 as ``localdeploy.compare_models``, so attribute access, monkeypatching, and ``from

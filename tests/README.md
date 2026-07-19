@@ -1,6 +1,6 @@
 # Tests
 
-Offline tests for the full LocalDeploy stack. They run against the in-process FastAPI app and do not require Ollama, llama.cpp, or a GPU.
+Most tests use the in-process FastAPI application and mocked backends. They do not need a GPU, Ollama, llama.cpp, or downloaded models.
 
 ## Install
 
@@ -8,62 +8,60 @@ Offline tests for the full LocalDeploy stack. They run against the in-process Fa
 python -m pip install -r requirements-dev.txt
 ```
 
-The browser UI smoke tests (`test_ui_playwright.py`) also need a Chromium build,
-fetched once. They **skip cleanly** if it's absent, so this step is optional:
+Browser tests also need Chromium:
 
 ```powershell
 python -m playwright install chromium
 ```
 
+Those tests skip when Playwright or Chromium is unavailable.
+
 ## Run
 
 ```powershell
-pytest
+python -m ruff check .
+pytest -q
+node --test tests/js/frontend-modules.test.mjs
+python scripts\egress_selftest.py
 ```
 
-Or a single file:
+Run one file with `pytest tests/test_guardrails.py -v`.
 
-```powershell
-pytest tests/test_guardrails.py -v
-```
+## Coverage map
 
-## What's covered
+### API and safety
 
-**Core / safety**
-- `test_utils.py` — `is_loopback_url`, `get_backend_base_url`, env helpers.
-- `test_guardrails.py` — `prepare_request` rejects oversized prompts, honors `allow_clamp`, rejects unknown/disabled profiles, image limits and base64 validation.
-- `test_security.py` — opt-in API token (`API_TOKEN` env var); endpoints require the token when set; `/health` and static UI stay open.
-- `test_grader_sandbox.py` — restricted code-grader worker (side-effect blocking, resource caps, and timeouts).
+- `test_api_routes.py` covers models, profiles, streaming, and unsupported operations at the HTTP layer.
+- `test_guardrails.py` covers prompt, output, image, profile, and clamping limits.
+- `test_security.py` covers API token enforcement and the intentionally public health and UI assets.
+- `test_lan_exposure.py` covers startup behavior outside loopback.
+- `test_grader_sandbox.py` covers the restricted code-grader process, blocked side effects, limits, and timeouts.
+- `test_structured_outputs.py` and `test_openai_extensions.py` cover constrained output, tools, Responses, and embeddings.
 
-**Hardware & fit**
-- `test_hardware_cpu_ram.py` — hardware probe reports CPU model, cores, and RAM.
-- `test_fit_tiers.py` — tiered soft/hard deployability warnings from `/system/fit-check`.
-- `test_device_target.py` — CPU vs GPU deployment target plumbing (`num_gpu` → placement).
-- `test_warmup_timeout.py` — device-aware warm-up timeout + graceful load-timeout message.
+### Hardware, fit, and lifecycle
 
-**Models & registry**
-- `test_model_management.py` — delete/free-memory routes.
-- `test_web_registry_models.py` — registry + model-lifecycle endpoints (pull, fit, installed list, HF search).
-- `test_audit_fixes.py` — Apple Silicon detection + tiered pull gate.
+- `test_hardware_cpu_ram.py` and `test_gpu_inventory.py` cover CPU, RAM, GPU, and multi-GPU discovery.
+- `test_fit_tiers.py`, `test_fit_v2.py`, and `test_quant_advisor.py` cover memory estimates, warning tiers, calibration inputs, and quant choices.
+- `test_device_target.py` and `test_warmup_timeout.py` cover placement and model warm-up behavior.
+- `test_model_management.py`, `test_profiles_crud.py`, and `test_ollama_library_search.py` cover model and profile lifecycle, search, pull, and delete behavior.
+- `test_manifest.py`, `test_monitor.py`, and `test_calibration.py` cover reproducibility, runtime monitoring, and measured corrections.
 
-**Benchmark**
-- `test_benchmark_graders.py` — all built-in graders accept valid answers and reject bad ones.
-- `test_benchmark_registry.py` — question-set validator and streaming run endpoints.
-- `test_benchmark_runner.py` — CLI `run_profile` loop regression coverage.
-- `test_web_benchmark.py` — benchmark web endpoints (question set, validate, run, export, example).
+### Benchmarks
 
-**Web API & UI**
-- `test_api_routes.py` — HTTP-level routes via TestClient (models, profiles, streaming SSE, 501s).
-- `test_web_endpoints.py` — web control-plane routes (serve, stop, switch, hardware, status, recommend).
-- `test_web_assets.py` — all seven native ES modules parse, import without browser side effects, follow the allowed acyclic dependency graph, and share one cache-busting token.
-- `test_web_js_units.py` / `js/*.test.mjs` — dependency-free Node tests for pure model normalization, benchmark summaries, and benchmark view builders.
-- `test_web_differentiators.py` — report card export and A/B compare endpoints.
-- `test_ui_playwright.py` — **browser** smoke tests: launches the real app and drives `/ui` in
-  headless Chromium (tab switching, benchmark run-library per-run delete, clear-history confirm).
-  Skips cleanly if Playwright or its browser isn't installed.
+- `test_benchmark_graders.py` and `test_benchmark_registry.py` cover grader behavior and custom question-set validation.
+- `test_benchmark_runner.py`, `test_benchmark_expansion.py`, and `test_benchmark_provenance.py` cover execution, repetition statistics, device data, and report provenance.
+- `test_bakeoff.py`, `test_bench_history.py`, and `test_phase_b_report.py` cover candidate selection, saved history, summaries, and comparison data.
 
-**Phase regression**
-- `test_phase5_phase6.py` — Phase 5 (HF discovery) and Phase 6 (device-tagged benchmark cards).
-- `test_phase_b_report.py` — tok/s in summary, per-category rollup, tok/s in compare.
+### Web UI
 
-These exercise the safety and control-plane layers. They are not a substitute for end-to-end testing against a real backend; for that, run `compare_models.py` with a live Ollama or llama.cpp server.
+- `test_web_assets.py` checks the seven ES modules, import graph, cache token, static routes, and package data.
+- `test_web_js_units.py` runs dependency-free Node tests for model and benchmark transforms and view builders.
+- `test_ui_playwright.py` drives the real page in headless Chromium with mocked routes. It covers setup, pull, deploy, chat, attachments, benchmark queues, cancellation, import and export, comparison, and cross-module updates.
+- The other `test_web_*.py` files cover control routes, registry behavior, benchmark endpoints, reports, and DOM contracts.
+
+### Packaging and maintenance
+
+- `test_packaging.py` checks package metadata and shipped assets.
+- `test_updates.py`, `test_community.py`, and `test_utils.py` cover release checks, local benchmark sharing, paths, and URL rules.
+
+These tests do not replace a live backend check. Use `compare_models.py` or the web benchmark with a local runtime when validating model-specific behavior.
