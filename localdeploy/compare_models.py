@@ -416,10 +416,12 @@ def main() -> int:
     if args.all:
         profile_names = enabled_profiles(config)
     else:
-        profile_names = [args.profile or os.getenv("DEFAULT_MODEL_PROFILE") or config.get("default_profile")]
+        selected = args.profile or os.getenv("DEFAULT_MODEL_PROFILE") or config.get("default_profile")
+        profile_names = [selected] if selected else []
 
     if not profile_names:
-        print("No profiles selected. Enable at least one profile in config.json or pass --profile.")
+        print("No profiles selected. Pass --profile, set DEFAULT_MODEL_PROFILE, set config.json's "
+              "default_profile, or use --all to test every enabled profile.")
         return 2
 
     missing = [name for name in profile_names if name not in profiles]

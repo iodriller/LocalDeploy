@@ -4,6 +4,45 @@ All notable changes to this project should be documented here.
 
 ## 0.5.1 - 2026-07-18
 
+### Later on 0.5.1: guided recommendations, calibration, Monitor tab, reproducibility
+
+- **Recommended models is now a guided flow.** Pick a use case, a priority (quality/speed/memory/
+  context), and an expected context size; `POST /registry/recommend` returns up to three labeled
+  picks (Recommended, Faster, Higher quality), each with a "why this model?" breakdown that tags
+  every reason as estimated, published, or measured on this machine — never blending the three.
+- **Fit estimates now calibrate themselves.** Every deploy compares the pre-load VRAM estimate
+  against what Ollama actually placed, and later fit checks for the same GPU/model/quant/context
+  are corrected from that history (shown as a visible correction, never applied silently). Fit
+  checks also report a confidence level and a new `/system/fit-table` sweeps several context sizes
+  in one call.
+- **New Monitor tab**: live VRAM/CPU/RAM and per-model throughput/TTFT while a model serves, a
+  numeric-only request log (prompts and responses are never recorded), rule-based alerts (sustained
+  VRAM pressure, placement mismatches, slow generation, true concurrent calls), and persisted
+  session summaries. Calibration only consumes Ollama's model-specific VRAM allocation; system-wide
+  session peaks remain diagnostic so unrelated GPU use cannot corrupt fit estimates.
+- **Benchmarking**: true time-to-first-token, P90/P95/median/min/max statistics on repeated runs, a
+  context-scaling sweep, use-case benchmark packs (coding/structured/reasoning/general), and
+  regression detection in Compare (what changed between two runs' runtime/digest/quant/GPU, plus
+  the resulting tok/s/TTFT/VRAM deltas).
+- **Deployment manifests**: export a running model's exact configuration as YAML/JSON, validate it
+  against a different machine (compatibility report with safe substitutions), recreate it there, and
+  generate copy-paste config for Open WebUI, Continue, Cline, curl, Python, JavaScript, and Docker
+  Compose.
+- **Update check**: an opt-out (`OFFLINE=true`), no-payload GitHub release check surfaces a chip
+  when a newer version exists. A local-only anonymized benchmark-sharing preview/export was added
+  as groundwork for community sharing — there is no server to submit to yet, so nothing is sent.
+- **Fixed a UI crash that broke hardware detection, catalog search, and other buttons.** Disabling a
+  just-clicked button (to show a loading state) fires a `focusout` event; a tooltip handler
+  dereferenced its trigger without checking for null and crashed before the underlying request ever
+  ran. Also fixed: a race in `benchmark.py`'s lazy import that could return a partially-initialized
+  module under concurrent first requests; the Monitor tab's "simultaneous requests" alert now uses
+  real in-flight backend calls instead of a hardcoded or recent-completion proxy; Monitor's per-model state lookup
+  used exact string matching against Ollama's reported name instead of the same fuzzy matcher used
+  elsewhere, so a bare/tagless deploy could show blank uptime; and `compare_models.py` crashed
+  instead of printing a helpful message when no profile was configured anywhere.
+- An automated "pull top candidates, benchmark each, keep the winner" workflow was built and then
+  disabled in the UI pending a product decision (backend intact at `/system/bakeoff/run`).
+
 - **The catalog answers "will it fit?" at a glance.** Since your hardware is already
   detected, every size chip in the results is colored by fit — green fits your GPU,
   yellow is tight/CPU-only, red won't fit — via one batched estimate per search

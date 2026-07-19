@@ -20,6 +20,21 @@ from pydantic import BaseModel
 router = APIRouter()
 
 
+def _mapping(value: Any) -> Dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+def _test_rows(value: Any) -> List[Dict[str, Any]]:
+    return [row for row in value if isinstance(row, dict)] if isinstance(value, list) else []
+
+
+def _number(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
 def _ttft_values(tests: List[Dict[str, Any]]) -> List[float]:
     values = []
     for t in tests:
@@ -34,11 +49,11 @@ def _ttft_values(tests: List[Dict[str, Any]]) -> List[float]:
 
 
 def _summary(tests: List[Dict[str, Any]]) -> Dict[str, Any]:
-    accs = [float(t.get("accuracy") or 0) for t in tests]
-    lats = [float(t.get("elapsed_seconds") or 0) for t in tests]
+    accs = [_number(t.get("accuracy")) for t in tests]
+    lats = [_number(t.get("elapsed_seconds")) for t in tests]
     # Only successful tests with a measured rate contribute to avg tok/s.
     tps = [
-        float(t["approx_tokens_per_second"])
+        _number(t["approx_tokens_per_second"])
         for t in tests
         if t.get("approx_tokens_per_second") is not None
     ]
@@ -58,8 +73,8 @@ def _category_summary(tests: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     out: List[Dict[str, Any]] = []
     for cat in sorted({str(t.get("category") or "?") for t in tests}):
         subset = [t for t in tests if str(t.get("category") or "?") == cat]
-        accs = [float(t.get("accuracy") or 0) for t in subset]
-        lats = [float(t.get("elapsed_seconds") or 0) for t in subset if t.get("success")]
+        accs = [_number(t.get("accuracy")) for t in subset]
+        lats = [_number(t.get("elapsed_seconds")) for t in subset if t.get("success")]
         out.append(
             {
                 "category": cat,
@@ -90,7 +105,15 @@ def _card_id(payload: Dict[str, Any], tests: List[Dict[str, Any]]) -> str:
 
 
 def build_card(payload: Dict[str, Any]) -> Dict[str, Any]:
-    tests = payload.get("tests") or []
+    tests = _test_rows(payload.get("tests"))
+    computed_summary = _summary(tests)
+    supplied_summary = _mapping(payload.get("summary"))
+    supplied_categories = payload.get("category_summary")
+    category_summary = (
+        [row for row in supplied_categories if isinstance(row, dict)]
+        if isinstance(supplied_categories, list) and supplied_categories
+        else _category_summary(tests)
+    )
     return {
         "kind": "localdeploy.report_card",
         "version": 2,
@@ -99,50 +122,62 @@ def build_card(payload: Dict[str, Any]) -> Dict[str, Any]:
         "profile": payload.get("profile"),
         "model_id": payload.get("model_id"),
         "device": payload.get("device") or None,
-        "hardware": payload.get("hardware") or {},
-        "provenance": payload.get("provenance") or {},
-        "variance": payload.get("variance") or {},
-        "aggregates": payload.get("aggregates") or [],
+        "hardware": _mapping(payload.get("hardware")),
+        "provenance": _mapping(payload.get("provenance")),
+        "variance": _mapping(payload.get("variance")),
+        "aggregates": payload.get("aggregates") if isinstance(payload.get("aggregates"), list) else [],
         "repetitions": payload.get("repetitions") or 1,
         "peak_vram_mb": payload.get("peak_vram_mb"),
         "tests": tests,
-        "summary": payload.get("summary") or _summary(tests),
-        "category_summary": payload.get("category_summary") or _category_summary(tests),
+        "summary": {**computed_summary, **supplied_summary},
+        "category_summary": category_summary,
     }
 
 
 def _device_suffix(card: Dict[str, Any]) -> str:
     d = card.get("device")
-    return f" [{d.upper()}]" if d else ""
+    return f" [{str(d).upper()}]" if d else ""
 
 
 def render_md(card: Dict[str, Any]) -> str:
+    def md(value: Any) -> str:
+        # Export payloads are intentionally flexible/import-compatible, so
+        # every scalar must be treated as untrusted here just as it is in the
+        # HTML renderer. Escape raw HTML and Markdown table/code delimiters.
+        text = _html.escape(str(value), quote=False)
+        return text.replace("\\", "\\\\").replace("`", "\\`").replace("|", "\\|").replace("\r", " ").replace("\n", " ")
+
     s = card["summary"]
     hw = card.get("hardware") or {}
-    hw_label = hw.get("gpu") or "CPU only"
+    hw_label = md(hw.get("gpu") or "CPU only")
     if hw.get("vram_total_mb"):
-        hw_label += f" ({hw['vram_total_mb']} MB)"
-    dev = _device_suffix(card)
+        hw_label += f" ({md(hw['vram_total_mb'])} MB)"
+    dev = md(_device_suffix(card))
     tps = s.get("avg_tokens_per_second")
-    tps_label = f" · avg {tps} tok/s" if tps is not None else ""
-    provenance = card.get("provenance") or {}
-    profile_provenance = (provenance.get("profiles") or {}).get(card.get("profile"), {})
-    variance = card.get("variance") or {}
+    tps_label = f" · avg {md(tps)} tok/s" if tps is not None else ""
+    provenance = _mapping(card.get("provenance"))
+    profile_key = card.get("profile")
+    profile_provenance = (
+        _mapping(_mapping(provenance.get("profiles")).get(profile_key))
+        if isinstance(profile_key, str)
+        else {}
+    )
+    variance = _mapping(card.get("variance"))
     lines = [
         "# LocalDeploy Report Card",
         "",
-        f"- Model: `{card.get('model_id') or card.get('profile') or '?'}`{dev}",
-        f"- Profile: `{card.get('profile') or '?'}`",
+        f"- Model: `{md(card.get('model_id') or card.get('profile') or '?')}`{dev}",
+        f"- Profile: `{md(card.get('profile') or '?')}`",
         f"- Hardware: {hw_label}",
-        f"- Generated: {card['generated_at']}",
-        f"- Repetitions: {card.get('repetitions') or 1}",
-        f"- Runtime: {profile_provenance.get('backend') or '?'} {profile_provenance.get('backend_version') or ''}".rstrip(),
-        f"- Model digest: `{profile_provenance.get('model_digest') or '?'}`",
-        f"- Quant / context / start: {profile_provenance.get('quant') or '?'} / {profile_provenance.get('context') or '?'} / {profile_provenance.get('warm_state') or '?'}",
-        f"- Variance: latency σ {variance.get('latency_stdev_seconds', 0)}s · tok/s σ {variance.get('tokens_per_second_stdev', 0)}",
+        f"- Generated: {md(card['generated_at'])}",
+        f"- Repetitions: {md(card.get('repetitions') or 1)}",
+        f"- Runtime: {md(profile_provenance.get('backend') or '?')} {md(profile_provenance.get('backend_version') or '')}".rstrip(),
+        f"- Model digest: `{md(profile_provenance.get('model_digest') or '?')}`",
+        f"- Quant / context / start: {md(profile_provenance.get('quant') or '?')} / {md(profile_provenance.get('context') or '?')} / {md(profile_provenance.get('warm_state') or '?')}",
+        f"- Variance: latency σ {md(variance.get('latency_stdev_seconds', 0))}s · tok/s σ {md(variance.get('tokens_per_second_stdev', 0))}",
         "",
-        f"**{s['passed']}/{s['tests']} passed · avg accuracy {s['avg_accuracy']} · "
-        f"avg latency {s['avg_latency_s']}s{tps_label}**",
+        f"**{md(s['passed'])}/{md(s['tests'])} passed · avg accuracy {md(s['avg_accuracy'])} · "
+        f"avg latency {md(s['avg_latency_s'])}s{tps_label}**",
         "",
     ]
     cat_rows = card.get("category_summary") or _category_summary(card["tests"])
@@ -155,8 +190,8 @@ def render_md(card: Dict[str, Any]) -> str:
         ]
         for c in cat_rows:
             lines.append(
-                f"| {c['category']} | {c['passed']}/{c['tests']} | "
-                f"{c['avg_accuracy']} | {c['avg_latency_s']}s |"
+                f"| {md(c.get('category'))} | {md(c.get('passed'))}/{md(c.get('tests'))} | "
+                f"{md(c.get('avg_accuracy'))} | {md(c.get('avg_latency_s'))}s |"
             )
         lines.append("")
     lines += [
@@ -169,18 +204,24 @@ def render_md(card: Dict[str, Any]) -> str:
         res = "PASS" if t.get("success") else "FAIL"
         tps_cell = t.get("approx_tokens_per_second")
         lines.append(
-            f"| {t.get('name')} | {t.get('category')} | {res} | "
-            f"{t.get('elapsed_seconds')}s | {tps_cell if tps_cell is not None else '—'} | {t.get('accuracy')} |"
+            f"| {md(t.get('name'))} | {md(t.get('category'))} | {res} | "
+            f"{md(t.get('elapsed_seconds'))}s | {md(tps_cell) if tps_cell is not None else '—'} | "
+            f"{md(t.get('accuracy'))} |"
         )
     return "\n".join(lines) + "\n"
 
 
 def render_html(card: Dict[str, Any]) -> str:
     s = card["summary"]
-    hw = card.get("hardware") or {}
-    provenance = card.get("provenance") or {}
-    profile_provenance = (provenance.get("profiles") or {}).get(card.get("profile"), {})
-    variance = card.get("variance") or {}
+    hw = _mapping(card.get("hardware"))
+    provenance = _mapping(card.get("provenance"))
+    profile_key = card.get("profile")
+    profile_provenance = (
+        _mapping(_mapping(provenance.get("profiles")).get(profile_key))
+        if isinstance(profile_key, str)
+        else {}
+    )
+    variance = _mapping(card.get("variance"))
 
     def _tps_cell(value: Any) -> str:
         return _html.escape(str(value)) if value is not None else "—"
@@ -197,10 +238,10 @@ def render_html(card: Dict[str, Any]) -> str:
     )
     cat_rows_data = card.get("category_summary") or _category_summary(card["tests"])
     cat_rows = "".join(
-        f"<tr><td>{_html.escape(str(c['category']))}</td>"
-        f"<td>{c['passed']}/{c['tests']}</td>"
-        f"<td>{c['avg_accuracy']}</td>"
-        f"<td>{c['avg_latency_s']}s</td></tr>"
+        f"<tr><td>{_html.escape(str(c.get('category')))}</td>"
+        f"<td>{_html.escape(str(c.get('passed')))}/{_html.escape(str(c.get('tests')))}</td>"
+        f"<td>{_html.escape(str(c.get('avg_accuracy')))}</td>"
+        f"<td>{_html.escape(str(c.get('avg_latency_s')))}s</td></tr>"
         for c in cat_rows_data
     )
     cat_table = (
@@ -214,7 +255,7 @@ def render_html(card: Dict[str, Any]) -> str:
     model = _html.escape(str(card.get("model_id") or card.get("profile") or "?"))
     dev = _html.escape(_device_suffix(card))
     tps = s.get("avg_tokens_per_second")
-    tps_label = f" · avg {tps} tok/s" if tps is not None else ""
+    tps_label = f" · avg {_html.escape(str(tps))} tok/s" if tps is not None else ""
     return (
         "<!doctype html><html lang='en'><head><meta charset='utf-8'>"
         "<title>LocalDeploy Report Card</title><style>"
@@ -233,11 +274,12 @@ def render_html(card: Dict[str, Any]) -> str:
         f"{_html.escape(str(profile_provenance.get('quant') or '?'))} · context "
         f"{_html.escape(str(profile_provenance.get('context') or '?'))} · "
         f"{_html.escape(str(profile_provenance.get('warm_state') or '?'))} start · "
-        f"{card.get('repetitions') or 1} repetition(s) · latency σ "
+        f"{_html.escape(str(card.get('repetitions') or 1))} repetition(s) · latency σ "
         f"{_html.escape(str(variance.get('latency_stdev_seconds', 0)))}s · tok/s σ "
         f"{_html.escape(str(variance.get('tokens_per_second_stdev', 0)))}</p>"
-        f"<p><b>{s['passed']}/{s['tests']} passed</b> · avg accuracy {s['avg_accuracy']} · "
-        f"avg latency {s['avg_latency_s']}s{tps_label}</p>"
+        f"<p><b>{_html.escape(str(s['passed']))}/{_html.escape(str(s['tests']))} passed</b> · "
+        f"avg accuracy {_html.escape(str(s['avg_accuracy']))} · "
+        f"avg latency {_html.escape(str(s['avg_latency_s']))}s{tps_label}</p>"
         f"{cat_table}"
         "<h2>Per test</h2>"
         "<table><thead><tr><th>Test</th><th>Category</th><th>Result</th><th>Latency</th>"
@@ -267,23 +309,30 @@ class CompareRequest(BaseModel):
 def _delta(a: Any, b: Any) -> Any:
     if a is None or b is None:
         return None
-    return round(float(b) - float(a), 3)
+    try:
+        return round(float(b) - float(a), 3)
+    except (TypeError, ValueError):
+        return None
 
 
 # A "regression" is only meaningful once you know what else changed (an
 # Ollama upgrade, a different driver, a different quant) — these are the
 # provenance dimensions worth calling out explicitly between two runs.
 def _dimension_diffs(card_a: Dict[str, Any], card_b: Dict[str, Any]) -> List[Dict[str, Any]]:
-    prov_a = card_a.get("provenance") or {}
-    prov_b = card_b.get("provenance") or {}
-    profile_a = (prov_a.get("profiles") or {}).get(card_a.get("profile"), {})
-    profile_b = (prov_b.get("profiles") or {}).get(card_b.get("profile"), {})
-    hw_a = prov_a.get("hardware") or {}
-    hw_b = prov_b.get("hardware") or {}
+    prov_a = _mapping(card_a.get("provenance"))
+    prov_b = _mapping(card_b.get("provenance"))
+    profile_a_key = card_a.get("profile")
+    profile_b_key = card_b.get("profile")
+    profile_a = (_mapping(_mapping(prov_a.get("profiles")).get(profile_a_key))
+                 if isinstance(profile_a_key, str) else {})
+    profile_b = (_mapping(_mapping(prov_b.get("profiles")).get(profile_b_key))
+                 if isinstance(profile_b_key, str) else {})
+    hw_a = _mapping(prov_a.get("hardware"))
+    hw_b = _mapping(prov_b.get("hardware"))
 
     def gpu_name(hw: Dict[str, Any]) -> Any:
         gpus = hw.get("gpus") or []
-        return gpus[0].get("name") if gpus else None
+        return gpus[0].get("name") if isinstance(gpus, list) and gpus and isinstance(gpus[0], dict) else None
 
     fields = [
         ("LocalDeploy version", prov_a.get("localdeploy_version"), prov_b.get("localdeploy_version")),
@@ -303,8 +352,8 @@ def _dimension_diffs(card_a: Dict[str, Any], card_b: Dict[str, Any]) -> List[Dic
 
 @router.post("/benchmark/compare")
 def benchmark_compare(req: CompareRequest) -> Dict[str, Any]:
-    a = {t.get("name"): t for t in (req.card_a.get("tests") or [])}
-    b = {t.get("name"): t for t in (req.card_b.get("tests") or [])}
+    a = {str(t.get("name")): t for t in _test_rows(req.card_a.get("tests"))}
+    b = {str(t.get("name")): t for t in _test_rows(req.card_b.get("tests"))}
     names = list(dict.fromkeys(list(a) + list(b)))
     rows = []
     for name in names:
@@ -326,13 +375,13 @@ def benchmark_compare(req: CompareRequest) -> Dict[str, Any]:
                 ),
             }
         )
-    sa = req.card_a.get("summary") or _summary(req.card_a.get("tests") or [])
-    sb = req.card_b.get("summary") or _summary(req.card_b.get("tests") or [])
+    sa = _mapping(req.card_a.get("summary")) or _summary(_test_rows(req.card_a.get("tests")))
+    sb = _mapping(req.card_b.get("summary")) or _summary(_test_rows(req.card_b.get("tests")))
 
     def _card_label(card: Dict[str, Any], fallback: str) -> str:
         name = card.get("model_id") or card.get("profile") or fallback
         dev = card.get("device")
-        return f"{name}/{dev.upper()}" if dev else name
+        return f"{name}/{str(dev).upper()}" if dev else str(name)
 
     return {
         "success": True,

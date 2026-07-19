@@ -54,7 +54,8 @@ A newcomer can go end-to-end without reading anything else:
    warnings unless **Warn only; pull anyway** is checked.
 3. **Deploy a profile** — load the model into memory with an Ollama keep-alive.
 4. **Chat tab** — talk to the model you just deployed, streaming, right in the browser.
-5. **Benchmark & Compare tab** — load the example question set, **Validate**, then **Run**.
+5. **Monitor tab** — watch live VRAM, throughput, and request history while it serves.
+6. **Benchmark & Compare tab** — load the example question set, **Validate**, then **Run**.
 
 ## Tab 1 — Setup & Deploy
 
@@ -81,6 +82,17 @@ Profiles whose model is gone (never pulled, or deleted outside the UI) are annot
 can be removed in one click with **Advanced → All run profiles → Remove not-pulled profiles**. For
 llama.cpp profiles the server checks whether the GGUF file still exists on disk.
 
+**Recommended models** (Get a model → ★ Recommended, the default segment) is the guided path for
+"which model should I install for what I'm actually doing?" Pick a use case (general assistant,
+coding, document analysis, structured extraction, reasoning, vision, multilingual, tool calling), a
+priority (balanced, best quality, fastest, lowest memory, longest context), and an expected context
+size, then **Recommend models for me** returns up to three fit-checked, labeled picks — Recommended,
+Faster, Higher quality — each with quality tier, estimated VRAM/headroom, published context window,
+and a confidence level (`POST /registry/recommend`). Every "why this model?" reason is tagged by
+provenance — **estimated** (this app's formula), **published** (the model's own spec), or **measured
+here** (from your own saved benchmark runs for that model) — so a recommendation never quietly mixes
+a guess with a fact. **Download and start** pulls (if needed) and deploys the pick in one action.
+
 **Model catalog** (Get a model → ⌕ Model catalog) inventories every model your local
 runtimes expose (Ollama, LM Studio, vLLM, Docker Model Runner, llama.cpp, OpenAI-compatible
 servers) with search, runtime/size filters, sorting (including measured tok/s from your own
@@ -103,6 +115,19 @@ list offers every published tag as a one-click pull.
 **Disk usage** lives in the Your models card: a `N models · X GB on disk` summary, a sort control
 (largest / recently updated / name), and per-row checkboxes that reveal a bulk **Delete selected**
 bar with the total gigabytes being freed.
+
+**Deployment manifests.** Every running model's card in **Currently serving** has two actions:
+**Export deployment** downloads a self-contained YAML/JSON manifest (model digest, quant, runtime,
+hardware, fit estimate, measured performance from saved benchmark history —
+`POST /system/manifest/export`), and **Use elsewhere** shows copy-paste configuration for Open
+WebUI, AnythingLLM, Continue, Cline, curl, Python, JavaScript, and Docker Compose, generated from
+that model's live endpoint (`GET /system/integration-snippets`). The **Deployment manifest**
+section further down the tab accepts a pasted or uploaded manifest JSON: **Check compatibility**
+reports whether it will fit and run here — exact digest match, a different but present version,
+or not installed at all, plus a smaller-context suggestion when the original doesn't fit
+(`POST /system/manifest/validate`) — and **Recreate deployment** pulls/serves it, then reports the
+placement and VRAM actually observed here next to what the manifest recorded
+(`POST /system/manifest/recreate`).
 
 ## Tab — Chat playground
 
@@ -220,6 +245,27 @@ Graders are selected by `type` from a fixed registry (uploads stay safe JSON —
   response detail drawer can show the same test's model outputs side by side. Fresh benchmark
   results are automatically added to the selected comparison set when there are prior runs.
 
+## Tab — Monitor
+
+Live view of what's happening after a model is loaded and while it's serving requests
+(`GET /system/monitor`, polled every 5 seconds while the tab is open). Before anything is deployed
+it explains what to do instead of showing an empty table.
+
+- **Overview**: current VRAM used/total, GPU utilization, RAM used/total, and CPU utilization, plus
+  short rolling charts (VRAM %, GPU utilization %, generation tok/s) built from samples taken while
+  this tab is open — history does not accumulate in the background when nobody is watching.
+- **Loaded models**: one card per running model with placement, VRAM in use, uptime, recent tok/s,
+  time-to-first-token, and request/failure counts, plus a **Stop** action.
+- **Recent requests**: the last 50 calls with timestamp, model, source (chat/benchmark/API),
+  success, prompt/output token counts, TTFT, tok/s, and latency. **Numeric metadata only** — prompts
+  and responses are never recorded here, matching the no-telemetry stance for the whole app.
+- **Alerts**: sustained VRAM pressure (>95% for 3+ minutes), a model running on a different device
+  than requested, generation speed well below its own recent median, and multiple backend calls
+  that are genuinely in flight at the same time.
+- **Session summaries**: when a model is stopped, a summary (peak VRAM, median tok/s, median TTFT,
+  request/failure counts, uptime) is saved to `reports/monitor-sessions/`. Calibration uses Ollama's
+  model-specific VRAM allocation at load time; whole-machine session peaks remain diagnostic only.
+
 ## Auto-pick a profile (Tab 1)
 
 **Auto-pick a profile → Find best fit** fit-checks enabled saved profiles, runs a short benchmark
@@ -236,10 +282,18 @@ request is rejected (401), the UI prompts you for the token and remembers it.
 This is one shared local token over HTTP. There is no TLS, per-user identity, or tenant isolation.
 Keep LocalDeploy on loopback and do not expose it through a public tunnel or internet-facing proxy.
 
+## Update check
+
+A chip in the top bar (`GET /system/update-check`) compares the running version against this
+project's GitHub releases once per page load and shows itself only when a newer version exists —
+click it to open the release. No data about your machine is sent; see Offline mode below to
+disable it.
+
 ## Offline mode
 
-Set `OFFLINE=true` to block all outbound internet calls (the Hugging Face check is skipped). The
-UI surfaces this in the Hugging Face search result. Verify with `python scripts/egress_selftest.py`.
+Set `OFFLINE=true` to block all outbound internet calls (the Hugging Face/Ollama-library search and
+the update check are both skipped). The UI surfaces this in the search result. Verify with
+`python scripts/egress_selftest.py`.
 
 ## Keyboard shortcuts
 
