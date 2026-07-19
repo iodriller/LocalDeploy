@@ -17,8 +17,7 @@ All notable changes to this project should be documented here.
   in the old reference table and removed recommendations that could not be kept current.
 - Documented the first PyPI release setup. The v0.5.0 package build succeeded, but upload did not
   because the pending trusted publisher had not been registered on PyPI.
-- Added Ruff to local and CI checks, pinned GitHub Actions and the Docker base image by digest, and
-  added monthly Dependabot configuration for Python, Actions, and Docker.
+- Added Ruff to local and CI checks, and pinned GitHub Actions and the Docker base image by digest.
 - Disabled Ollama's separate cloud-model feature in the bundled Docker runtime and in Ollama
   processes started by the Windows launcher. Clarified the boundary between LocalDeploy's offline
   setting and the network settings of a separately managed runtime.
