@@ -1708,8 +1708,10 @@ ul.err-list li { color: var(--bad); }
   background: var(--panel-2); border: 1px solid var(--border);
   border-left: 3px solid var(--accent-strong);
   padding: 0.6rem 0.9rem; border-radius: 8px; max-width: 360px; font-size: 0.86rem;
-  box-shadow: var(--shadow);
+  box-shadow: var(--shadow); cursor: pointer;
+  transition: opacity 0.25s ease, transform 0.25s ease;
 }
+.toast.toast-hide { opacity: 0; transform: translateX(12px); }
 .toast.error { border-left-color: var(--bad); cursor: pointer; }
 .toast.error::after { content: " ✕"; color: var(--muted); font-size: 0.8em; }
 .toast.success { border-left-color: var(--good); }
@@ -1858,6 +1860,20 @@ details[open] > .advanced-summary::before { transform: rotate(90deg); }
 .model-card-copy { line-height: 1.4; font-size: 0.86rem; }
 .model-card-reason { flex: 1; }
 
+/* ---- Guided recommend (Release R1) ---- */
+.recommend-inputs { align-items: flex-end; margin-bottom: 0.75rem; }
+.bucket-label { font-size: 0.72rem; font-weight: 750; letter-spacing: 0.02em; color: var(--accent); text-transform: uppercase; }
+.why-recommended { font-size: 0.82rem; }
+.why-recommended summary { cursor: pointer; color: var(--accent); user-select: none; }
+.reason-list { list-style: none; margin: 0.5rem 0 0; padding: 0; display: flex; flex-direction: column; gap: 0.3rem; }
+.reason-item { display: flex; align-items: center; gap: 0.4rem; font-size: 0.82rem; color: var(--muted); }
+.reason-mark { flex-shrink: 0; }
+.reason-kind-badge { font-size: 0.65rem; padding: 0.05rem 0.4rem; margin-left: auto; }
+.reason-item.reason-measured .reason-mark { color: var(--good); }
+.badge.confidence-high { color: var(--good); border-color: rgba(52, 211, 153, 0.4); }
+.badge.confidence-medium { color: var(--warn); border-color: rgba(251, 191, 36, 0.4); }
+.badge.confidence-low { color: var(--muted); }
+
 /* ---- Pull lifecycle terminal states ---- */
 .pull-progress-actions {
   display: flex;
@@ -1968,3 +1984,47 @@ details[open] > .advanced-summary::before { transform: rotate(90deg); }
   .chat-json { min-width: 0; width: 100%; }
   .chat-json-toolbar { flex-wrap: wrap; }
 }
+
+/* ---- Monitor tab (Release R3) ---- */
+.chip.chip-bad { color: var(--bad); border-color: rgba(248, 113, 113, 0.4); }
+#update-chip { cursor: pointer; color: var(--accent); border-color: rgba(138, 180, 248, 0.4); }
+.monitor-alerts { display: flex; flex-direction: column; gap: 0.5rem; margin-bottom: 1rem; }
+.monitor-alert { padding: 0.6rem 0.9rem; border-radius: 8px; font-size: 0.86rem; border: 1px solid transparent; }
+.monitor-alert-warning { background: rgba(251, 191, 36, 0.1); border-color: rgba(251, 191, 36, 0.35); color: var(--warn); }
+.monitor-alert-info { background: rgba(138, 180, 248, 0.1); border-color: rgba(138, 180, 248, 0.3); color: var(--accent); }
+.monitor-overview-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 0.75rem; margin-bottom: 1rem; }
+.monitor-stat { display: flex; flex-direction: column; gap: 0.2rem; padding: 0.6rem 0.8rem; border: 1px solid var(--border); border-radius: 8px; }
+.monitor-stat strong { font-size: 1.05rem; }
+.monitor-charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 1rem; }
+.monitor-chart-card { border: 1px solid var(--border); border-radius: 8px; padding: 0.6rem 0.8rem; }
+.monitor-spark { width: 100%; height: 64px; display: block; }
+.monitor-spark-caption { margin-top: 0.2rem; }
+.monitor-spark-empty { padding: 1.2rem 0; text-align: center; }
+.monitor-model-stats { display: grid; grid-template-columns: repeat(2, 1fr); gap: 0.5rem; font-size: 0.85rem; }
+.monitor-model-stats > div { display: flex; flex-direction: column; gap: 0.1rem; }
+#monitor-requests-table.hidden { display: none; }
+.monitor-empty { display: flex; flex-direction: column; gap: 0.5rem; align-items: flex-start; padding: 0.5rem 0; }
+
+/* ---- Regression detail panel (Release R4) ---- */
+.regression-deltas { margin: 0.5rem 0 0.75rem; }
+tr.regression-changed { background: rgba(251, 191, 36, 0.08); }
+tr.regression-changed td:last-child { color: var(--warn); font-weight: 600; }
+
+/* ---- Deployment manifests + integration snippets (Release R5) ---- */
+.manifest-yaml, .integration-snippet { max-height: 40vh; overflow: auto; white-space: pre-wrap; word-break: break-word; }
+.integration-card { display: flex; flex-direction: column; gap: 0.5rem; }
+.compat-row { display: flex; align-items: flex-start; gap: 0.5rem; padding: 0.35rem 0; font-size: 0.86rem; border-bottom: 1px solid var(--border); }
+.compat-row:last-child { border-bottom: none; }
+.compat-mark { flex-shrink: 0; font-weight: 700; }
+.compat-ok .compat-mark { color: var(--good); }
+.compat-bad .compat-mark { color: var(--bad); }
+.compat-info .compat-mark { color: var(--warn); }
+.compat-unknown .compat-mark { color: var(--muted); }
+#manifest-import-text { font-family: monospace; font-size: 0.82rem; }
+
+/* ---- Automated bakeoff (Release R6) ---- */
+.bakeoff-zone { margin-top: 1.25rem; padding-top: 1rem; border-top: 1px solid var(--border); }
+.bakeoff-progress { display: flex; flex-direction: column; gap: 0.4rem; margin-top: 0.5rem; }
+.bakeoff-row { display: flex; align-items: center; gap: 0.6rem; padding: 0.4rem 0.6rem; border: 1px solid var(--border); border-radius: 8px; font-size: 0.86rem; }
+.bakeoff-winner-card { padding: 0.75rem 1rem; border-radius: 10px; background: rgba(52, 211, 153, 0.08); border: 1px solid rgba(52, 211, 153, 0.3); margin-bottom: 0.75rem; }
+tr.bakeoff-winner-row { background: rgba(52, 211, 153, 0.08); font-weight: 600; }

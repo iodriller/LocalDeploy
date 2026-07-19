@@ -27,9 +27,9 @@ from pydantic import BaseModel
 
 from ..backends.llamacpp import llama_health
 from ..utils import BackendCallError, require_gpu_only
-from . import _ollama
+from . import _ollama, calibration, monitor
 from ._config import ensure_profile_for_model
-from .fit import FitRequest, fit_check
+from .fit import FitRequest, _base_family, _parse_quant, fit_check
 from .hardware import detect_hardware
 
 router = APIRouter()
@@ -429,8 +429,8 @@ def _serve_ollama(model_id: str, keep_alive: str, num_gpu: Optional[int] = None)
     # device choice.
     expected = _expected_placement(num_gpu)
     warning = None
+    match = next((m for m in running if _matches_model_name(m.get("name"), model_id)), None)
     if expected is not None:
-        match = next((m for m in running if _matches_model_name(m.get("name"), model_id)), None)
         actual = match.get("placement") if match else None
         if actual and actual != expected:
             warning = (
@@ -449,7 +449,42 @@ def _serve_ollama(model_id: str, keep_alive: str, num_gpu: Optional[int] = None)
     }
     if warning:
         result["warning"] = warning
+    result["calibration_sample"] = _record_calibration_sample(model_id, match)
+    monitor.note_serve(model_id, target if target in ("GPU", "CPU") else None)
     return result
+
+
+def _record_calibration_sample(model_id: str, running_match: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Best-effort: compare this warm-up's actual VRAM footprint (Ollama's
+    `size_vram` from /api/ps) against the pre-load fit estimate, and record
+    the pair for calibration.py. Never raises — a warm-up must still succeed
+    even if calibration bookkeeping fails.
+    """
+    if not running_match:
+        return None
+    size_vram = running_match.get("size_vram")
+    if not isinstance(size_vram, int) or size_vram <= 0:
+        return None
+    try:
+        estimate = fit_check(FitRequest(model_id=model_id))
+        estimated_gb = (estimate.get("estimate_gb") or {}).get("required")
+        if not estimate.get("success") or not isinstance(estimated_gb, (int, float)) or estimated_gb <= 0:
+            return None
+        observed_gb = size_vram / 1_000_000_000.0
+        sample = calibration.record_sample(
+            gpu=calibration.gpu_key(),
+            runtime="ollama",
+            family=_base_family(model_id),
+            quant=_parse_quant(model_id),
+            context=4096,  # matches fit_check's default context when unspecified
+            estimated_gb=estimated_gb,
+            observed_gb=observed_gb,
+        )
+        sample["estimated_gb"] = round(estimated_gb, 3)
+        sample["observed_gb"] = round(observed_gb, 3)
+        return sample
+    except Exception as exc:  # calibration is a bonus signal, never a hard dependency
+        return {"error": str(exc)}
 
 
 def _llamacpp_status_message() -> Dict[str, Any]:
@@ -505,6 +540,7 @@ def models_stop(req: StopRequest) -> Dict[str, Any]:
         if inventory_error:
             break
         if not any(_matches_model_name(item.get("name"), model_id) for item in running):
+            session = monitor.note_stop(model_id)
             return {
                 "success": True,
                 "backend": "ollama",
@@ -512,6 +548,7 @@ def models_stop(req: StopRequest) -> Dict[str, Any]:
                 "confirmed": True,
                 "stopped": model_id,
                 "message": f"'{model_id}' unloaded.",
+                "session_summary": session,
             }
         if attempt < 7:
             time.sleep(0.2)
@@ -561,12 +598,17 @@ def models_delete(req: DeleteRequest) -> Dict[str, Any]:
 @router.post("/models/free")
 def models_free() -> Dict[str, Any]:
     """Unload all loaded models from memory/VRAM (the 'free memory' reset)."""
+    running_before, _ = _ollama.list_running()
     try:
         count, err = _ollama.unload_all()
     except BackendCallError as exc:
         return {"success": False, "error": str(exc)}
     if err is not None:
         return {"success": False, "error": err}
+    for m in running_before:
+        name = m.get("name")
+        if name:
+            monitor.note_stop(name)
     return {
         "success": True,
         "unloaded": count,

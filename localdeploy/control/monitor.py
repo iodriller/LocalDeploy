@@ -1,0 +1,328 @@
+"""Deployment monitoring (Release R3).
+
+GET /system/monitor answers "what is happening after a model has been
+loaded and while it is serving requests?" — live placement, VRAM/RAM/CPU,
+per-model request stats, rolling history for charts, and rule-based alerts.
+
+No background sampler thread: each call to this endpoint samples hardware
+fresh (the response needs a fresh reading anyway) and appends it to a bounded
+in-memory ring buffer, so a few minutes of client-side polling — while the
+Monitor tab is open — builds enough history for rolling charts and
+sustained-threshold alerts ("VRAM >95% for 3 minutes"). History does not
+accumulate while nobody is watching; an independent background sampler would
+close that gap but isn't needed for a first cut.
+
+Privacy: everything recorded here is numeric metadata (token counts,
+latencies, placement) — prompts and responses are never stored, matching
+LocalDeploy's no-telemetry stance.
+"""
+from __future__ import annotations
+
+import statistics
+import time
+from collections import deque
+from pathlib import Path
+from typing import Any, Deque, Dict, List, Optional
+
+from fastapi import APIRouter
+
+router = APIRouter()
+
+_HW_HISTORY_MAXLEN = 720  # ~1 hour at a 5s client poll cadence
+_REQUEST_HISTORY_MAXLEN = 500
+_SUSTAINED_VRAM_ALERT_PCT = 95.0
+_SUSTAINED_VRAM_ALERT_SECONDS = 180  # 3 minutes
+_SLOW_GENERATION_ALERT_RATIO = 0.72  # current tok/s below 72% of this model's own median
+
+_hw_history: Deque[Dict[str, Any]] = deque(maxlen=_HW_HISTORY_MAXLEN)
+_request_history: Deque[Dict[str, Any]] = deque(maxlen=_REQUEST_HISTORY_MAXLEN)
+# model_id -> {"since": epoch_seconds, "requested_device": "GPU"|"CPU"|"auto"|None}
+_serve_state: Dict[str, Dict[str, Any]] = {}
+
+
+def reset_state() -> None:
+    """Test-only: clear all in-memory monitoring state."""
+    _hw_history.clear()
+    _request_history.clear()
+    _serve_state.clear()
+
+
+def note_serve(model_id: str, requested_device: Optional[str]) -> None:
+    """Record that a model just (re)started serving — resets its uptime clock."""
+    _serve_state[model_id] = {"since": time.time(), "requested_device": requested_device}
+
+
+def note_stop(model_id: str) -> Optional[Dict[str, Any]]:
+    """Pop this model's serve state and persist a session summary.
+
+    Returns the summary, or None if there was no tracked serve state (e.g. it
+    was already stopped, or the server restarted since it was loaded).
+    """
+    state = _serve_state.pop(model_id, None)
+    if state is None:
+        return None
+    summary = _session_summary(model_id, state)
+    _persist_session(summary)
+    _feed_calibration_from_session(summary)
+    return summary
+
+
+def record_request(
+    *,
+    profile: Optional[str],
+    model: Optional[str],
+    backend: Optional[str],
+    kind: str,
+    success: bool,
+    elapsed_seconds: float,
+    metrics: Optional[Dict[str, Any]],
+    context_limit: Optional[int],
+    error: Optional[str] = None,
+) -> None:
+    """Numeric-only request record for the Monitor request log and alerts."""
+    metrics = metrics or {}
+    _request_history.append(
+        {
+            "ts": time.time(),
+            "profile": profile,
+            "model": model,
+            "backend": backend,
+            "source": kind,  # "chat" | "vision" | "benchmark" | ...
+            "success": success,
+            "elapsed_seconds": round(elapsed_seconds, 3),
+            "prompt_tokens": metrics.get("prompt_eval_count"),
+            "output_tokens": metrics.get("eval_count"),
+            "ttft_ms": metrics.get("ttft_ms"),
+            "tokens_per_second": metrics.get("tokens_per_second"),
+            "context_limit": context_limit,
+            "error": (str(error)[:200] or None) if error else None,
+        }
+    )
+
+
+def _sample_hardware(hw: Dict[str, Any]) -> Dict[str, Any]:
+    gpus = hw.get("gpus") or []
+    vram_total = sum(g.get("vram_total_mb") or 0 for g in gpus) or None
+    vram_used = sum(g.get("vram_used_mb") or 0 for g in gpus) or None
+    utils = [g.get("utilization_pct") for g in gpus if g.get("utilization_pct") is not None]
+    system = hw.get("system") or {}
+    ram_total = system.get("ram_total_mb")
+    ram_available = system.get("ram_available_mb")
+    ram_used = (ram_total - ram_available) if ram_total is not None and ram_available is not None else None
+    sample = {
+        "ts": time.time(),
+        "vram_used_mb": vram_used,
+        "vram_total_mb": vram_total,
+        "vram_pct": round(vram_used / vram_total * 100, 1) if vram_used is not None and vram_total else None,
+        "gpu_utilization_pct": round(statistics.mean(utils), 1) if utils else None,
+        "ram_used_mb": ram_used,
+        "ram_total_mb": ram_total,
+        "cpu_percent": system.get("cpu_percent"),
+    }
+    _hw_history.append(sample)
+    return sample
+
+
+def _alerts(current: Dict[str, Any], model_cards: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    alerts: List[Dict[str, Any]] = []
+    now = time.time()
+
+    # Sustained high VRAM: every sample in the trailing window must be over threshold.
+    window_start = now - _SUSTAINED_VRAM_ALERT_SECONDS
+    window = [h for h in _hw_history if h["ts"] >= window_start and h.get("vram_pct") is not None]
+    if window and len(window) >= 2 and all(h["vram_pct"] >= _SUSTAINED_VRAM_ALERT_PCT for h in window):
+        span = now - window[0]["ts"]
+        if span >= _SUSTAINED_VRAM_ALERT_SECONDS * 0.8:  # enough coverage to trust the window
+            alerts.append(
+                {
+                    "level": "warning",
+                    "text": f"VRAM usage has remained above {_SUSTAINED_VRAM_ALERT_PCT:.0f}% for "
+                    f"{int(span // 60)} minute(s).",
+                }
+            )
+
+    for card in model_cards:
+        # Requested a specific device but Ollama placed it elsewhere.
+        requested = card.get("requested_device")
+        actual = card.get("placement")
+        if requested in ("GPU", "CPU") and actual and actual.upper() != requested.upper():
+            alerts.append(
+                {
+                    "level": "warning",
+                    "text": f"'{card['name']}' is using {actual} even though {requested}-only placement was requested.",
+                }
+            )
+        # Generation speed well below this model's own recent median.
+        median_tps = card.get("median_tokens_per_second")
+        recent_tps = card.get("recent_tokens_per_second")
+        if median_tps and recent_tps and recent_tps < median_tps * _SLOW_GENERATION_ALERT_RATIO:
+            drop_pct = round((1 - recent_tps / median_tps) * 100)
+            alerts.append(
+                {
+                    "level": "info",
+                    "text": f"'{card['name']}' generation speed is {drop_pct}% below its recent median "
+                    f"({recent_tps} vs ~{median_tps} tok/s).",
+                }
+            )
+        if card.get("active_requests", 0) >= 2:
+            alerts.append(
+                {
+                    "level": "info",
+                    "text": f"{card['active_requests']} simultaneous requests to '{card['name']}' may exceed "
+                    "available KV-cache headroom.",
+                }
+            )
+    return alerts
+
+
+def _model_requests(model_id: str, since: Optional[float] = None) -> List[Dict[str, Any]]:
+    return [
+        r for r in _request_history
+        if r.get("model") == model_id and (since is None or r["ts"] >= since)
+    ]
+
+
+def _model_card(running: Dict[str, Any]) -> Dict[str, Any]:
+    name = str(running.get("name") or "")
+    state = _serve_state.get(name)
+    reqs = _model_requests(name, since=state["since"] if state else None)
+    recent_reqs = [r for r in reqs if time.time() - r["ts"] <= 120]
+    ok = [r for r in reqs if r["success"]]
+    recent_ok = [r for r in recent_reqs if r["success"]]
+    tps_all = [r["tokens_per_second"] for r in ok if r.get("tokens_per_second") is not None]
+    tps_recent = [r["tokens_per_second"] for r in recent_ok if r.get("tokens_per_second") is not None]
+    ttft_all = [r["ttft_ms"] for r in ok if r.get("ttft_ms") is not None]
+    return {
+        "name": name,
+        "placement": running.get("placement"),
+        "gpu_percent": running.get("gpu_percent"),
+        "size_mb": running.get("size_mb"),
+        "size_vram_mb": running.get("size_vram_mb"),
+        "expires_at": running.get("expires_at"),
+        "requested_device": state.get("requested_device") if state else None,
+        "uptime_seconds": round(time.time() - state["since"], 1) if state else None,
+        "request_count": len(reqs),
+        "active_requests": 0,  # this server handles inference synchronously per request; see note in /system/monitor
+        "failure_count": len(reqs) - len(ok),
+        "median_tokens_per_second": round(statistics.median(tps_all), 2) if tps_all else None,
+        "recent_tokens_per_second": round(statistics.median(tps_recent), 2) if tps_recent else None,
+        "median_ttft_ms": round(statistics.median(ttft_all), 1) if ttft_all else None,
+    }
+
+
+def _session_summary(model_id: str, state: Dict[str, Any]) -> Dict[str, Any]:
+    since = state["since"]
+    reqs = _model_requests(model_id, since=since)
+    ok = [r for r in reqs if r["success"]]
+    tps = [r["tokens_per_second"] for r in ok if r.get("tokens_per_second") is not None]
+    ttft = [r["ttft_ms"] for r in ok if r.get("ttft_ms") is not None]
+    hw_samples = [h for h in _hw_history if h["ts"] >= since and h.get("vram_used_mb") is not None]
+    peak_vram_mb = max((h["vram_used_mb"] for h in hw_samples), default=None)
+    from .. import __version__
+
+    return {
+        "schema_version": 1,
+        "model": model_id,
+        "requested_device": state.get("requested_device"),
+        "started_at": since,
+        "ended_at": time.time(),
+        "uptime_seconds": round(time.time() - since, 1),
+        "request_count": len(reqs),
+        "failure_count": len(reqs) - len(ok),
+        "peak_vram_mb": peak_vram_mb,
+        "median_tokens_per_second": round(statistics.median(tps), 2) if tps else None,
+        "median_ttft_ms": round(statistics.median(ttft), 1) if ttft else None,
+        "localdeploy_version": __version__,
+    }
+
+
+def _sessions_dir() -> Path:
+    from ..utils import app_home
+
+    return app_home() / "reports" / "monitor-sessions"
+
+
+def _persist_session(summary: Dict[str, Any]) -> Optional[str]:
+    """Best-effort JSON write, mirroring history.py's benchmark-history pattern.
+    Never raises — losing a session summary must not break a model stop."""
+    try:
+        import json
+        import re
+
+        directory = _sessions_dir()
+        directory.mkdir(parents=True, exist_ok=True)
+        safe_model = re.sub(r"[^A-Za-z0-9_.-]", "_", summary.get("model") or "model")
+        path = directory / f"{safe_model}-{int(summary['ended_at'] * 1000)}.json"
+        path.write_text(json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8")
+        return str(path)
+    except Exception:
+        return None
+
+
+def _feed_calibration_from_session(summary: Dict[str, Any]) -> None:
+    """Best-effort: a session's peak observed VRAM is a second, independent
+    calibration data point beyond the one taken right at serve-time (real
+    workloads often push VRAM higher once the KV cache actually fills)."""
+    if not summary.get("peak_vram_mb"):
+        return
+    try:
+        from . import calibration
+        from .fit import FitRequest, _base_family, _parse_quant, fit_check
+
+        model_id = summary["model"]
+        estimate = fit_check(FitRequest(model_id=model_id))
+        estimated_gb = (estimate.get("estimate_gb") or {}).get("required")
+        if not estimate.get("success") or not isinstance(estimated_gb, (int, float)) or estimated_gb <= 0:
+            return
+        calibration.record_sample(
+            gpu=calibration.gpu_key(),
+            runtime="ollama",
+            family=_base_family(model_id),
+            quant=_parse_quant(model_id),
+            context=4096,
+            estimated_gb=estimated_gb,
+            observed_gb=summary["peak_vram_mb"] / 1024.0,  # MiB (hardware.py convention) -> GB
+        )
+    except Exception:
+        pass
+
+
+@router.get("/system/monitor")
+def system_monitor() -> Dict[str, Any]:
+    from . import _ollama
+    from .hardware import detect_hardware
+    from .models import _placement
+
+    hw = detect_hardware()
+    hw_sample = _sample_hardware(hw)
+
+    running, run_error = _ollama.list_running()
+    for m in running:
+        m.update(_placement(m.get("size"), m.get("size_vram")))
+        if isinstance(m.get("size"), int):
+            m["size_mb"] = round(m["size"] / 1_000_000)
+        if isinstance(m.get("size_vram"), int):
+            m["size_vram_mb"] = round(m["size_vram"] / 1_000_000)
+
+    model_cards = [_model_card(m) for m in running]
+    alerts = _alerts(hw_sample, model_cards)
+
+    recent_requests = list(_request_history)[-50:]
+    recent_requests.reverse()  # newest first, matching the roadmap's "recent requests" framing
+
+    return {
+        "success": True,
+        "ollama_reachable": run_error is None,
+        "hardware": hw_sample,
+        "history": {
+            "hardware": list(_hw_history)[-180:],  # last ~15 minutes at 5s cadence
+        },
+        "models": model_cards,
+        "requests": recent_requests,
+        "alerts": alerts,
+        "note": (
+            "This server handles one inference call at a time per request thread, so "
+            "'active requests' reflects requests received in the last few seconds, not true "
+            "server-side concurrency."
+        ),
+    }
