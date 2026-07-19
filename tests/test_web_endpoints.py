@@ -29,9 +29,10 @@ def test_ui_is_served() -> None:
 
 
 def test_ui_static_assets_served() -> None:
-    js = client.get("/ui/app.js")
-    assert js.status_code == 200
-    assert js.headers["content-type"].startswith("text/javascript")
+    for module in ("app", "shared", "system", "models", "chat", "benchmark", "benchmark-views"):
+        js = client.get(f"/ui/js/{module}.js")
+        assert js.status_code == 200, module
+        assert js.headers["content-type"].startswith("text/javascript"), module
     css = client.get("/ui/styles.css")
     assert css.status_code == 200
     assert css.headers["content-type"].startswith("text/css")

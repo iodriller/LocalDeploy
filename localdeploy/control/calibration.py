@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import re
 import statistics
+import threading
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -27,6 +28,10 @@ from .hardware import detect_hardware
 
 _SCHEMA_VERSION = 1
 _MAX_SAMPLES_PER_KEY = 50  # oldest samples drop off; recent hardware/driver state matters most
+# Guards the load-mutate-save sequence in record_sample: two concurrent serves
+# (e.g. two models warming up close together) would otherwise both read the
+# same on-disk state and the second write would silently clobber the first.
+_write_lock = threading.Lock()
 
 # Context is bucketed (not stored exact) so "4096 vs 4100" doesn't fragment
 # calibration into useless singleton buckets. Buckets mirror fit-table tiers.
@@ -106,17 +111,18 @@ def record_sample(
     """
     key = sample_key(gpu, runtime, family, quant, context)
     try:
-        data = _load()
-        samples: List[Dict[str, Any]] = data["samples"].setdefault(key, [])
-        samples.append(
-            {
-                "ts": time.time(),
-                "estimated_gb": round(float(estimated_gb), 3),
-                "observed_gb": round(float(observed_gb), 3),
-            }
-        )
-        del samples[:-_MAX_SAMPLES_PER_KEY]
-        err = _save(data)
+        with _write_lock:
+            data = _load()
+            samples: List[Dict[str, Any]] = data["samples"].setdefault(key, [])
+            samples.append(
+                {
+                    "ts": time.time(),
+                    "estimated_gb": round(float(estimated_gb), 3),
+                    "observed_gb": round(float(observed_gb), 3),
+                }
+            )
+            del samples[:-_MAX_SAMPLES_PER_KEY]
+            err = _save(data)
         if err:
             return {"key": key, "error": err}
         return {"key": key, "sample_count": len(samples)}

@@ -99,6 +99,13 @@ def _open_bench_tab(page, base, seed=0):
 
 def test_page_loads_and_tabs_switch(live_server, browser):
     page = browser.new_page()
+    page_errors = []
+    failed_modules = []
+    page.on("pageerror", lambda error: page_errors.append(str(error)))
+    page.on(
+        "requestfailed",
+        lambda request: failed_modules.append(request.url) if "/ui/js/" in request.url else None,
+    )
     try:
         page.goto(f"{live_server}/ui", wait_until="domcontentloaded")
         assert "LocalDeploy" in page.title()
@@ -108,6 +115,8 @@ def test_page_loads_and_tabs_switch(live_server, browser):
         page.get_by_role("tab", name="Benchmark & Compare").click()
         assert page.get_by_role("heading", name="Benchmark runner").is_visible()
         assert page.get_by_role("heading", name="Run queue").is_visible()
+        assert page_errors == []
+        assert failed_modules == []
     finally:
         page.close()
 
@@ -307,6 +316,20 @@ def test_chat_only_lists_installed_models_and_tracks_load_delete(live_server, br
 def test_catalog_keeps_clicked_size_and_renders_json_inspector(live_server, browser):
     page = browser.new_page(viewport={"width": 1365, "height": 900})
     advisor_requests = []
+    fit_requests = []
+
+    page.route(
+        "**/system/hardware",
+        lambda route: route.fulfill(
+            json={
+                "success": True,
+                "gpu_available": True,
+                "gpus": [{"name": "Test GPU", "vram_total_mb": 8192, "vram_free_mb": 7168}],
+                "gpu_summary": {"best_pool_total_mb": 8192, "best_pool_free_mb": 7168, "gpu_count": 1},
+                "system": {},
+            }
+        ),
+    )
 
     page.route(
         "**/registry/search-models",
@@ -345,9 +368,9 @@ def test_catalog_keeps_clicked_size_and_renders_json_inspector(live_server, brow
             }
         ),
     )
-    page.route(
-        "**/system/fit-batch",
-        lambda route: route.fulfill(
+    def fit_route(route):
+        fit_requests.append(route.request.post_data_json)
+        route.fulfill(
             json={
                 "success": True,
                 "items": [
@@ -356,8 +379,9 @@ def test_catalog_keeps_clicked_size_and_renders_json_inspector(live_server, brow
                     {"params_b": 122, "required_gb": 72, "severity": "hard", "tier": "wont_fit"},
                 ],
             }
-        ),
-    )
+        )
+
+    page.route("**/system/fit-batch", fit_route)
 
     def advisor_route(route):
         advisor_requests.append(route.request.post_data_json)
@@ -399,18 +423,76 @@ def test_catalog_keeps_clicked_size_and_renders_json_inspector(live_server, brow
         sync_api.expect(page.locator("#quant-model")).to_have_value("qwen3.5:4b")
         page.wait_for_function("document.querySelector('#quant-body')?.textContent.includes('4B parameters')")
         assert advisor_requests[-1]["params_b"] == 4
+        assert advisor_requests[-1]["free_vram_mb"] == 8192
+        assert fit_requests[-1]["free_vram_mb"] == 8192
 
         page.evaluate(
-            """() => {
+            """async () => {
               const node = document.createElement('div');
               node.id = 'json-test-node';
               document.body.appendChild(node);
+              const { renderChatText } = await import('/ui/js/chat.js?v=20260718-ui30');
               renderChatText(node, '{"model":"qwen3.5","scores":[1,2,3]}');
             }"""
         )
         sync_api.expect(page.locator("#json-test-node .chat-json")).to_be_visible()
         page.locator("#json-test-node").get_by_role("button", name="Raw").click()
         sync_api.expect(page.locator("#json-test-node .json-raw")).to_contain_text('"scores"')
+    finally:
+        page.close()
+
+
+def test_benchmark_recommendation_receives_system_vram_budget(live_server, browser):
+    page = browser.new_page()
+    requests = []
+    page.route(
+        "**/system/hardware",
+        lambda route: route.fulfill(
+            json={
+                "success": True,
+                "gpu_available": True,
+                "gpus": [{"name": "Test GPU", "vram_total_mb": 12288, "vram_free_mb": 10240}],
+                "gpu_summary": {"best_pool_total_mb": 12288, "best_pool_free_mb": 10240, "gpu_count": 1},
+                "system": {},
+            }
+        ),
+    )
+    page.route(
+        "**/profiles",
+        lambda route: route.fulfill(
+            json={
+                "success": True,
+                "default_profile": "gemma",
+                "profiles": {"gemma": {"backend": "ollama", "model_id": "gemma3:4b", "enabled": True}},
+            }
+        ),
+    )
+    page.route(
+        "**/registry/installed",
+        lambda route: route.fulfill(
+            json={"success": True, "installed": [{"name": "gemma3:4b", "size": 3_000_000_000}]}
+        ),
+    )
+
+    def recommend_route(route):
+        requests.append(route.request.post_data_json)
+        route.fulfill(
+            json={
+                "success": True,
+                "recommended": {"profile": "gemma", "reasoning": "Best balanced score"},
+                "candidates": [{"profile": "gemma", "avg_accuracy": 1, "avg_latency_s": 1, "margin_gb": 8, "score": 1}],
+                "skipped": [],
+                "sample_tests": ["smoke"],
+            }
+        )
+
+    page.route("**/system/recommend/stream", recommend_route)
+    try:
+        page.goto(f"{live_server}/ui", wait_until="domcontentloaded")
+        page.locator("#advanced-zone").evaluate("element => { element.open = true; }")
+        page.locator("#btn-recommend").click()
+        page.wait_for_selector("#recommend-body .tune-result")
+        assert requests[-1]["free_vram_mb"] == 12288
     finally:
         page.close()
 
@@ -567,7 +649,9 @@ def test_monitor_tab_renders_snapshot(live_server, browser):
         sync_api.expect(page.locator("#monitor-requests-table tbody tr")).to_contain_text("gemma3:4b")
         # Switching away must stop polling — the interval id is cleared.
         page.get_by_role("tab", name="Setup & Deploy").click()
-        assert page.evaluate("state.monitor.timer") is None
+        assert page.evaluate(
+            "import('/ui/js/system.js?v=20260718-ui30').then(m => m.isMonitorActive())"
+        ) is False
     finally:
         page.close()
 

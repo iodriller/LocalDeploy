@@ -690,6 +690,7 @@ def _note_monitor_request(
 ) -> None:
     """Best-effort numeric-only request record for the Monitor tab (Release
     R3). Never raises — monitoring must never affect the actual response."""
+    monitor_mod = None
     try:
         from .control import monitor as monitor_mod
 
@@ -706,6 +707,22 @@ def _note_monitor_request(
         )
     except Exception:
         pass
+    finally:
+        if monitor_mod is not None:
+            try:
+                monitor_mod.note_request_end(prepared.get("model"), prepared.get("_monitor_request_id"))
+            except Exception:
+                pass
+
+
+def _note_monitor_request_started(prepared: Dict[str, Any]) -> None:
+    """Best-effort in-flight counter paired with ``_note_monitor_request``."""
+    try:
+        from .control import monitor as monitor_mod
+
+        prepared["_monitor_request_id"] = monitor_mod.note_request_start(prepared.get("model"))
+    except Exception:
+        pass
 
 
 def run_local_request(kind: str, request_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -715,6 +732,7 @@ def run_local_request(kind: str, request_data: Dict[str, Any]) -> Dict[str, Any]
     if prepared is None:
         return make_error_response(error="Request preparation returned no request.")
 
+    _note_monitor_request_started(prepared)
     start = time.perf_counter()
     try:
         if prepared["backend"] == "ollama":
@@ -1000,7 +1018,7 @@ def openai_stream_response(request_model: OpenAIChatCompletionRequest) -> Stream
     payload, has_images = openai_request_to_local_payload(request_model)
     prepared, error_response = prepare_request("vision" if has_images else "chat", payload, require_enabled=True)
 
-    def emit() -> Iterator[str]:
+    def emit_prepared() -> Iterator[str]:
         if error_response:
             yield openai_sse_error(completion_id, model_name, str(error_response.get("error") or "LocalDeploy request failed."))
             yield "data: [DONE]\n\n"
@@ -1010,17 +1028,22 @@ def openai_stream_response(request_model: OpenAIChatCompletionRequest) -> Stream
             yield "data: [DONE]\n\n"
             return
 
+        started = time.perf_counter()
+
         if prepared["backend"] == "llamacpp" and not prepared.get("tools"):
             try:
                 content = call_llamacpp(prepared)
             except BackendCallError as exc:
+                _note_monitor_request(prepared, prepared["kind"], False, time.perf_counter() - started, error=str(exc))
                 yield openai_sse_error(completion_id, model_name, str(exc))
                 yield "data: [DONE]\n\n"
                 return
             except Exception as exc:
+                _note_monitor_request(prepared, prepared["kind"], False, time.perf_counter() - started, error=str(exc))
                 yield openai_sse_error(completion_id, model_name, f"Unexpected error: {exc}")
                 yield "data: [DONE]\n\n"
                 return
+            _note_monitor_request(prepared, prepared["kind"], True, time.perf_counter() - started)
             yield openai_sse_chunk(completion_id, model_name, {"role": "assistant"}, None)
             if content:
                 yield openai_sse_chunk(completion_id, model_name, {"content": content}, None)
@@ -1030,6 +1053,7 @@ def openai_stream_response(request_model: OpenAIChatCompletionRequest) -> Stream
 
         yield openai_sse_chunk(completion_id, model_name, {"role": "assistant"}, None)
         finish_reason = "stop"
+        metrics_seen: Dict[str, Any] = {}
         try:
             events = (
                 stream_ollama_events(prepared)
@@ -1056,7 +1080,10 @@ def openai_stream_response(request_model: OpenAIChatCompletionRequest) -> Stream
                     )
                 if event.get("done_reason") == "tool_calls":
                     finish_reason = "tool_calls"
+                if isinstance(event.get("metrics"), dict):
+                    metrics_seen.update(event["metrics"])
         except BackendCallError as exc:
+            _note_monitor_request(prepared, prepared["kind"], False, time.perf_counter() - started, error=str(exc))
             yield openai_sse_error(completion_id, model_name, str(exc))
             yield "data: [DONE]\n\n"
             return
@@ -1064,11 +1091,30 @@ def openai_stream_response(request_model: OpenAIChatCompletionRequest) -> Stream
             # Last-resort safety net: any unexpected mid-stream failure (a dropped
             # connection, a malformed chunk) must still end the SSE stream cleanly
             # instead of crashing the generator and leaving the client hanging.
+            _note_monitor_request(prepared, prepared["kind"], False, time.perf_counter() - started, error=str(exc))
             yield openai_sse_error(completion_id, model_name, f"Unexpected error: {exc}")
             yield "data: [DONE]\n\n"
             return
+        _note_monitor_request(prepared, prepared["kind"], True, time.perf_counter() - started, details={"metrics": metrics_seen})
         yield openai_sse_chunk(completion_id, model_name, {}, finish_reason)
         yield "data: [DONE]\n\n"
+
+    def emit() -> Iterator[str]:
+        if error_response or prepared is None:
+            yield from emit_prepared()
+            return
+        _note_monitor_request_started(prepared)
+        try:
+            yield from emit_prepared()
+        finally:
+            # Normal completion already decrements via _note_monitor_request;
+            # this second, idempotent finish also covers client disconnects.
+            try:
+                from .control import monitor as monitor_mod
+
+                monitor_mod.note_request_end(prepared.get("model"), prepared.get("_monitor_request_id"))
+            except Exception:
+                pass
 
     return StreamingResponse(emit(), media_type="text/event-stream")
 
@@ -1583,7 +1629,7 @@ def _responses_stream_response(
         "vision" if has_images else "chat", payload, require_enabled=True
     )
 
-    def emit() -> Iterator[str]:
+    def emit_prepared() -> Iterator[str]:
         started_response = {
             "id": response_id,
             "object": "response",
@@ -1602,6 +1648,7 @@ def _responses_stream_response(
             yield _responses_sse("response.failed", {"response": failed})
             return
 
+        started = time.perf_counter()
         content_chunks: List[str] = []
         tool_state: Dict[int, Dict[str, Any]] = {}
         metrics: Dict[str, Any] = {}
@@ -1656,10 +1703,12 @@ def _responses_stream_response(
                 if isinstance(event.get("metrics"), dict):
                     metrics.update(event["metrics"])
         except Exception as exc:  # noqa: BLE001 - preserve the SSE error contract
+            _note_monitor_request(prepared, prepared["kind"], False, time.perf_counter() - started, error=str(exc))
             failed = {**started_response, "status": "failed", "error": {"message": str(exc)}}
             yield _responses_sse("response.failed", {"response": failed})
             return
 
+        _note_monitor_request(prepared, prepared["kind"], True, time.perf_counter() - started, details={"metrics": metrics})
         content = "".join(content_chunks)
         result = {
             "success": True,
@@ -1708,6 +1757,21 @@ def _responses_stream_response(
                 "response.output_item.done", {"output_index": output_index, "item": item}
             )
         yield _responses_sse("response.completed", {"response": completed})
+
+    def emit() -> Iterator[str]:
+        if error_response or prepared is None:
+            yield from emit_prepared()
+            return
+        _note_monitor_request_started(prepared)
+        try:
+            yield from emit_prepared()
+        finally:
+            try:
+                from .control import monitor as monitor_mod
+
+                monitor_mod.note_request_end(prepared.get("model"), prepared.get("_monitor_request_id"))
+            except Exception:
+                pass
 
     return StreamingResponse(emit(), media_type="text/event-stream")
 

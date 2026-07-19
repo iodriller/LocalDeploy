@@ -154,8 +154,9 @@ def _fit_candidates(
 @router.post("/system/recommend")
 def recommend(req: RecommendRequest) -> Dict[str, Any]:
     from api_server import load_config  # lazy: api_server owns config loading
-    import benchmark as bench
+    from .bench import _bench
 
+    bench = _bench()
     profiles_map = load_config().get("profiles", {})
     names = req.profiles or [n for n, p in profiles_map.items() if p.get("enabled", False)]
     names = [n for n in names if n in profiles_map]
@@ -224,8 +225,9 @@ def recommend_stream(req: RecommendRequest):
     frontend can reuse its SSE plumbing.
     """
     from api_server import load_config  # lazy: api_server owns config loading
-    import benchmark as bench
+    from .bench import _bench
 
+    bench = _bench()
     profiles_map = load_config().get("profiles", {})
     names = req.profiles or [n for n, p in profiles_map.items() if p.get("enabled", False)]
     names = [n for n in names if n in profiles_map]

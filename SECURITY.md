@@ -1,5 +1,9 @@
 # Security Policy
 
+## Disclaimer
+
+LocalDeploy is provided "as is," with no warranty of any kind (see [LICENSE](LICENSE)). It manages local processes, GPU/CPU placement, and files on your machine — including starting/stopping Ollama, forcing model placement onto specific hardware, and deleting installed models. Review what it does before running it, and use it at your own risk. The authors and contributors are not liable for hardware issues, data loss, or other damages arising from its use.
+
 ## Threat Model
 
 LocalDeploy is built for a **single local user on a trusted workstation**. The default configuration assumes:

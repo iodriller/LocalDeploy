@@ -24,8 +24,13 @@ def test_app_home_in_source_checkout_is_repo_root(monkeypatch):
 
 
 def test_web_dir_ships_all_ui_assets():
-    for asset in ("index.html", "app.js", "styles.css", "favicon.png", "logo.svg"):
+    for asset in ("index.html", "styles.css", "favicon.png", "logo.svg"):
         assert (web_dir() / asset).is_file(), asset
+    expected_modules = {
+        "app.js", "shared.js", "system.js", "models.js", "chat.js",
+        "benchmark.js", "benchmark-views.js",
+    }
+    assert {path.name for path in (web_dir() / "js").glob("*.js")} == expected_modules
 
 
 def test_cli_version_flag_exits_cleanly(capsys):
