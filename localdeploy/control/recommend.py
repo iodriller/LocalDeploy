@@ -174,7 +174,7 @@ def recommend(req: RecommendRequest) -> Dict[str, Any]:
         }
 
     # Short subset: the fastest (smallest-output) tests, to keep tuning quick.
-    tests = sorted(bench.TEST_CASES, key=lambda t: t.max_output_tokens)[: max(1, req.sample_size)]
+    tests = sorted(bench.builtin_test_cases(), key=lambda t: t.max_output_tokens)[: max(1, req.sample_size)]
     base_url = bench.api_base_url()
 
     scored: List[Dict[str, Any]] = []
@@ -258,7 +258,7 @@ def recommend_stream(req: RecommendRequest):
             yield "data: [DONE]\n\n"
             return
 
-        tests = sorted(bench.TEST_CASES, key=lambda t: t.max_output_tokens)[: max(1, req.sample_size)]
+        tests = sorted(bench.builtin_test_cases(), key=lambda t: t.max_output_tokens)[: max(1, req.sample_size)]
         base_url = bench.api_base_url()
         yield sse(
             {

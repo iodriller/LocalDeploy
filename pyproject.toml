@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "localdeploy"
-dynamic = ["version"]
+dynamic = ["version", "dependencies"]
 description = "A local web UI and OpenAI-compatible API for choosing, running, and benchmarking models with Ollama and other local runtimes."
 readme = "README.md"
 license = "MIT"
@@ -25,18 +25,6 @@ classifiers = [
   "Programming Language :: Python :: 3.13",
   "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
-dependencies = [
-  "fastapi>=0.110",
-  "uvicorn>=0.30",
-  "requests>=2.31",
-  "python-dotenv>=1.0",
-  "pydantic>=2.6",
-  "python-multipart>=0.0.31",
-  "huggingface_hub>=0.23",
-  "psutil>=5.9",
-  "pyyaml>=6.0",
-]
-
 [project.optional-dependencies]
 dev = [
   "pytest>=7.0",
@@ -71,6 +59,7 @@ py-modules = ["api_server", "benchmark", "chat_cli", "compare_models"]
 
 [tool.setuptools.dynamic]
 version = { attr = "localdeploy.__version__" }
+dependencies = { file = ["requirements.txt"] }
 
 [tool.setuptools.packages.find]
 include = ["localdeploy*"]

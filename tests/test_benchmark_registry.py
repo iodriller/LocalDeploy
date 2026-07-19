@@ -8,6 +8,7 @@ import pytest
 
 import benchmark
 from benchmark import (
+    BUILTIN_QUESTION_SET,
     EXAMPLE_QUESTION_SET,
     build_grader,
     build_test_cases,
@@ -93,6 +94,19 @@ def test_json_array_min_len_bad_spec_raises():
         build_grader({"type": "json_array_min_len", "min": "three"})
 
 
+@pytest.mark.parametrize(
+    "spec",
+    [
+        {"type": "json_keys_present", "required": []},
+        {"type": "json_keys_present", "required": ["name", "name"]},
+        {"type": "json_keys_present", "required": ["name"], "allow_extra": "yes"},
+    ],
+)
+def test_json_keys_present_bad_spec_raises(spec):
+    with pytest.raises(ValueError):
+        build_grader(spec)
+
+
 # --- validation --------------------------------------------------------------
 
 
@@ -101,6 +115,16 @@ def test_example_set_is_valid():
     assert report["valid"] is True
     assert report["errors"] == []
     assert report["question_count"] == 2
+
+
+def test_builtin_set_includes_data_only_contributions():
+    report = validate_question_set(BUILTIN_QUESTION_SET)
+    names = [question["name"] for question in BUILTIN_QUESTION_SET["questions"]]
+    assert report["valid"] is True
+    assert report["question_count"] == 30
+    assert len(names) == len(set(names))
+    assert "json_release_metadata_keys" in names
+    assert "plan_incident_triage_array" in names
 
 
 def test_validation_reports_row_errors():

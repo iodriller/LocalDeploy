@@ -23,7 +23,11 @@ def _markdown_files() -> list[Path]:
 def _tracked_text_files() -> list[Path]:
     names = subprocess.check_output(["git", "ls-files"], cwd=ROOT, text=True).splitlines()
     binary_suffixes = {".gif", ".png"}
-    return [ROOT / name for name in names if Path(name).suffix.lower() not in binary_suffixes]
+    return [
+        ROOT / name
+        for name in names
+        if Path(name).suffix.lower() not in binary_suffixes and (ROOT / name).is_file()
+    ]
 
 
 def test_tracked_text_does_not_use_em_dashes() -> None:

@@ -26,11 +26,12 @@ def test_benchmark_example_is_served_and_valid() -> None:
 
 def test_benchmark_test_bench_metadata_matches_builtin_cases() -> None:
     info = client.get("/benchmark/test-bench").json()
+    expected = benchmark.builtin_test_cases()
     assert info["success"] is True
-    assert info["test_count"] == len(benchmark.TEST_CASES)
+    assert info["test_count"] == len(expected)
     assert info["test_count"] > len(client.get("/benchmark/example").json()["questions"])
     assert sum(info["categories"].values()) == info["test_count"]
-    assert {item["name"] for item in info["tests"]} == {test.name for test in benchmark.TEST_CASES}
+    assert {item["name"] for item in info["tests"]} == {test.name for test in expected}
     assert len(info["question_set"]["questions"]) == info["test_count"]
     assert client.post("/benchmark/validate", json=info["question_set"]).json()["valid"] is True
 

@@ -1,6 +1,6 @@
 # Contributing
 
-This project is intentionally small and local-first. Keep changes focused on safe local inference, Windows ergonomics, and compatibility with local HTTP clients.
+This project is intentionally small and local-first. Keep changes focused on safe local inference, straightforward cross-platform setup, and compatibility with local HTTP clients.
 
 ## Local Checks
 
@@ -13,10 +13,10 @@ pytest -q
 node --test tests/js/frontend-modules.test.mjs
 ```
 
-Dependencies come from `requirements-dev.txt` (what `scripts/start.ps1` and CI use), or
-equivalently an editable install: `pip install -e .[dev]`. The package itself is defined
-in `pyproject.toml`; bump `localdeploy/__init__.py::__version__` and add a `CHANGELOG.md`
-section together (a test enforces they match).
+Install an editable development checkout with `pip install -e ".[dev]"`. Runtime pins live
+in `requirements.txt` and are also used as the package dependencies through `pyproject.toml`,
+so there is one runtime dependency list. Bump `localdeploy/__init__.py::__version__` and add a
+`CHANGELOG.md` section together; a test enforces that they match.
 
 The smoke test covers Python syntax, `config.example.json`, PowerShell parse checks, import-time API validation, and optional local HTTP routes if the API is already running. It does not require Ollama models to be pulled.
 

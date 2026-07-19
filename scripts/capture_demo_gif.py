@@ -12,7 +12,7 @@ simply skipped - but looks best on a machine with a GPU and a few pulled
 models.
 
 Usage:
-    pip install -r requirements-dev.txt
+    pip install -e ".[dev]"
     python -m playwright install chromium
     python scripts/capture_demo_gif.py
 """
@@ -136,7 +136,7 @@ def main() -> int:
     try:
         from playwright.sync_api import sync_playwright
     except ImportError:
-        print("Playwright is not installed. Run: pip install -r requirements-dev.txt")
+        print('Playwright is not installed. Run: pip install -e ".[dev]"')
         return 1
 
     ffmpeg = _find_ffmpeg()

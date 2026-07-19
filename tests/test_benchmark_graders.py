@@ -26,6 +26,7 @@ from benchmark import (
     _grade_review_extract,
     _grade_sql_second_highest,
     _grade_time_953,
+    build_grader,
 )
 
 
@@ -49,6 +50,21 @@ class TestNumberGraders:
         assert _grade_time_953("10:00 AM") == 0.0
         assert _grade_time_953("9:53") == 1.0  # no meridiem marker: still accepted
         assert _grade_time_953("9:53 PM") == 0.0  # wrong half of day must be rejected
+
+
+class TestJsonKeysPresentGrader:
+    def test_required_keys_pass_and_missing_keys_fail(self):
+        grader = build_grader({"type": "json_keys_present", "required": ["name", "version"]})
+        assert grader('{"name": "LocalDeploy", "version": "1", "extra": true}') == 1.0
+        assert grader('{"name": "LocalDeploy"}') == 0.0
+        assert grader('["name", "version"]') == 0.0
+
+    def test_extra_keys_can_be_rejected(self):
+        grader = build_grader(
+            {"type": "json_keys_present", "required": ["name"], "allow_extra": False}
+        )
+        assert grader('{"name": "LocalDeploy"}') == 1.0
+        assert grader('{"name": "LocalDeploy", "version": "1"}') == 0.0
 
 
 class TestCodeGraders:
