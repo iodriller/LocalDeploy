@@ -2,15 +2,13 @@
 
 GET /system/update-check compares the running LocalDeploy version against
 the project's own GitHub releases feed. Like the Hugging Face model search,
-this is the one deliberate outbound egress path in this feature — gated by
+this is the one deliberate outbound egress path in this feature, gated by
 the same OFFLINE=true switch that disables all other internet calls, and
-never automatic: the UI only calls this endpoint when the user opens the
-updates panel (see docs/ROADMAP "Update checks should be optional and easy
-to disable for fully offline installations").
+called once when the UI starts. Fully offline installations can disable it.
 
 No telemetry: this is a plain GET against GitHub's public releases API for
 this project's own repository. Nothing about the local machine, its models,
-or its usage is sent — the request carries no query parameters or body.
+or its usage is sent - the request carries no query parameters or body.
 """
 from __future__ import annotations
 
@@ -90,7 +88,7 @@ def update_check() -> Dict[str, Any]:
             "checked": False,
             "current_version": __version__,
             "channel": channel,
-            "message": "offline mode (OFFLINE=true): update check skipped — no egress.",
+            "message": "offline mode (OFFLINE=true): update check skipped - no egress.",
         }
 
     release, error = _fetch_latest(channel)

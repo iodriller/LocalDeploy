@@ -1,17 +1,17 @@
 # PyInstaller spec for the LocalDeploy desktop tray launcher (Release R7,
 # Phase A packaging). Bundles the existing FastAPI backend + web UI behind a
-# system tray icon — no separate installer logic, no Python/venv required by
+# system tray icon - no separate installer logic, no Python/venv required by
 # the end user.
 #
 # Build (Windows):
 #   pip install -e ".[packaging]"
 #   pyinstaller packaging/localdeploy.spec --distpath dist --workpath build
 #
-# Output: dist/LocalDeploy/LocalDeploy.exe (onedir build — faster startup and
+# Output: dist/LocalDeploy/LocalDeploy.exe (onedir build - faster startup and
 # easier antivirus allow-listing than a single-file --onefile build; switch
 # to onefile later if a single downloadable .exe is preferred over a folder).
 #
-# NOT done here (see docs/ROADMAP.md P0.1 "Phase B"): code signing,
+# NOT done here: code signing,
 # notarization, an actual NSIS/MSI installer wrapper, and macOS/Linux
 # equivalents. Those need a signing certificate, an Apple developer account,
 # and platform-specific build machines this environment doesn't have.
@@ -33,7 +33,7 @@ a = Analysis(
     ],
     hiddenimports=[
         # Root companion modules (declared as py-modules in pyproject.toml,
-        # imported lazily throughout localdeploy/ — PyInstaller's static
+        # imported lazily throughout localdeploy/ - PyInstaller's static
         # analysis does not always see through `import X` inside a function).
         "api_server",
         "benchmark",

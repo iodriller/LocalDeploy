@@ -255,7 +255,7 @@ function addBenchmarkRuns(runs, selectNew = true) {
   }
   saveBenchmarkRuns();
   if (state.benchHistoryServer) {
-    // Mirror only freshly completed local runs — imports and server-restored
+    // Mirror only freshly completed local runs - imports and server-restored
     // records are already durable somewhere.
     fresh.filter((r) => r.source === "current-run").forEach((r) => void syncRunToServer(r));
   }
@@ -328,7 +328,7 @@ function renderBenchmarkProfileChips() {
     const model = state.profileModels[name] || name;
     return !filter || name.toLowerCase().includes(filter) || model.toLowerCase().includes(filter);
   };
-  // Not-pulled profiles stay hidden unless revealed (or already selected —
+  // Not-pulled profiles stay hidden unless revealed (or already selected -
   // never hide something the user has checked).
   const candidates = state.profiles.filter(matchesFilter);
   const hidden = state.benchShowUnpulled
@@ -435,7 +435,7 @@ function updateBenchmarkSummary() {
 }
 
 // ---------------------------------------------------------------------------
-// Tab 1 — Hardware
+// Tab 1 - Hardware
 // ---------------------------------------------------------------------------
 
 function updateBenchHelp(info) {
@@ -524,7 +524,7 @@ async function validateSet() {
     if (report.valid) {
       state.questionSetValidation = { valid: true, questionCount: report.question_count };
       node.className = "result ok";
-      node.textContent = `Valid — ${report.question_count} question(s).`;
+      node.textContent = `Valid - ${report.question_count} question(s).`;
       $("#question-set-details").open = true;
     } else {
       state.questionSetValidation = { valid: false };
@@ -547,7 +547,7 @@ async function validateSet() {
 }
 
 // ---------------------------------------------------------------------------
-// Tab 2 — Run (streamed)
+// Tab 2 - Run (streamed)
 // ---------------------------------------------------------------------------
 
 // Portable per-test fields for a report card (shared by single + dual runs).
@@ -582,7 +582,7 @@ function appendResultRow(tbody, evt, runName = "") {
     : "";
   const warnBadge = evt.warning ? ` <span class="warn-badge" title="${esc(evt.warning)}">⚠</span>` : "";
   const rateTitle = evt.tokens_per_second_source === "backend" ? "Measured by the inference backend" : "Estimated from response length";
-  const tpsCell = tps != null ? `<span title="${rateTitle}">${tps.toFixed(1)}</span>` : `<span class="muted">—</span>`;
+  const tpsCell = tps != null ? `<span title="${rateTitle}">${tps.toFixed(1)}</span>` : `<span class="muted">-</span>`;
   const testName = evt.repetitions > 1 ? `${evt.name} · r${evt.repetition}` : evt.name;
   const hasPreview = !!evt.response_preview;
 
@@ -1020,7 +1020,7 @@ async function runBenchmark() {
       toast("Benchmark queue cancelled.", "info");
     } else {
       // A mid-stream failure (dropped connection, server crash) must not leave
-      // the active row stuck "running"/"deploying" forever — removeQueuedRun
+      // the active row stuck "running"/"deploying" forever - removeQueuedRun
       // refuses to remove rows in those states, and the dashboard would keep
       // showing it as an active run indefinitely otherwise.
       queue.filter((q) => ["waiting", "deploying", "running"].includes(q.status)).forEach((q) => {
@@ -1047,7 +1047,7 @@ async function runBenchmark() {
 }
 
 // ---------------------------------------------------------------------------
-// Tab 2 — Report cards: export + compare
+// Tab 2 - Report cards: export + compare
 // ---------------------------------------------------------------------------
 
 function runsForDashboard() {
@@ -1170,11 +1170,11 @@ function regressionDiffsHtml(resp) {
   const diffRows = (resp.dimension_diffs || [])
     .map(
       (d) =>
-        `<tr class="${d.changed ? "regression-changed" : ""}"><td>${esc(d.dimension)}</td><td>${esc(d.a ?? "—")}</td><td>${esc(d.b ?? "—")}</td><td>${d.changed ? "⚠ changed" : "same"}</td></tr>`
+        `<tr class="${d.changed ? "regression-changed" : ""}"><td>${esc(d.dimension)}</td><td>${esc(d.a ?? "-")}</td><td>${esc(d.b ?? "-")}</td><td>${d.changed ? "⚠ changed" : "same"}</td></tr>`
     )
     .join("");
   const sd = resp.summary_delta || {};
-  const deltaCell = (v, unit = "") => (v == null ? "—" : `${v > 0 ? "+" : ""}${esc(v)}${unit}`);
+  const deltaCell = (v, unit = "") => (v == null ? "-" : `${v > 0 ? "+" : ""}${esc(v)}${unit}`);
   return `<h3 class="sub">What changed (regression check)</h3>
     <div class="row gap wrap regression-deltas">
       <span class="badge">tok/s Δ ${deltaCell(sd.avg_tokens_per_second)}</span>
@@ -1197,7 +1197,7 @@ async function renderComparison(runs, baseline) {
   }
   state.compareBaselineId = baseline.id;
   const baseSummary = baseline.summary || summaryFromTests(baseline.tests);
-  const delta = (a, b) => (a == null || b == null ? "—" : (Number(b) - Number(a)).toFixed(3));
+  const delta = (a, b) => (a == null || b == null ? "-" : (Number(b) - Number(a)).toFixed(3));
   const rows = runs
     .map((r) => {
       const s = r.summary || summaryFromTests(r.tests);
@@ -1205,7 +1205,7 @@ async function renderComparison(runs, baseline) {
         <td class="num">${esc(s.passed)}/${esc(s.tests)}</td>
         <td class="num">${esc(s.avg_accuracy)} <span class="muted">(${esc(delta(baseSummary.avg_accuracy, s.avg_accuracy))})</span></td>
         <td class="num">${esc(s.avg_latency_s)}s <span class="muted">(${esc(delta(baseSummary.avg_latency_s, s.avg_latency_s))})</span></td>
-        <td class="num">${esc(s.avg_tokens_per_second ?? "—")} <span class="muted">(${esc(delta(baseSummary.avg_tokens_per_second, s.avg_tokens_per_second))})</span></td></tr>`;
+        <td class="num">${esc(s.avg_tokens_per_second ?? "-")} <span class="muted">(${esc(delta(baseSummary.avg_tokens_per_second, s.avg_tokens_per_second))})</span></td></tr>`;
     })
     .join("");
   const tests = Array.from(new Set(runs.flatMap((r) => (r.tests || []).map((t) => t.name)))).sort();
@@ -1218,7 +1218,7 @@ async function renderComparison(runs, baseline) {
     <h3 class="sub">Response detail</h3><div class="response-test-list">${testButtons}</div>
     <div id="regression-diffs"></div>`;
   // The richer provenance-aware diff (dimension changes, TTFT/VRAM deltas) is
-  // only meaningful pairwise — a 3+ run comparison keeps the table above only.
+  // only meaningful pairwise - a 3+ run comparison keeps the table above only.
   if (runs.length === 2) {
     const other = runs.find((r) => r.id !== baseline.id) || runs[1];
     try {
@@ -1314,7 +1314,7 @@ async function exportCard() {
 }
 
 // ---------------------------------------------------------------------------
-// Community benchmark sharing — local-only preview/save (Release R8)
+// Community benchmark sharing - local-only preview/save (Release R8)
 // ---------------------------------------------------------------------------
 
 async function contributeRun() {
@@ -1330,7 +1330,7 @@ async function contributeRun() {
     if (!out.success) throw new Error(out.error || "Preview failed.");
     const overlay = simpleModal(
       "Contribute this benchmark",
-      `Exactly what would be shared — review before saving. ${esc(out.note)}`,
+      `Exactly what would be shared - review before saving. ${esc(out.note)}`,
       `<pre class="log manifest-yaml">${esc(JSON.stringify(out.would_share, null, 2))}</pre>
        <details style="margin-top:0.5rem"><summary class="muted small">Never included</summary>
          <div class="muted small">${out.excluded_fields.map(esc).join(", ")}</div>
@@ -1445,7 +1445,7 @@ function handleResponseDrawerClick(event) {
 }
 
 // ---------------------------------------------------------------------------
-// Tab 1 — Auto-pick a profile (Step 14)
+// Tab 1 - Auto-pick a profile (Step 14)
 // ---------------------------------------------------------------------------
 
 function renderRecommendProgress(body, candidates, current) {
@@ -1479,8 +1479,8 @@ function renderRecommendProgress(body, candidates, current) {
 }
 
 // Named scoring tilts for the three preset buttons. Each reuses the same
-// /system/recommend/stream ranking — only the accuracy/speed/headroom weights
-// change — so presets stay valid for any user's config.json profiles instead
+// /system/recommend/stream ranking - only the accuracy/speed/headroom weights
+// change - so presets stay valid for any user's config.json profiles instead
 // of hardcoding specific model names.
 
 const RECOMMEND_PRESETS = {
@@ -1561,12 +1561,12 @@ async function recommendTune(weights = null) {
           <td><span class="badge ${installed.cls}">${esc(installed.label)}</span></td>
           <td class="num">${esc(c.avg_accuracy)}</td>
           <td class="num">${esc(c.avg_latency_s)}s</td>
-          <td class="num">${esc(c.margin_gb ?? "—")}</td>
+          <td class="num">${esc(c.margin_gb ?? "-")}</td>
           <td class="num">${esc(c.score)}</td></tr>`;
       })
       .join("");
     const skipped = (res.skipped || [])
-      .map((s) => `<li>${esc(s.profile)} — ${esc(s.reason)}${s.required_gb ? ` (~${esc(s.required_gb)} GB)` : ""}</li>`)
+      .map((s) => `<li>${esc(s.profile)} - ${esc(s.reason)}${s.required_gb ? ` (~${esc(s.required_gb)} GB)` : ""}</li>`)
       .join("");
     const sampleTests = (res.sample_tests || []).map((t) => `<code>${esc(t)}</code>`).join(", ");
     body.innerHTML = `
@@ -1584,7 +1584,7 @@ async function recommendTune(weights = null) {
     const sd = body.querySelector(".set-default-btn");
     if (sd) sd.addEventListener("click", () => setDefaultProfile(sd.dataset.profile, sd));
   } catch (err) {
-    body.innerHTML = `<div class="muted">Tuning failed — ${esc(err.message)}</div>`;
+    body.innerHTML = `<div class="muted">Tuning failed - ${esc(err.message)}</div>`;
     toast(`Tune failed: ${err.message}`, "error");
   } finally {
     busy(btn, false);

@@ -44,7 +44,7 @@ if [ "$(cat .venv/requirements.sha256 2>/dev/null)" != "$REQ_HASH" ]; then
 fi
 
 if ! command -v ollama >/dev/null 2>&1 && ! curl -fsS --max-time 2 "${OLLAMA_BASE_URL:-http://127.0.0.1:11434}/api/tags" >/dev/null 2>&1; then
-  echo "[start] NOTE: Ollama was not found. Install it from https://ollama.com/download —"
+  echo "[start] NOTE: Ollama was not found. Install it from https://ollama.com/download -"
   echo "        the UI will start anyway and shows Ollama's status on the Setup tab."
 fi
 

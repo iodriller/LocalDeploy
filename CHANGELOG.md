@@ -4,34 +4,55 @@ All notable changes to this project should be documented here.
 
 ## 0.5.1 - 2026-07-18
 
+### Public release audit
+
+- Split the browser frontend into seven native ES modules and added import-graph, browser, package,
+  and static-route checks for the new layout.
+- Fixed several audit findings in benchmark and model workflows: streamed backend failures now end
+  cleanly, benchmark queue failures no longer stay stuck as running, forced device comparisons load
+  one model at a time, imported report cards keep stable ids, category summaries include every
+  category, zero-valued limits reach validation, and single-profile reports retain backend data.
+- Reworked the README and supporting guides in a shorter, factual voice. Added checks for local
+  documentation links and the repository's punctuation rule. Corrected two nonexistent model names
+  in the old reference table and removed recommendations that could not be kept current.
+- Documented the first PyPI release setup. The v0.5.0 package build succeeded, but upload did not
+  because the pending trusted publisher had not been registered on PyPI.
+- Added Ruff to local and CI checks, pinned GitHub Actions and the Docker base image by digest, and
+  added monthly Dependabot configuration for Python, Actions, and Docker.
+- Disabled Ollama's separate cloud-model feature in the bundled Docker runtime and in Ollama
+  processes started by the Windows launcher. Clarified the boundary between LocalDeploy's offline
+  setting and the network settings of a separately managed runtime.
+- Updated client examples to use the configured default profile and optional API token. Marked shell
+  entry points executable for clones on macOS and Linux.
+
 ### Later on 0.5.1: guided recommendations, calibration, Monitor tab, reproducibility
 
-- **Recommended models is now a guided flow.** Pick a use case, a priority (quality/speed/memory/
+- Recommended models is now a guided flow. Pick a use case, a priority (quality/speed/memory/
   context), and an expected context size; `POST /registry/recommend` returns up to three labeled
   picks (Recommended, Faster, Higher quality), each with a "why this model?" breakdown that tags
-  every reason as estimated, published, or measured on this machine — never blending the three.
-- **Fit estimates now calibrate themselves.** Every deploy compares the pre-load VRAM estimate
+  every reason as estimated, published, or measured on this machine without blending the three.
+- Fit estimates now calibrate themselves. Every deploy compares the pre-load VRAM estimate
   against what Ollama actually placed, and later fit checks for the same GPU/model/quant/context
   are corrected from that history (shown as a visible correction, never applied silently). Fit
   checks also report a confidence level and a new `/system/fit-table` sweeps several context sizes
   in one call.
-- **New Monitor tab**: live VRAM/CPU/RAM and per-model throughput/TTFT while a model serves, a
+- New Monitor tab: live VRAM/CPU/RAM and per-model throughput/TTFT while a model serves, a
   numeric-only request log (prompts and responses are never recorded), rule-based alerts (sustained
   VRAM pressure, placement mismatches, slow generation, true concurrent calls), and persisted
   session summaries. Calibration only consumes Ollama's model-specific VRAM allocation; system-wide
   session peaks remain diagnostic so unrelated GPU use cannot corrupt fit estimates.
-- **Benchmarking**: true time-to-first-token, P90/P95/median/min/max statistics on repeated runs, a
+- Benchmarking: true time-to-first-token, P90/P95/median/min/max statistics on repeated runs, a
   context-scaling sweep, use-case benchmark packs (coding/structured/reasoning/general), and
   regression detection in Compare (what changed between two runs' runtime/digest/quant/GPU, plus
   the resulting tok/s/TTFT/VRAM deltas).
-- **Deployment manifests**: export a running model's exact configuration as YAML/JSON, validate it
+- Deployment manifests: export a running model's exact configuration as YAML/JSON, validate it
   against a different machine (compatibility report with safe substitutions), recreate it there, and
   generate copy-paste config for Open WebUI, Continue, Cline, curl, Python, JavaScript, and Docker
   Compose.
-- **Update check**: an opt-out (`OFFLINE=true`), no-payload GitHub release check surfaces a chip
+- Update check: an opt-out (`OFFLINE=true`), no-payload GitHub release check surfaces a chip
   when a newer version exists. A local-only anonymized benchmark-sharing preview/export was added
-  as groundwork for community sharing — there is no server to submit to yet, so nothing is sent.
-- **Fixed a UI crash that broke hardware detection, catalog search, and other buttons.** Disabling a
+  as groundwork for community sharing: there is no server to submit to yet, so nothing is sent.
+- Fixed a UI crash that broke hardware detection, catalog search, and other buttons. Disabling a
   just-clicked button (to show a loading state) fires a `focusout` event; a tooltip handler
   dereferenced its trigger without checking for null and crashed before the underlying request ever
   ran. Also fixed: a race in `benchmark.py`'s lazy import that could return a partially-initialized
@@ -43,57 +64,57 @@ All notable changes to this project should be documented here.
 - An automated "pull top candidates, benchmark each, keep the winner" workflow was built and then
   disabled in the UI pending a product decision (backend intact at `/system/bakeoff/run`).
 
-- **The catalog answers "will it fit?" at a glance.** Since your hardware is already
-  detected, every size chip in the results is colored by fit — green fits your GPU,
-  yellow is tight/CPU-only, red won't fit — via one batched estimate per search
+- The catalog answers "will it fit?" at a glance. Since your hardware is already
+  detected, every size chip in the results is colored by fit: green fits your GPU,
+  yellow is tight/CPU-only, and red won't fit. One batched estimate runs per search
   (`POST /system/fit-batch`); Hugging Face rows get a row-level fit badge parsed from
   the repo name. Descriptions clamp to two lines and capability tags sit inline, so
   the model column stops being a wall of text.
-- **Pulling a specific quant is now one click on a real tag.** The quant advisor
+- Pulling a specific quant is now one click on a real tag. The quant advisor
   fetches the family's actual published tags from ollama.com
   (`POST /registry/library-tags`), adds a "Pull it" column with the true download size
   (e.g. `↓ 3.0GB` for `qwen2.5:7b-instruct-q5_K_M`), marks unpublished quants honestly
   as "not published", flags already-pulled ones, and offers an expandable list of every
-  published tag — no more guessing tag-name conventions.
+  published tag: no more guessing tag-name conventions.
 
-- **One search, every source.** The Model catalog no longer asks you to pick a source:
+- One search, every source. The Model catalog no longer asks you to pick a source:
   one query hits the Ollama library and Hugging Face GGUF repos in parallel
   (`POST /registry/search-models`) and renders a single table where the source is just a
   column. Results update as you type (debounced), size chips are per-tag fit-checked
   pulls, exact tags (`gemma3:4b`, `hf.co/org/repo`) get a verbatim "Pull exactly" row,
   and ⚖ on any row opens the quant advisor pre-filled.
-- **Chat upgrades**: attach text files (contents ride along as fenced blocks the model
-  can read — and render as code blocks in your bubble), a 5-minute keep-loaded option,
+- Chat upgrades: attach text files (contents ride along as fenced blocks the model
+  can read and render as code blocks in your bubble), a 5-minute keep-loaded option,
   and `keep_alive` now rides every chat request so Ollama stops silently resetting the
   session's keep-loaded choice to its 5-minute default after the first message.
   Assistant replies render lightweight markdown (headings, bullets, bold/italic, inline
-  code, links) — still escape-first, no HTML injection possible.
-- **Buttons look like buttons everywhere**: one uniform shape/height/alignment for all
+  code, and links). Rendering is still escape-first, with no HTML injection possible.
+- Buttons look like buttons everywhere: one uniform shape/height/alignment for all
   buttons (emoji and icon labels now center properly), squared-off attach control.
 
 ### Earlier on 0.5.1 (2026-07-17)
 
 UX overhaul across the whole UI.
 
-- **Model catalog is now searchable.** The local provider inventory gets a search box,
+- Model catalog is now searchable. The local provider inventory gets a search box,
   runtime and size filters, a sort control (measured tok/s, name, parameters, runtime),
-  and pagination — instead of one giant unfiltered table. Provider chips show
+  and pagination instead of one giant unfiltered table. Provider chips show
   reachability with per-runtime "how to enable" hints, and a Discover section links
   Hugging Face GGUF search and the Ollama library.
-- **Disk vs VRAM are visually distinct everywhere.** Model rows show `💾 X GB disk`
+- Disk vs VRAM are visually distinct everywhere. Model rows show `💾 X GB disk`
   (drive space) separately from `⚡ needs ~Y GB VRAM` (memory to run), with a legend on
   the Your models card; the serving card labels "⚡ VRAM in use" vs "💾 Size on disk".
-- **Your models polish**: fit checks still run automatically on load (the button is now a
+- Your models polish: fit checks still run automatically on load (the button is now a
   small ↻ re-check), icon buttons (▶ Deploy, ⚙ Tune, 🗑 Delete), and the delete dialog
   states exactly how many GB it frees.
-- **Use via API**: every served model card shows the full OpenAI-compatible endpoint URL
+- Use via API: every served model card shows the full OpenAI-compatible endpoint URL
   with one-click ⧉ copy buttons for the URL and a ready-to-run curl (model pre-filled).
-- **Chat redesigned** as a proper chat shell: header with model picker + system-prompt
+- Chat redesigned as a proper chat shell: header with model picker + system-prompt
   panel, welcome screen with clickable suggestion prompts, role avatars, fenced code
   blocks rendered with language tag and copy button, auto-growing composer, and
   🕒 / ⚡ metadata under each reply.
-- **One-paste Windows install**: `irm …/scripts/install.ps1 | iex` downloads the repo
-  (git or ZIP — nothing preinstalled) and hands off to the guided start script.
+- One-paste Windows install: `irm …/scripts/install.ps1 | iex` downloads the repo
+  (git or ZIP: nothing preinstalled) and hands off to the guided start script.
 - Screenshot/GIF capture scripts now pick a chat model that is actually installed, so
   they don't record a timeout when a hardcoded model was deleted.
 
@@ -104,11 +125,11 @@ UX overhaul across the whole UI.
 - Record repeated-run variance and benchmark provenance: LocalDeploy/Ollama versions, full model digest, quant, context, initial warm/cold state, native backend metrics, and hardware snapshot.
 - Add OpenAI-compatible tool calling, `/v1/responses`, and `/v1/embeddings` with float/base64 output. LocalDeploy returns tool calls but never executes them.
 - Clarify the single-user local-only security boundary: one shared token, no TLS, no multi-user isolation, and no claim of internet-facing readiness.
-- **Project layout**: `api_server.py`, `benchmark.py`, `chat_cli.py`, and `compare_models.py`
+- Project layout: `api_server.py`, `benchmark.py`, `chat_cli.py`, and `compare_models.py`
   moved into the `localdeploy` package (`localdeploy/server.py` etc.); the root files remain
   as alias shims (`sys.modules` aliasing), so `python api_server.py`, `uvicorn api_server:app`,
   and every existing import keep working unchanged. `pytest.ini` folded into `pyproject.toml`.
-- **Clean-machine startup hardening**: a double-clickable `start.bat` (execution-policy safe,
+- Clean-machine startup hardening: a double-clickable `start.bat` (execution-policy safe,
   works from a plain ZIP download), dependencies re-install automatically when
   `requirements.txt` changes after a `git pull`, `start.ps1` heals a stale API from an older
   checkout instead of declaring it "already running" (plus a `-Restart` switch), Ollama startup
@@ -118,43 +139,43 @@ UX overhaul across the whole UI.
 ## 0.4.0 - 2026-07-17
 
 Public-launch release: a chat playground, quant advisor, disk usage tools, durable
-benchmark history — and streamlining so the app only ever shows models that are
+benchmark history, and streamlining so the app only ever shows models that are
 actually on your machine.
 
 ### New features
 
-- **Chat playground tab.** Talk to any pulled model right in the UI — streaming
+- Chat playground tab. Talk to any pulled model right in the UI: streaming
   tokens over the server's own OpenAI-compatible `/v1/chat/completions`, image
   attachments for vision-capable profiles, an optional system prompt, and a
   Send-becomes-Stop button. The reply meta line separates model-load time
   ("first token X s") from true generation speed (tok/s).
-- **Quantization advisor** (Get a model → ⚖ Quant advisor). Fit-checks every
+- Quantization advisor (Get a model → ⚖ Quant advisor). Fit-checks every
   common GGUF quant (Q2_K → F16) of a model size against your VRAM budget with
   the same estimator as fit checks, and tells you when there's headroom for a
   higher-quality tag than the usual Q4 default (`POST /system/quant-advisor`).
-- **Disk usage panel.** The Your models card now shows `N models · X GB on disk`,
+- Disk usage panel. The Your models card now shows `N models · X GB on disk`,
   sorts by size / recency / name, and bulk-deletes selected models with a
   freed-gigabytes preview.
-- **Opt-in server-side benchmark history.** A toggle on the History tile mirrors
+- Opt-in server-side benchmark history. A toggle on the History tile mirrors
   completed runs to `reports/benchmark-history/` as one JSON file per run
   (`/benchmark/history` endpoints), so results survive the browser and can be
   shared as plain files. Run ids are strictly validated (no path traversal).
 
 ### No more phantom models
 
-- **Fresh installs start truly empty.** `load_config()` no longer falls back to
+- Fresh installs start truly empty. `load_config()` no longer falls back to
   `config.example.json` when `config.json` is missing (that fallback made a fresh
-  clone list a dozen sample profiles for models that were never pulled — most
+  clone list a dozen sample profiles for models that were never pulled, most
   visibly on macOS/Linux, where `start.sh` doesn't seed a config). A missing
   config now yields zero profiles; pulling a model auto-creates its profile.
   `config.example.json` remains as field-reference documentation and a test fixture.
-- **`.env.example` no longer pins `DEFAULT_MODEL_PROFILE`.** The pinned sample value
+- `.env.example` no longer pins `DEFAULT_MODEL_PROFILE`. The pinned sample value
   made `/chat` fail with "Unknown profile" on a fresh install until that exact model
   was pulled, even after other models were. The config's `default_profile`
   (auto-set on first pull) is now used.
-- **Clear first-run error.** With no profiles configured, `/chat` and friends now say
+- Clear first-run error. With no profiles configured, `/chat` and friends now say
   "pull a model first" instead of "Unknown profile 'gemma3_4b_ollama_safe'".
-- **UI hides profiles whose model isn't on the machine.** The benchmark model picker
+- UI hides profiles whose model isn't on the machine. The benchmark model picker
   hides them by default behind a "Show N hidden (model not pulled)" toggle, the
   profile dropdowns annotate them, and a new **Remove not-pulled profiles** button
   (Advanced → All run profiles) deletes them in one click. For llama.cpp profiles the
@@ -163,11 +184,11 @@ actually on your machine.
 
 ### Packaging
 
-- **`pip install localdeploy`.** The project now ships as a proper Python package
+- Python package layout. The project builds as a standard Python package
   (`pyproject.toml`) with a `localdeploy` console command that serves the API + UI
   and opens the browser. The web UI ships as package data (`localdeploy/web/`,
   moved from the repo-root `web/`).
-- **App home for runtime state.** Installed runs keep `.env`, `config.json`,
+- App home for runtime state. Installed runs keep `.env`, `config.json`,
   `logs/`, and `reports/` in `~/.localdeploy` (override with `LOCALDEPLOY_HOME`);
   source checkouts keep using the repo root, so nothing changes for `git clone`
   users. Docker now mounts that state separately from Ollama's model volume, so
@@ -203,102 +224,102 @@ First public release.
 
 ### Repo cleanup for public release
 
-- **One start command per platform.** `scripts/start.ps1` (Windows) now opens the UI by default
+- One start command per platform. `scripts/start.ps1` (Windows) now opens the UI by default
   (`-NoBrowser` to skip, `-Foreground` for live logs) and `scripts/start.sh` (macOS/Linux) opens
   the UI once the server is healthy. Removed the redundant launchers: `run.ps1` / `run.sh`
   (curl-pipe bootstrappers that auto-installed Docker), `install.ps1` (start.ps1 already creates
   config/venv; model pulls belong in the fit-checked UI), and `scripts/start_ui.ps1` (now the
   default behavior).
-- **Renamed** the root model-comparison CLI `test_models.py` → `compare_models.py` (it was never a
+- Renamed the root model-comparison CLI `test_models.py` → `compare_models.py` (it was never a
   pytest suite; the old name needed a pytest.ini workaround).
-- **Docs**: `docs/TERMINAL_TESTING.md` → `docs/CLI.md`; removed the internal `GAPS.md` and
+- Docs: `docs/TERMINAL_TESTING.md` → `docs/CLI.md`; removed the internal `GAPS.md` and
   `docs/VERIFICATION.md` trackers; rewrote the README around a per-platform quick start.
-- **License** switched from "all rights reserved" placeholder to MIT.
+- License switched from "all rights reserved" placeholder to MIT.
 
 ### Features and fixes
 
-- **Forced CPU/GPU benchmarks now measure the device they ask for.** Previously a
+- Forced CPU/GPU benchmarks now measure the device they ask for. Previously a
   `device=cpu` (or `gpu`) run only pinned the placement at warm-up; the benchmark's own
   `/chat` calls didn't pass `num_gpu`, so Ollama could silently re-place the model (a CPU
   run drifting onto the GPU). `num_gpu` is now threaded through `/chat` → `execute_test` →
   `iter_run`, so every inference call stays on the requested device end-to-end. Verified:
   `device=cpu` reports `actual_device=cpu`, `device=gpu` reports `gpu`.
-- **Fewer spurious "status failed" benchmark rows.** Forcing CPU/GPU used to hard-fail
+- Fewer spurious "status failed" benchmark rows. Forcing CPU/GPU used to hard-fail
   whenever Ollama placed the model differently (e.g. a model too big for pure GPU lands on
   Split). It now warns and proceeds, recording the run with its actual placement.
-- **Benchmark history/queue management**: per-run delete (×) in the run library, a confirm on
+- Benchmark history/queue management: per-run delete (×) in the run library, a confirm on
   Clear history, and the ability to dismiss finished/failed queue rows (individually or via
   **Clear finished**); failed rows show their error reason inline. The running-model **Kill**
   button is now **Unload** for consistency.
-- **Browser UI smoke tests** (`tests/test_ui_playwright.py`): optional Playwright-driven checks
+- Browser UI smoke tests (`tests/test_ui_playwright.py`): optional Playwright-driven checks
   that load the real `/ui` in headless Chromium and exercise tab switching and the benchmark
   history controls. They skip cleanly when Playwright or its browser isn't installed; added
   `playwright` to `requirements-dev.txt`.
-- **Fixed: the web UI was completely broken** — `web/app.js` contained smart/curly quotes
+- Fixed: the web UI was completely broken: `web/app.js` contained smart/curly quotes
   (`“ ”`) used as string delimiters in the "Check New Models" function, a `SyntaxError` that
   prevented the *entire* script from parsing (blank/dead UI). Replaced with straight quotes.
   Added a CI step (`node --check web/app.js`) and a pytest guard so a JS parse error can never
   ship silently again (the Python-only suite never loaded the UI before).
-- **Benchmark workspace V2**: the benchmark tab is now a local experiment workspace with a
+- Benchmark workspace V2: the benchmark tab is now a local experiment workspace with a
   multi-profile Run Builder, sequential run queue, leaderboard, category heatmap, SVG
   speed/quality scatter, per-test matrix, local browser history, selected-run comparison, and
   report-card import/export. **CPU + GPU** now creates two queued benchmark batches instead of a
   separate special-case button.
-- **Benchmark queue UX**: waiting benchmark rows can now be moved up/down or removed before they
+- Benchmark queue UX: waiting benchmark rows can now be moved up/down or removed before they
   run, while the active run appears only in the main progress panel with elapsed time.
-- **Comparison auto-select**: fresh benchmark results now join the existing selected comparison
+- Comparison auto-select: fresh benchmark results now join the existing selected comparison
   set instead of replacing it, so a second run appears next to the first run automatically.
-- **Per-test matrix demoted**: the per-test matrix is now collapsed as an advanced diagnostic
+- Per-test matrix demoted: the per-test matrix is now collapsed as an advanced diagnostic
   view instead of occupying the main results dashboard by default.
-- **Benchmark deployments are temporary**: `/benchmark/run` now unloads each Ollama model after
+- Benchmark deployments are temporary: `/benchmark/run` now unloads each Ollama model after
   its profile finishes, including forced CPU/GPU benchmark deployments. The benchmark tab no
   longer leaves a model served as a side effect.
 - Quieter device auto-detect (inline note instead of a per-run toast); the run progress bar is
   now an ARIA `progressbar` so screen readers announce progress.
 
-- **Honest device tag**: the benchmark Device tag now defaults to **Auto (detect)** and is
+- Honest device tag: the benchmark Device tag now defaults to **Auto (detect)** and is
   resolved from the model's *actual* placement (GPU/CPU/Split via `/system/status`) after the
   run, so report cards can't be silently mislabelled. Manual GPU/CPU stays an override and warns
   if it disagrees with what's detected.
-- **Apple Silicon (Metal) detection**: `/system/hardware` now reports Apple Silicon GPUs instead
+- Apple Silicon (Metal) detection: `/system/hardware` now reports Apple Silicon GPUs instead
   of claiming "CPU-only" on a Mac. Unified memory is surfaced as such (no false VRAM figure; fit
   checks use system RAM). NVIDIA still takes precedence where present.
-- **Pull fit-gate respects the tiered warnings**: a model that won't fit VRAM but **runs on CPU**
-  is no longer blocked behind the override — the gate now hard-blocks only the "fits nowhere"
+- Pull fit-gate respects the tiered warnings: a model that won't fit VRAM but **runs on CPU**
+  is no longer blocked behind the override: the gate now hard-blocks only the "fits nowhere"
   (`severity: hard`) case and notes the CPU fallback for the soft case.
-- **Tune for my GPU** labels skipped CPU-capable profiles as "CPU-only (skipped for GPU tuning)"
+- Tune for my GPU labels skipped CPU-capable profiles as "CPU-only (skipped for GPU tuning)"
   instead of the misleading "won't fit VRAM".
-- **Run table**: detailed benchmark rows now live below the dashboard and can be filtered by
+- Run table: detailed benchmark rows now live below the dashboard and can be filtered by
   model, category, pass/fail, and slowest failures.
-- **Warm-up robustness**: Deploy/replace actions now show a **live "Loading…Ns" counter** (with a
+- Warm-up robustness: Deploy/replace actions now show a **live "Loading…Ns" counter** (with a
   "large models on CPU can take a minute" hint when targeting CPU) instead of an apparently
   frozen button. The server's load timeout **scales with the device** (longer for CPU offload)
   and is overridable via `OLLAMA_LOAD_TIMEOUT`; a load timeout returns a clear "it may still be
-  loading — click Refresh status" message rather than a generic failure.
-- **Decision-grade run results**: the benchmark workspace shows queued model/device variants,
+  loading: click Refresh status" message rather than a generic failure.
+- Decision-grade run results: the benchmark workspace shows queued model/device variants,
   live progress, **Cancel**, **tok/s** per test, inline failure reasons, response previews,
   leaderboard ranking, per-category heatmap, and per-test matrix views.
-- **Report cards & compare carry speed**: exported cards now include `avg_tokens_per_second`,
+- Report cards & compare carry speed: exported cards now include `avg_tokens_per_second`,
   a per-test **tok/s** column, and a **By category** table. The A/B compare view adds a
-  **tok/s (A → B)** column and aggregate tok/s delta — so a "Qwen/GPU vs Qwen/CPU" diff
+  **tok/s (A → B)** column and aggregate tok/s delta, so a "Qwen/GPU vs Qwen/CPU" diff
   shows the speed difference directly.
-- **Better discovery** (Phase 5): "New on Hugging Face" now has a search box, results-per-query
-  limit, and GGUF-only toggle — the API already accepted `queries`/`limit`/`gguf_only`, the UI
+- Better discovery (Phase 5): "New on Hugging Face" now has a search box, results-per-query
+  limit, and GGUF-only toggle: the API already accepted `queries`/`limit`/`gguf_only`, the UI
   now surfaces them. Installed rows show quantization level, parameter size, and modified date.
   HF candidates show download counts and likes alongside the modified date.
-- **CPU-vs-GPU benchmark comparison** (Phase 6): the benchmark tab gains a *Device tag*
+- CPU-vs-GPU benchmark comparison (Phase 6): the benchmark tab gains a *Device tag*
   (Auto / GPU / CPU) selector. The tag is stored in the exported report card (`device` field) and
   surfaces in the card header (`[GPU]`/`[CPU]` next to the model name in HTML and Markdown). The
   compare view labels runs as `model/GPU` vs `model/CPU` so A/B diffs are unambiguous.
-- **Tiered fit warnings** (`/system/fit-check`): adds `tier`/`severity`/`headline`/`cpu_deployable`
-  — green (comfortable), yellow (tight, or won't-fit-GPU-but-runs-on-CPU), red (too big anywhere) —
+- Tiered fit warnings (`/system/fit-check`): adds `tier`/`severity`/`headline`/`cpu_deployable`
+ : green (comfortable), yellow (tight, or won't-fit-GPU-but-runs-on-CPU), red (too big anywhere) -
   using system RAM to judge CPU deployability. The coarse `verdict` is unchanged (backward-compatible).
-- **Model management**: `POST /models/delete` (remove a model from disk) and `POST /models/free`
+- Model management: `POST /models/delete` (remove a model from disk) and `POST /models/free`
   (unload all models from memory/VRAM), with **Delete** buttons per installed model, a **Free memory**
   button, and a **Cancel** button to abort an in-flight pull.
-- **Hardware panel now shows CPU + RAM** (`/system/hardware`): CPU model, physical/logical cores,
+- Hardware panel now shows CPU + RAM (`/system/hardware`): CPU model, physical/logical cores,
   and system RAM total/available via `psutil` (graceful fallback when absent).
-- **Choose CPU vs GPU at deploy time**: the Serve panel has a *Deploy to* selector (Auto / GPU /
+- Choose CPU vs GPU at deploy time: the Serve panel has a *Deploy to* selector (Auto / GPU /
   CPU). Forces Ollama `num_gpu` (0 = CPU, max = GPU); Auto is unchanged from before. `/system/status`
   now labels each running model's placement (GPU / CPU / Split N%). Additive and backwards-compatible.
 - Added **opt-in token auth**: set `API_TOKEN` to require it (`X-API-Token` /

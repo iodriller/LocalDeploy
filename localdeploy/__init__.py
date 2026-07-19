@@ -1,3 +1,3 @@
-"""LocalDeploy — pick, deploy & benchmark the best local AI model for your machine."""
+"""LocalDeploy manages and benchmarks AI models on local runtimes."""
 
 __version__ = "0.5.1"

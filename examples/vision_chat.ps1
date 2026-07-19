@@ -2,6 +2,7 @@ param(
     [Parameter(Mandatory = $true)][string]$ImagePath,
     [string]$Prompt = "Describe the image, then list any visible text.",
     [string]$BaseUrl = "http://127.0.0.1:8000",
+    [string]$ApiToken = $env:API_TOKEN,
     [int]$MaxOutputTokens = 256
 )
 
@@ -21,7 +22,12 @@ $body = @{
     safe_mode = $true
 } | ConvertTo-Json -Depth 5
 
-$response = Invoke-RestMethod -Uri "$BaseUrl/vision" -Method Post -ContentType "application/json" -Body $body
+$headers = @{}
+if ($ApiToken) {
+    $headers["Authorization"] = "Bearer $ApiToken"
+}
+
+$response = Invoke-RestMethod -Uri "$BaseUrl/vision" -Method Post -ContentType "application/json" -Headers $headers -Body $body
 if (-not $response.success) {
     Write-Error "LocalDeploy error: $($response.error)"
     exit 1

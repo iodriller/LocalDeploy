@@ -130,7 +130,7 @@ def load_model(
     """Warm a model into memory. An empty prompt makes Ollama load without generating.
 
     ``num_gpu`` sets how many layers to offload to the GPU (0 = force CPU). When
-    None, Ollama decides (auto) — identical to the prior behaviour. The request
+    None, Ollama decides (auto) - identical to the prior behaviour. The request
     timeout scales with the target device (CPU loads are slower).
     """
     base = base_url()

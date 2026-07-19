@@ -1,4 +1,4 @@
-"""Compatibility shim — the implementation lives in ``localdeploy.server``.
+"""Compatibility shim - the implementation lives in ``localdeploy.server``.
 
 ``sys.modules`` aliasing makes ``import api_server`` yield the *same* module object
 as ``localdeploy.server``, so attribute access, monkeypatching, and ``from

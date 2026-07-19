@@ -1,11 +1,11 @@
-"""Server-side benchmark history — an opt-in JSON store under reports/.
+"""Server-side benchmark history - an opt-in JSON store under reports/.
 
 The benchmark workspace keeps runs in browser localStorage, which dies with
 the browser profile. When the user flips the "also store on server" toggle in
 the UI, completed runs are POSTed here and saved as one JSON file per run in
 ``reports/benchmark-history/`` (gitignored, human-readable, trivially
 shareable). The endpoints are always mounted; whether anything is written is
-the client's choice — nothing is stored unless the UI sends it.
+the client's choice - nothing is stored unless the UI sends it.
 
 Run ids double as filenames, so they are strictly validated (no separators,
 no traversal) and everything else about the run payload is treated as opaque.

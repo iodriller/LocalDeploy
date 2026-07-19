@@ -12,7 +12,7 @@ They skip cleanly when Playwright or its browser isn't installed, so the default
     python -m playwright install chromium
     pytest tests/test_ui_playwright.py -v
 
-No Ollama or GPU is required — the page loads and the benchmark tab renders from
+No Ollama or GPU is required - the page loads and the benchmark tab renders from
 seeded browser localStorage, independent of any backend model state.
 """
 from __future__ import annotations
@@ -546,7 +546,7 @@ def test_guided_recommend_renders_three_labeled_buckets(live_server, browser):
         sync_api.expect(cards).to_have_count(3)
         sync_api.expect(page.locator(".bucket-label")).to_have_count(3)
         assert "recommended" in page.locator(".bucket-label").first.inner_text().lower()
-        # "Why this model?" is a <details> disclosure — its reasons are present in the DOM.
+        # "Why this model?" is a <details> disclosure - its reasons are present in the DOM.
         sync_api.expect(cards.first.locator(".reason-item").first).to_contain_text("Fits your VRAM budget")
         assert calls[-1]["use_case"] == "coding"
     finally:
@@ -647,7 +647,7 @@ def test_monitor_tab_renders_snapshot(live_server, browser):
         sync_api.expect(page.locator("#monitor-models .model-title")).to_contain_text("gemma3:4b")
         sync_api.expect(page.locator("#monitor-requests-table tbody tr")).to_have_count(1)
         sync_api.expect(page.locator("#monitor-requests-table tbody tr")).to_contain_text("gemma3:4b")
-        # Switching away must stop polling — the interval id is cleared.
+        # Switching away must stop polling - the interval id is cleared.
         page.get_by_role("tab", name="Setup & Deploy").click()
         assert page.evaluate(
             "import('/ui/js/system.js?v=20260718-ui30').then(m => m.isMonitorActive())"
@@ -779,7 +779,7 @@ def test_contribute_benchmark_preview_modal(live_server, browser):
                 "success": True,
                 "would_share": {"schema_version": 1, "model": {"id": "gemma3:4b"}, "hardware": {"gpu": "RTX 4090"}},
                 "excluded_fields": ["model prompts", "model responses", "local profile name"],
-                "note": "Preview only — nothing is sent anywhere. LocalDeploy has no community server yet.",
+                "note": "Preview only - nothing is sent anywhere. LocalDeploy has no community server yet.",
             }
         ),
     )
@@ -797,7 +797,7 @@ def test_contribute_benchmark_preview_modal(live_server, browser):
         page.get_by_role("tab", name="Benchmark & Compare").click()
         page.wait_for_selector(".run-library-row")
         # Selecting a run (as a user would, via its checkbox) is what makes it
-        # "active" — Export/Contribute stay disabled until a run is picked.
+        # "active" - Export/Contribute stay disabled until a run is picked.
         page.locator(".run-library-pick input[type=checkbox]").first.check()
         page.wait_for_function("!document.querySelector('#btn-contribute')?.disabled")
         page.locator("#btn-contribute").click()
