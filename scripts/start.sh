@@ -43,17 +43,40 @@ if [ "$(cat .venv/requirements.sha256 2>/dev/null)" != "$REQ_HASH" ]; then
   echo "$REQ_HASH" > .venv/requirements.sha256
 fi
 
-if ! command -v ollama >/dev/null 2>&1 && ! curl -fsS --max-time 2 "${OLLAMA_BASE_URL:-http://127.0.0.1:11434}/api/tags" >/dev/null 2>&1; then
-  echo "[start] NOTE: Ollama was not found. Install it from https://ollama.com/download -"
-  echo "        the UI will start anyway and shows Ollama's status on the Setup tab."
-fi
-
 # Seed local environment defaults if absent. The live config starts empty and
 # is created when the first model profile is saved.
 [ -f .env ] || { [ -f .env.example ] && cp .env.example .env; } || true
 
-HOST="${API_HOST:-127.0.0.1}"
-PORT="${API_PORT:-8000}"
+# Match the Python server's dotenv behavior without sourcing .env as shell code.
+# Explicit shell values still win over the file, just as they do in start.ps1.
+IFS=$'\t' read -r HOST PORT OLLAMA_URL < <(
+  "$PYTHON" - "${API_HOST:-}" "${API_PORT:-}" "${OLLAMA_BASE_URL:-}" <<'PY'
+import sys
+
+from dotenv import dotenv_values
+
+values = dotenv_values(".env")
+requested = (
+    (sys.argv[1], "API_HOST", "127.0.0.1"),
+    (sys.argv[2], "API_PORT", "8000"),
+    (sys.argv[3], "OLLAMA_BASE_URL", "http://127.0.0.1:11434"),
+)
+resolved = []
+for explicit, name, default in requested:
+    value = explicit or values.get(name) or default
+    if any(character in value for character in "\t\r\n"):
+        raise SystemExit(f"Invalid control character in {name}")
+    resolved.append(value)
+resolved[2] = resolved[2].rstrip("/")
+print("\t".join(resolved))
+PY
+)
+
+if ! command -v ollama >/dev/null 2>&1 && ! curl -fsS --max-time 2 "${OLLAMA_URL}/api/tags" >/dev/null 2>&1; then
+  echo "[start] NOTE: Ollama was not found. Install it from https://ollama.com/download -"
+  echo "        the UI will start anyway and shows Ollama's status on the Setup tab."
+fi
+
 BROWSE_HOST="$HOST"
 case "$BROWSE_HOST" in
   0.0.0.0|::) BROWSE_HOST="127.0.0.1" ;;
