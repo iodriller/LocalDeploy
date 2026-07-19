@@ -21,6 +21,25 @@ from localdeploy.control import starter
 client = TestClient(app)
 
 
+def test_starter_catalog_has_unique_supported_entries() -> None:
+    ids = [entry["id"] for entry in starter.STARTER_CATALOG]
+    assert len(ids) == len(set(ids))
+    for entry in starter.STARTER_CATALOG:
+        assert entry["params_b"] > 0
+        assert 1 <= entry["tier"] <= 5
+        assert entry["workload_tags"]
+        assert set(entry["workload_tags"]).issubset(starter.WORKLOAD_TAGS)
+        assert entry["context_native"] in {32768, 131072, 262144}
+        assert entry["description"].strip()
+
+
+def test_starter_catalog_includes_current_small_and_mid_vision_options() -> None:
+    by_id = {entry["id"]: entry for entry in starter.STARTER_CATALOG}
+    assert by_id["qwen3.5:2b"]["vision"] is True
+    assert by_id["qwen3.5:9b"]["vision"] is True
+    assert by_id["qwen3.6:27b"]["context_native"] == 262144
+
+
 def _hw(vram_free_mb=None, ram_available_mb=None, gpu_available=None):
     gpus = [{"name": "Fake GPU", "vram_free_mb": vram_free_mb}] if vram_free_mb is not None else []
     return {

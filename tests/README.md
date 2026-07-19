@@ -5,7 +5,7 @@ Most tests use the in-process FastAPI application and mocked backends. They do n
 ## Install
 
 ```powershell
-python -m pip install -r requirements-dev.txt
+python -m pip install -e ".[dev]"
 ```
 
 Browser tests also need Chromium:

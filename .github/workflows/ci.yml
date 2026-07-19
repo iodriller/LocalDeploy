@@ -51,7 +51,7 @@ jobs:
         run: for file in localdeploy/web/js/*.js; do node --input-type=module --check < "$file"; done
 
       - name: Install dependencies
-        run: python -m pip install -r requirements-dev.txt
+        run: python -m pip install -e ".[dev]"
 
       - name: Lint Python
         if: matrix.python-version == '3.12'

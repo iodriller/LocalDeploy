@@ -70,7 +70,7 @@ cd LocalDeploy
 ./scripts/start.sh
 ```
 
-The server stays in the foreground. Press Ctrl+C to stop it.
+The launcher starts Ollama when it is installed but not already reachable, then keeps the LocalDeploy server in the foreground. Press Ctrl+C to stop LocalDeploy. Run `./scripts/stop.sh --ollama` if you also want to stop an Ollama process started by the launcher. Set `START_OLLAMA=false` in `.env` when another service manages Ollama.
 
 ### Docker
 
@@ -114,7 +114,7 @@ See [docs/API_OPTIONS.md](docs/API_OPTIONS.md) for request fields, [docs/UI.md](
 
 ## Data and network access
 
-LocalDeploy sends inference requests only to a configured loopback runtime. It does not include telemetry or upload prompts, responses, hardware details, or benchmark results. A runtime installed separately may have its own cloud features and settings. The supplied Docker setup disables Ollama cloud models with `OLLAMA_NO_CLOUD=true`; the Windows launcher uses the same default when it starts Ollama.
+LocalDeploy sends inference requests only to a configured loopback runtime. It does not include telemetry or upload prompts, responses, hardware details, or benchmark results. A runtime installed separately may have its own cloud features and settings. The supplied Docker setup and local launchers disable Ollama cloud models with `OLLAMA_NO_CLOUD=true` when they start Ollama.
 
 Two features can make outbound requests: model search queries Hugging Face and the Ollama library when you use search, and the UI checks this repository's GitHub releases once per page load. Set `OFFLINE=true` to disable both. `python scripts/egress_selftest.py` verifies the offline path.
 
@@ -141,7 +141,7 @@ python -m pip install -e ".[packaging]"
 
 ## Contributing
 
-Issues and focused pull requests are welcome. Please read [CONTRIBUTING.md](CONTRIBUTING.md) first. The open issues include small catalog, benchmark question, and grader tasks that are suitable for a first contribution.
+Issues and focused pull requests are welcome. Please read [CONTRIBUTING.md](CONTRIBUTING.md) first.
 
 ## License
 

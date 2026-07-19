@@ -8,6 +8,11 @@ __pycache__
 .pytest_cache
 .ruff_cache
 .mypy_cache
+build
+dist
+*.egg-info
+.coverage
+htmlcov
 logs
 reports
 benchmark-results

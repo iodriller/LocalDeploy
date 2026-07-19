@@ -40,7 +40,7 @@ WORKLOAD_TAGS = (
 )
 
 # Published native context length (tokens), hand-curated from each family's
-# model card. Deliberately rounded to a coarse tier (32768 or 131072) rather
+# model card. Deliberately rounded to a coarse tier (32768, 131072, or 262144) rather
 # than an exact figure this repo can't verify per release - "expected
 # context" filtering only needs to know roughly which bucket a model reaches.
 STARTER_CATALOG: List[Dict[str, Any]] = [
@@ -56,6 +56,10 @@ STARTER_CATALOG: List[Dict[str, Any]] = [
     {"id": "gemma3:1b", "family": "gemma3", "params_b": 1.0, "tier": 3, "vision": False,
      "use_case": "tiny/edge", "workload_tags": ["general"], "context_native": 32768,
      "description": "Smallest Gemma 3 model, text-only. Good for very constrained hardware."},
+    {"id": "qwen3.5:2b", "family": "qwen3.5", "params_b": 2.0, "tier": 4, "vision": True,
+     "use_case": "tiny/vision", "workload_tags": ["general", "vision", "reasoning", "tool_calling", "multilingual"],
+     "context_native": 262144,
+     "description": "Compact multimodal Qwen 3.5 model with reasoning and tool support."},
     {"id": "qwen2.5:3b", "family": "qwen2.5", "params_b": 3.0, "tier": 3, "vision": False,
      "use_case": "small/general", "workload_tags": ["general"], "context_native": 32768,
      "description": "Solid small general-purpose Qwen2.5 model."},
@@ -98,6 +102,11 @@ STARTER_CATALOG: List[Dict[str, Any]] = [
     {"id": "granite3.3:8b", "family": "granite3.3", "params_b": 8.0, "tier": 3, "vision": False,
      "use_case": "mid/general", "workload_tags": ["general", "document_analysis"], "context_native": 131072,
      "description": "IBM Granite 3.3 general instruct model."},
+    {"id": "qwen3.5:9b", "family": "qwen3.5", "params_b": 9.0, "tier": 4, "vision": True,
+     "use_case": "mid/vision-agent",
+     "workload_tags": ["general", "vision", "reasoning", "coding", "tool_calling", "multilingual"],
+     "context_native": 262144,
+     "description": "Mid-sized multimodal Qwen 3.5 model for local reasoning, coding, and tool use."},
     {"id": "gemma3:12b-it-qat", "family": "gemma3", "params_b": 12.0, "tier": 4, "vision": True,
      "use_case": "large/vision", "workload_tags": ["vision", "general"], "context_native": 131072,
      "description": "Quantization-aware-trained Gemma 3 12B - beats the default Q4 tag at the same speed/VRAM."},
@@ -112,7 +121,7 @@ STARTER_CATALOG: List[Dict[str, Any]] = [
     {"id": "qwen3.6:27b", "family": "qwen3.6", "params_b": 27.0, "tier": 5, "vision": True,
      "use_case": "xlarge/vision-agent",
      "workload_tags": ["vision", "tool_calling", "document_analysis", "multilingual"],
-     "context_native": 32768,
+     "context_native": 262144,
      "description": "Dense native-multimodal Qwen3.6 for high-VRAM visual reasoning and structured agent work."},
     {"id": "qwen3:32b", "family": "qwen3", "params_b": 32.0, "tier": 5, "vision": False,
      "use_case": "xlarge/general", "workload_tags": ["general", "reasoning", "multilingual", "tool_calling"],
