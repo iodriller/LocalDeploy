@@ -100,7 +100,7 @@ def _cpu_and_memory() -> Dict[str, Any]:
         info["ram_available_mb"] = int(vm.available / (1024 * 1024))
         # Non-blocking (interval=None): compares against the last call rather than
         # sleeping, so this never adds latency to a hardware probe. The first call
-        # in a process's lifetime returns 0.0 — meaningful readings need a second.
+        # in a process's lifetime returns 0.0 - meaningful readings need a second.
         info["cpu_percent"] = psutil.cpu_percent(interval=None)
     except Exception:
         pass
@@ -136,7 +136,7 @@ def _gpu(
         "unified_memory": unified,
         "memory_source": source,
         "vram_estimated": estimated,
-        # Compute (SM) utilization, not memory bandwidth — only available from
+        # Compute (SM) utilization, not memory bandwidth - only available from
         # vendor CLIs (nvidia-smi today). None on sources that can't report it.
         "utilization_pct": utilization_pct,
     }

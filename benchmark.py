@@ -1,4 +1,4 @@
-"""Compatibility shim — the implementation lives in ``localdeploy.benchmark``.
+"""Compatibility shim - the implementation lives in ``localdeploy.benchmark``.
 
 ``sys.modules`` aliasing makes ``import benchmark`` yield the *same* module object
 as ``localdeploy.benchmark``, so attribute access, monkeypatching, and ``from

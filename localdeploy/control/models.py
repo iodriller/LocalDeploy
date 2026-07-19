@@ -38,7 +38,7 @@ router = APIRouter()
 def _ollama_binary_installed() -> bool:
     """Best-effort check that the ollama CLI/binary exists on this machine.
 
-    A missing binary is a different problem than "installed but not running" —
+    A missing binary is a different problem than "installed but not running" -
     the pull-blocked message needs to tell those apart so the UI can offer
     "install" vs. "just start it" instead of one generic error.
     """
@@ -92,7 +92,7 @@ def install_ollama() -> Dict[str, Any]:
 
     Returns a consistent success/already_installed/error shape for the
     frontend. Handles both
-    "not installed at all" and "installed but not running" — the two cases the
+    "not installed at all" and "installed but not running" - the two cases the
     pull flow's generic "Ollama is not reachable" error used to lump together.
     """
     if _ollama_binary_installed():
@@ -103,7 +103,7 @@ def install_ollama() -> Dict[str, Any]:
             return {
                 "success": True,
                 "already_installed": True,
-                "message": "Ollama was installed but not running — started it. Retry the pull shortly.",
+                "message": "Ollama was installed but not running - started it. Retry the pull shortly.",
             }
         return {
             "success": False,
@@ -139,13 +139,13 @@ def install_ollama() -> Dict[str, Any]:
         return {
             "success": False,
             "error": "winget reported success but the ollama binary was not found yet. "
-            "It may need a new terminal/PATH refresh — restart the LocalDeploy API and try again.",
+            "It may need a new terminal/PATH refresh - restart the LocalDeploy API and try again.",
         }
     _try_start_ollama()
     return {
         "success": True,
         "already_installed": False,
-        "message": "Installed Ollama. It may take a moment to start serving — retry the pull shortly.",
+        "message": "Installed Ollama. It may take a moment to start serving - retry the pull shortly.",
     }
 
 
@@ -291,10 +291,10 @@ def models_pull(req: PullRequest):
     fit = fit_check(FitRequest(profile=req.profile, model_id=model_id, free_vram_mb=req.free_vram_mb))
     # Hard-block only when the model fits *nowhere* (not GPU VRAM, not system RAM).
     # A model that won't fit VRAM but runs on CPU (tier "cpu_only", severity "soft")
-    # is allowed through with a note — blocking it would contradict the tiered fit
+    # is allowed through with a note - blocking it would contradict the tiered fit
     # warnings. When fit-check couldn't even determine the model's size (severity
     # absent, e.g. an unparseable tag like "llama3:latest"), that's neither a hard
-    # nor soft verdict — never block on it, but the pull must not go through silently.
+    # nor soft verdict - never block on it, but the pull must not go through silently.
     # Backward compatibility: older fit responses had only WONT_FIT. Treat that
     # explicit verdict as a hard block; genuinely unknown/unparseable responses
     # use UNKNOWN and remain advisory.
@@ -325,7 +325,7 @@ def models_pull(req: PullRequest):
         }
         # Surface the soft "won't fit GPU but runs on CPU" case so the pull isn't silent about it.
         if severity == "soft" and fit.get("cpu_deployable"):
-            start["note"] = fit.get("headline") or "Won't fit GPU VRAM — will run on CPU (slower)."
+            start["note"] = fit.get("headline") or "Won't fit GPU VRAM - will run on CPU (slower)."
         elif severity in (None, "unknown"):
             start["note"] = fit.get("message") or fit.get("headline") or "Could not verify VRAM fit for this model before pulling."
         yield _sse(start)
@@ -333,7 +333,7 @@ def models_pull(req: PullRequest):
             for event in _ollama.pull_stream(model_id):
                 yield _sse(event)
             # Pull succeeded: keep config.json in sync by ensuring a profile exists
-            # for this model. Best-effort — never turn a good pull into a failure.
+            # for this model. Best-effort - never turn a good pull into a failure.
             profile_name, created, _err = ensure_profile_for_model(model_id)
             yield _sse(
                 {
@@ -406,14 +406,14 @@ def _serve_ollama(model_id: str, keep_alive: str, num_gpu: Optional[int] = None)
     except requests.ConnectionError:
         return {"success": False, "error": "Ollama is not running or is unreachable. Start Ollama and retry."}
     except requests.Timeout:
-        # The load may still finish in the background — guide the user to re-check
+        # The load may still finish in the background - guide the user to re-check
         # rather than implying a hard failure (common with large CPU loads).
         return {
             "success": False,
             "timeout": True,
             "error": (
                 f"Loading '{model_id}' took too long to respond. Large models "
-                "(especially on CPU) can take several minutes — it may still be "
+                "(especially on CPU) can take several minutes - it may still be "
                 "loading. Wait a moment, then click Refresh status."
             ),
         }
@@ -457,7 +457,7 @@ def _serve_ollama(model_id: str, keep_alive: str, num_gpu: Optional[int] = None)
 def _record_calibration_sample(model_id: str, running_match: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     """Best-effort: compare this warm-up's actual VRAM footprint (Ollama's
     `size_vram` from /api/ps) against the pre-load fit estimate, and record
-    the pair for calibration.py. Never raises — a warm-up must still succeed
+    the pair for calibration.py. Never raises - a warm-up must still succeed
     even if calibration bookkeeping fails.
     """
     if not running_match:

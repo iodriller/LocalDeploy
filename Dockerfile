@@ -2,7 +2,7 @@
 # server's loopback-only backend guard is preserved. One container, one URL.
 # Pinned (not :latest) so a fresh `docker compose build` is reproducible; bump
 # deliberately when picking up a newer Ollama release.
-FROM ollama/ollama:0.31.1
+FROM ollama/ollama:0.31.1@sha256:f1a705f2bd113fb8d15f85f7c217f0dc5f6bebda6b0cc42b82c3ad165ffcb9dc
 
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update \
@@ -21,7 +21,8 @@ RUN pip install --no-cache-dir --upgrade pip && pip install --no-cache-dir -r re
 COPY . .
 RUN chmod +x scripts/docker-entrypoint.sh
 
-ENV OLLAMA_BASE_URL=http://127.0.0.1:11434 \
+ENV OLLAMA_NO_CLOUD=true \
+    OLLAMA_BASE_URL=http://127.0.0.1:11434 \
     LOCALDEPLOY_HOME=/data/localdeploy \
     API_HOST=0.0.0.0 \
     API_PORT=8000 \

@@ -45,7 +45,7 @@ def test_fit_check_reports_none_confidence_shape(monkeypatch):
 
 
 def test_fit_check_raw_required_unaffected_by_calibration(monkeypatch):
-    # Calibration must never silently change the raw formula estimate — only
+    # Calibration must never silently change the raw formula estimate - only
     # add a clearly separate calibrated_required figure alongside it.
     monkeypatch.setattr(fit_mod, "detect_hardware", lambda: _hw())
     raw = client.post("/system/fit-check", json={"params_b": 7, "quant": "q4", "context": 4096}).json()

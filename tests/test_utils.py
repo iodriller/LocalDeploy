@@ -1,4 +1,4 @@
-"""Unit tests for localdeploy.utils — URL helpers and env parsing."""
+"""Unit tests for localdeploy.utils - URL helpers and env parsing."""
 from __future__ import annotations
 
 import pytest

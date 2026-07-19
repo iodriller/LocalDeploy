@@ -1,4 +1,4 @@
-"""Capability benchmark for local LLM profiles (v2 — harder tests).
+"""Capability benchmark for local LLM profiles (v2 - harder tests).
 
 Tests each enabled profile against five task categories:
     planning        software-project decomposition (not domestic tasks)
@@ -290,7 +290,7 @@ def _grade_number(expected: float, tolerance: float = 0.5) -> Callable[[str], fl
 
 def _grade_time_953(text: str) -> float:
     # Accept 9:52, 9:53, 9:54 AM. The correct answer is unambiguously AM (both
-    # trains depart in the morning), so a matching "9:53 PM" must be rejected —
+    # trains depart in the morning), so a matching "9:53 PM" must be rejected -
     # an explicit PM marker on the match disqualifies it; no marker or an
     # explicit AM marker is accepted.
     for hr, mn, meridiem in re.findall(r"(\d{1,2}):(\d{2})\s*([AaPp]\.?[Mm]\.?)?", text):
@@ -396,7 +396,7 @@ def _grade_function_schema(text: str) -> float:
 
 # ----- HARD structured graders (modeled on YBM pydantic schemas) --------------
 # These exercise nested enums, conditional fields, capability-subset constraints,
-# multi-entity extraction, and reasoning-then-output — patterns the easy tests miss.
+# multi-entity extraction, and reasoning-then-output - patterns the easy tests miss.
 
 
 _INTENT_ROUTES = {
@@ -751,7 +751,7 @@ TEST_CASES: List[TestCase] = [
         category="classification",
         prompt=(
             "Code review comment type (one of: nitpick, suggestion, blocker, question): "
-            "'This violates our auth policy — every endpoint needs the @require_auth decorator before merge.' "
+            "'This violates our auth policy - every endpoint needs the @require_auth decorator before merge.' "
             "Reply with the label only."
         ),
         grader=_grade_first_word("blocker"),
@@ -1099,7 +1099,7 @@ def _percentile(values: List[float], pct: float) -> Optional[float]:
 
 
 def _stats_block(values: List[float], digits: int = 3) -> Dict[str, Optional[float]]:
-    """Mean/median/stdev/min/max/P90/P95 in one call — the repeated-run
+    """Mean/median/stdev/min/max/P90/P95 in one call - the repeated-run
     statistics the benchmark expansion plan asks for, computed once and
     reused for both latency and tokens/sec rather than duplicated per metric."""
     if not values:
@@ -1192,7 +1192,7 @@ def call_chat(
     except ValueError:
         return {"success": False, "error": f"HTTP {response.status_code}: {response.text[:200]}", "elapsed_seconds": 0.0}
 
-    # Strip <think> blocks if the profile is a reasoning model — the answer lives
+    # Strip <think> blocks if the profile is a reasoning model - the answer lives
     # after </think> for these. Leave the raw response intact when not requested.
     if profile_cfg.get("strip_thinking_tags") and isinstance(data.get("response"), str):
         data["response"] = strip_thinking_tags(data["response"])
@@ -1224,7 +1224,7 @@ def execute_test(
 
     This is the shared per-test unit used by both the CLI run loop (`run_profile`)
     and the streaming `/benchmark/run` endpoint, so call + grading never diverge.
-    It does not print PASS/FAIL or sample VRAM — those stay with the caller.
+    It does not print PASS/FAIL or sample VRAM - those stay with the caller.
     ``num_gpu`` pins the device on the inference call (0 = CPU) for forced runs.
     ``context_override`` pins a per-call context length for context-scaling sweeps.
     """
@@ -1336,7 +1336,7 @@ def iter_run(
     Shares `execute_test` with the CLI so grading is identical. Emits:
     run_start, profile_start, test_start/test_result(*), profile_aborted?,
     profile_end, run_end. Used by the streaming /benchmark/run endpoint. No printing, no
-    VRAM tracking — the caller decides how to present events. ``num_gpu`` pins
+    VRAM tracking - the caller decides how to present events. ``num_gpu`` pins
     the device on each inference call (0 = CPU) for forced CPU/GPU runs.
     """
     yield {
@@ -1499,7 +1499,7 @@ def write_reports(results: List[ProfileResult], run_meta: Dict[str, Any]) -> Tup
     json_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
 
     lines: List[str] = [
-        f"# LocalDeploy benchmark v2 — {stamp}",
+        f"# LocalDeploy benchmark v2 - {stamp}",
         "",
         f"- GPU: `{run_meta.get('gpu_name')}` ({run_meta.get('gpu_total_mb')} MB total)",
         f"- API: `{run_meta.get('base_url')}`",
@@ -1508,12 +1508,12 @@ def write_reports(results: List[ProfileResult], run_meta: Dict[str, Any]) -> Tup
         "",
         "## Categories",
         "",
-        "- **planning** — software-project decomposition (3 tests)",
-        "- **classification** — multi-class label with ambiguity (5 tests)",
-        "- **code** — non-trivial Python + SQL, graded by AST + unit tests (4 tests)",
-        "- **math** — multi-step arithmetic, algebra, probability, matrices (5 tests)",
-        "- **structured** — JSON-schema-shaped output, field-level grading (4 tests)",
-        "- **structured_hard** — pydantic-schema output: classification, plan orchestration, "
+        "- **planning** - software-project decomposition (3 tests)",
+        "- **classification** - multi-class label with ambiguity (5 tests)",
+        "- **code** - non-trivial Python + SQL, graded by AST + unit tests (4 tests)",
+        "- **math** - multi-step arithmetic, algebra, probability, matrices (5 tests)",
+        "- **structured** - JSON-schema-shaped output, field-level grading (4 tests)",
+        "- **structured_hard** - pydantic-schema output: classification, plan orchestration, "
         "approval gate, multi-task extraction (4 tests)",
         "",
         "## Overall scoreboard",
@@ -1572,7 +1572,7 @@ def write_reports(results: List[ProfileResult], run_meta: Dict[str, Any]) -> Tup
     for p in results:
         lines.append(f"## `{p.profile}`")
         lines.append("")
-        lines.append(f"- Model: `{p.model_id}` ({p.backend}) — recommended_for_8gb_vram: `{p.recommended_for_8gb_vram}`")
+        lines.append(f"- Model: `{p.model_id}` ({p.backend}) - recommended_for_8gb_vram: `{p.recommended_for_8gb_vram}`")
         lines.append(f"- VRAM: before {p.vram_before_mb} MB, peak {p.vram_peak_mb} MB, after {p.vram_after_mb} MB")
         if p.notes:
             for note in p.notes:

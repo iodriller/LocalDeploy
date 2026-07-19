@@ -27,9 +27,10 @@ OUT_DIR = ROOT / "docs" / "screenshots"
 
 
 def _best_chat_profile(base: str) -> str | None:
-    """The smallest installed Ollama model name — the chat model picker lists
+    """The smallest installed Ollama model name - the chat model picker lists
     installed models directly, so the scene works whatever is on the machine."""
-    import urllib.request, json as _json
+    import json as _json
+    import urllib.request
 
     try:
         with urllib.request.urlopen(f"{base}/registry/installed", timeout=10) as r:

@@ -57,7 +57,7 @@ def set_enabled(req: SetEnabledRequest) -> Dict[str, Any]:
 
     Auto-pick (/system/recommend) only ever compares profiles with
     ``enabled: true``, and the shipped config.json enables just two small
-    profiles — there was previously no UI path to turn on any of the others
+    profiles - there was previously no UI path to turn on any of the others
     (or turn off ones that don't fit) without hand-editing config.json.
     """
     from api_server import get_config_path, load_config

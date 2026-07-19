@@ -1,205 +1,95 @@
-# LocalDeploy Web UI
+# Web UI
 
-A lightweight control panel served by the API server itself at **`http://<host>:<port>/ui`**
-(default `http://127.0.0.1:8000/ui`). It is plain static HTML/CSS/JS — no build step, no extra
-runtime, no external/CDN assets — so it runs anywhere the API runs and works fully offline.
+LocalDeploy serves its UI at `http://127.0.0.1:8000/ui` by default. The page is plain HTML, CSS, and JavaScript. It has no CDN assets, npm dependencies, or build step.
 
-The UI is **opt-out**: set `ENABLE_WEB_UI=false` to disable it (the API behaves exactly as it did
-before the UI existed).
+Set `ENABLE_WEB_UI=false` if you only want the API.
 
-## Launching
+## Start it
 
-Installed via pip/pipx, one command serves the API + UI and opens the browser
-(`--no-browser`, `--host`, `--port` to override; state lives in `~/.localdeploy`
-or `LOCALDEPLOY_HOME`):
-
-```bash
-localdeploy
-```
-
-From a local checkout on Windows:
+On Windows:
 
 ```powershell
 .\scripts\start.ps1
 ```
 
-That starts the API in the background if needed, waits for `/health`, and opens `/ui`.
-For API-only startup without a browser, run:
+On macOS or Linux:
 
-```powershell
-.\scripts\start.ps1 -NoBrowser
+```bash
+./scripts/start.sh
 ```
 
-For foreground logs while developing:
+For API-only startup on Windows, use `.\scripts\start.ps1 -NoBrowser`. For foreground logs, use `.\scripts\start.ps1 -Foreground`.
 
-```powershell
-.\scripts\start.ps1 -Foreground
-```
+The launcher reads `API_HOST` and `API_PORT` from `.env`. When the server binds to `0.0.0.0`, the local browser link still uses `127.0.0.1`.
 
-The launcher uses `API_HOST` and `API_PORT` from `.env`; if `API_HOST=0.0.0.0`, the browser URL
-uses `127.0.0.1`.
+llama.cpp is optional. Normal startup skips an incomplete llama.cpp configuration and leaves Ollama features available. Run `.\scripts\start_llamacpp.ps1` when you are intentionally starting a GGUF profile and want configuration errors to stop the launch.
 
-The UI does not require llama.cpp. During normal API/UI startup, incomplete optional llama.cpp
-configuration is skipped with a warning so Ollama-backed profiles and diagnostics remain usable.
-Run `.\scripts\start_llamacpp.ps1` directly when you are intentionally bringing up a GGUF profile
-and want missing server/model paths to fail fast.
+## Setup and Deploy
 
-## First-time flow
+Start here on a new installation. Check the detected hardware, get a model, and deploy it. Pulling a model through the UI creates a profile for it. Profiles are stored in `config.json`.
 
-A newcomer can go end-to-end without reading anything else:
-
-1. **Check hardware** — detects your GPU and free VRAM (or reports CPU-only).
-2. **Manual pull by model name** — type an Ollama name (e.g. `gemma3:4b`) and pull it; progress
-   streams live. The pull is **fit-checked** first and blocked only for hard "fits nowhere"
-   warnings unless **Warn only; pull anyway** is checked.
-3. **Deploy a profile** — load the model into memory with an Ollama keep-alive.
-4. **Chat tab** — talk to the model you just deployed, streaming, right in the browser.
-5. **Monitor tab** — watch live VRAM, throughput, and request history while it serves.
-6. **Benchmark & Compare tab** — load the example question set, **Validate**, then **Run**.
-
-## Tab 1 — Setup & Deploy
-
-| Control | What it does | Endpoint |
+| Area | Purpose | Main endpoint |
 |---|---|---|
-| Check hardware | NVIDIA/AMD/Intel/Apple GPU inventory, compatible VRAM pools, CPU, cores, and RAM | `GET /system/hardware` |
-| Refresh status | Loaded model(s), Ollama health, VRAM, **GPU/CPU placement** | `GET /system/status` |
-| Deploy to (Auto/GPU/CPU) | Force where the model runs (`num_gpu`: 0 = CPU, max = GPU) | `POST /models/serve` |
-| Deploy / unload / replace | Load / unload / replace the selected profile | `POST /models/{serve,stop,switch}` |
-| Pull / Cancel | Download an Ollama model, streamed, fit-gated; Cancel aborts an in-flight pull | `POST /models/pull` |
-| Fit check (per model) | Tiered estimate: green (comfortable), yellow (tight / CPU-only), red (won't fit) | `POST /system/fit-check` |
-| Delete | Remove a model from disk (frees space) | `POST /models/delete` |
-| Free memory | Unload all models from memory/VRAM | `POST /models/free` |
-| Search Hugging Face | Newer or matching GGUF models on Hugging Face | `POST /registry/check-updates` |
-| Refresh providers | Models from local Ollama/OpenAI-compatible runtimes with params, quant, context, and saved tok/s | `GET /registry/providers` |
-| Refresh installed | Models already pulled locally | `GET /registry/installed` |
+| Hardware | GPU inventory, compatible VRAM pools, CPU, RAM, and fit budget | `GET /system/hardware` |
+| Recommended | Up to three models for a use case, priority, and context size | `POST /registry/recommend` |
+| Model catalog | Search local runtimes, the Ollama library, and Hugging Face GGUF repositories | `GET /registry/providers`, `POST /registry/search-models` |
+| Quant advisor | Compare common quantizations against the current memory budget | `POST /system/quant-advisor` |
+| Pull | Download an Ollama model with streamed progress and cancellation | `POST /models/pull` |
+| Deploy | Load a profile on Auto, GPU, or CPU placement | `POST /models/serve` |
+| Switch and stop | Replace or unload a running model | `POST /models/switch`, `POST /models/stop` |
+| Delete and free | Remove model files or unload all models from memory | `POST /models/delete`, `POST /models/free` |
+| Fit checks | Estimate memory for one model, several models, or several context sizes | `POST /system/fit-check`, `POST /system/fit-batch`, `GET /system/fit-table` |
 
-The **Model fit budget** is auto-filled from the hardware probe and is used by installed-model
-badges, saved-profile scans, Hugging Face search, fit checks, and the pull gate. You can override it
-to test against a different card or current free VRAM.
+The fit budget comes from the hardware probe. You can override it to compare against another GPU or a smaller free-memory target. Green means the model should fit in VRAM, yellow means it is tight or likely to use CPU offload, and red means the estimate does not fit available GPU or system memory. Estimates are conservative and are not guarantees.
 
-`config.json` mirrors what is actually on your machine: pulling a model auto-creates its profile.
-Profiles whose model is gone (never pulled, or deleted outside the UI) are annotated everywhere and
-can be removed in one click with **Advanced → All run profiles → Remove not-pulled profiles**. For
-llama.cpp profiles the server checks whether the GGUF file still exists on disk.
+The Recommended view labels the source of each reason as estimated, published, or measured on this machine. Download and start pulls a missing model and deploys it. The catalog has runtime and size filters, sorting, pagination, and fit badges. The quant advisor uses tags that are actually published by the Ollama library instead of constructing names from a pattern.
 
-**Recommended models** (Get a model → ★ Recommended, the default segment) is the guided path for
-"which model should I install for what I'm actually doing?" Pick a use case (general assistant,
-coding, document analysis, structured extraction, reasoning, vision, multilingual, tool calling), a
-priority (balanced, best quality, fastest, lowest memory, longest context), and an expected context
-size, then **Recommend models for me** returns up to three fit-checked, labeled picks — Recommended,
-Faster, Higher quality — each with quality tier, estimated VRAM/headroom, published context window,
-and a confidence level (`POST /registry/recommend`). Every "why this model?" reason is tagged by
-provenance — **estimated** (this app's formula), **published** (the model's own spec), or **measured
-here** (from your own saved benchmark runs for that model) — so a recommendation never quietly mixes
-a guess with a fact. **Download and start** pulls (if needed) and deploys the pick in one action.
+The Your models card separates disk size from estimated runtime memory. It can sort models and delete several at once. Profiles whose backing model is missing are marked and can be removed under Advanced / All run profiles. For llama.cpp profiles, LocalDeploy also checks that the GGUF file exists.
 
-**Model catalog** (Get a model → ⌕ Model catalog) inventories every model your local
-runtimes expose (Ollama, LM Studio, vLLM, Docker Model Runner, llama.cpp, OpenAI-compatible
-servers) with search, runtime/size filters, sorting (including measured tok/s from your own
-saved benchmark runs), and pagination. Reachability chips explain how to enable each runtime;
-one click creates a run profile for any listed model (`GET /registry/providers`).
+### Deployment manifests
 
-The catalog's size chips are colored by fit against your detected hardware (green fits
-the GPU, yellow tight/CPU-only, red won't fit; one batched `POST /system/fit-batch`
-per search), and Hugging Face rows carry a row-level fit badge when the repo name
-encodes a parameter count.
+Running model cards can export a deployment manifest or generate configuration for Open WebUI, AnythingLLM, Continue, Cline, curl, Python, JavaScript, and Docker Compose.
 
-**Quant advisor** (Get a model → ⚖ Quant advisor) fit-checks every common GGUF quantization
-(Q2_K → F16) of one model size against your budget using the same estimator as fit checks, and says
-when there's headroom for a higher-quality tag than the usual Q4 default
-(`POST /system/quant-advisor`). Each quant row's **Pull it** column shows the family's real published
-tag with its true download size (fetched from ollama.com via
-`POST /registry/library-tags`); quants with no published tag say so, and an expandable
-list offers every published tag as a one-click pull.
+A manifest records the model digest, quantization, runtime settings, hardware snapshot, fit estimate, and saved measurements. The manifest section can check compatibility on another machine and recreate a deployment. Recreate may pull the model before loading it.
 
-**Disk usage** lives in the Your models card: a `N models · X GB on disk` summary, a sort control
-(largest / recently updated / name), and per-row checkboxes that reveal a bulk **Delete selected**
-bar with the total gigabytes being freed.
+| Action | Endpoint |
+|---|---|
+| Export | `POST /system/manifest/export` |
+| Validate | `POST /system/manifest/validate` |
+| Recreate | `POST /system/manifest/recreate` |
+| Integration snippets | `GET /system/integration-snippets` |
 
-**Deployment manifests.** Every running model's card in **Currently serving** has two actions:
-**Export deployment** downloads a self-contained YAML/JSON manifest (model digest, quant, runtime,
-hardware, fit estimate, measured performance from saved benchmark history —
-`POST /system/manifest/export`), and **Use elsewhere** shows copy-paste configuration for Open
-WebUI, AnythingLLM, Continue, Cline, curl, Python, JavaScript, and Docker Compose, generated from
-that model's live endpoint (`GET /system/integration-snippets`). The **Deployment manifest**
-section further down the tab accepts a pasted or uploaded manifest JSON: **Check compatibility**
-reports whether it will fit and run here — exact digest match, a different but present version,
-or not installed at all, plus a smaller-context suggestion when the original doesn't fit
-(`POST /system/manifest/validate`) — and **Recreate deployment** pulls/serves it, then reports the
-placement and VRAM actually observed here next to what the manifest recorded
-(`POST /system/manifest/recreate`).
+## Chat
 
-## Tab — Chat playground
+The Chat tab uses `POST /v1/chat/completions` with streaming enabled. Select an installed model, load it, and send a message. Conversation state remains in the page and Clear removes it.
 
-A full chat surface over the server's own OpenAI-compatible endpoint
-(`POST /v1/chat/completions` with `stream: true`) — pick a profile, type, and tokens render as they
-arrive. Conversation state lives in the page (nothing is stored); **Clear** resets it.
+Images are available for profiles marked as vision-capable. Text and document attachments are added to the message as text blocks. An optional system prompt is sent with every turn. Replies support basic Markdown, fenced code blocks, and copy buttons. The timing line separates model load time, first-token latency, and generation throughput when the backend reports them.
 
-- The profile picker is the same annotated list as everywhere else, so a not-pulled profile is
-  labeled before you try it. The first message to a cold model includes Ollama's load time; the
-  reply's meta line separates that out (`first token X s`) from the generation speed (`tok/s`).
-- **Images** can be attached to a message when the selected profile is marked vision-capable
-  (`supports_vision` — editable via Edit tuning). Attachments preview as thumbnails and are sent as
-  data-URI `image_url` parts, the same shape any OpenAI client would use.
-- An optional **system prompt** (⚙ System in the header) is sent with every turn.
-- The welcome screen offers clickable suggestion prompts; replies render fenced code
-  blocks with a language tag and copy button; each reply's meta line shows 🕒 elapsed,
-  first-token latency, and ⚡ tok/s.
-- Every *served* model's card (Setup & Deploy → Currently serving) shows the full API
-  endpoint with ⧉ copy buttons for the URL and a ready-to-run curl.
-- **Enter** sends, **Shift+Enter** inserts a newline, and the Send button becomes **Stop** while a
-  reply is streaming.
+Press Enter to send and Shift+Enter for a newline. While a reply is streaming, the Send button becomes Stop.
 
-## Tab 2 — Benchmark & Compare
+## Benchmark and Compare
 
-The benchmark tab is a local experiment workspace. Its primary run history lives in
-browser `localStorage` under `localdeploy.benchmarkRuns.v1`; there is no backend database.
+The benchmark workspace runs saved profiles against the built-in question set or a custom JSON question set. Runs are sequential by default so several models do not compete for VRAM.
 
-Optionally, the **Also store on server** toggle (History tile) mirrors completed runs to
-`reports/benchmark-history/` as one JSON file per run (`/benchmark/history` endpoints) — so
-history survives the browser and can be shared or inspected as plain files. Turning the toggle on
-pushes this browser's existing runs and pulls any runs stored by other browsers; deleting a run in
-the UI also deletes its server copy.
+The primary history is stored in browser `localStorage` under `localdeploy.benchmarkRuns.v1`. Turn on Also store on server if you want completed runs copied to `reports/benchmark-history/`. Enabling it merges browser and server history. Deleting a mirrored run also deletes its server copy.
 
-- **Question set** is open by default. Leave the editor empty to use the built-in LocalDeploy
-  suite, or use **Use LocalDeploy test bench** to load the built-in JSON into the editor for
-  inspection/editing. **Validate** checks custom JSON against the schema and grader registry
-  (`POST /benchmark/validate`).
-- **Benchmark runner** replaces the old single-profile form. Select one or more saved profiles as
-  chips, review the built-in/custom test-set summary, choose **Auto**, **CPU**, **GPU**, or
-  **CPU + GPU**, choose 1-10 repetitions, then click **Run benchmark suite**. Profiles whose model isn't on the machine are
-  hidden by default behind a "Show N hidden (model not pulled)" toggle, so the picker only offers
-  models that can actually run.
-- **Run queue** creates one row per model/device variant and runs sequentially by default to avoid
-  VRAM contention. Each row shows queued/deploying/running/finished/failed/stopped state, current
-  test progress, elapsed time, and a distinct visual treatment for active versus finished work.
-  Waiting rows can be moved up/down or removed before they run; finished rows can be dismissed
-  individually or all at once with **Clear finished**, and failed rows show their error reason
-  inline. The larger active-run panel mirrors the running item and includes a **Stop** button that
-  ends just that run and continues the queue (vs. the global **Cancel** that stops the whole queue).
-- **Benchmark device** controls placement for each queued run. **Auto** leaves the current/default
-  Ollama placement alone. **CPU** and **GPU** reload the model on that device *and* pin the same
-  `num_gpu` on every inference call, so the measured run stays on the requested device end-to-end
-  (not just at warm-up). **CPU + GPU** is implemented as two queued batches: one with `device=cpu`,
-  one with `device=gpu`. If Ollama can't fully honor the request (e.g. a model too big for pure GPU
-  lands on **Split**), the run still proceeds and is labeled with the *actual* placement reported by
-  `/system/status` — so nothing is mislabeled and a reasonable device choice doesn't fail outright.
-- Benchmark deployments are temporary. After each benchmarked Ollama profile finishes, the server
-  unloads the benchmark model so the benchmark tab does not become a permanent deployment action.
-- Each run records Ollama version, full model digest, quant, context, initial warm/cold state,
-  LocalDeploy version, and the complete hardware snapshot. Repetitions add latency, accuracy, and
-  token-rate variance; native backend tok/s is used when available.
-- **Results Dashboard** is the main analysis surface as soon as results start streaming:
-  - Leaderboard sorted by pass count, average accuracy, then average latency.
-  - Winner badges for most accurate, fastest, and best tokens/second.
-  - Category heatmap with accessible red/yellow/green accuracy cells.
-  - SVG speed/quality scatter rendered locally with no chart dependency.
-  - Collapsed advanced per-test matrix for pass/fail and accuracy across selected runs.
-- **Detailed results** remains below the dashboard and adds filters for model, category, pass/fail,
-  and slowest results. Rows still show latency, tok/s, accuracy, failure reason, warning, and an
-  expandable response preview.
+To run a benchmark:
 
-### Question-set schema
+1. Select one or more installed profiles.
+2. Leave the question editor empty for the built-in suite, or load and validate a custom set.
+3. Choose Auto, CPU, GPU, or CPU + GPU placement.
+4. Choose the number of repetitions.
+5. Start the suite and watch the queue.
+
+CPU and GPU runs pin the requested Ollama `num_gpu` setting during load and inference. LocalDeploy records the actual placement reported by the runtime. If a requested GPU run lands on split CPU and GPU placement, the report says so.
+
+Benchmark deployments are temporary. Each Ollama model is unloaded after its profile finishes. A stopped item ends without stopping the rest of the queue; Cancel stops the queue. Waiting items can be reordered or removed.
+
+Each completed run records the LocalDeploy and Ollama versions, model digest, quantization, context, initial warm or cold state, hardware snapshot, requested placement, actual placement, latency, accuracy, and backend token rate when available. Repeated runs add median, percentile, range, and variance data.
+
+The results area includes a leaderboard, category heatmap, speed and quality plot, per-test matrix, response previews, and filters. Select at least two runs to compare changes in pass count, accuracy, latency, throughput, runtime, digest, quantization, and hardware.
+
+### Custom question sets
 
 ```json
 {
@@ -217,94 +107,47 @@ the UI also deletes its server copy.
 }
 ```
 
-Graders are selected by `type` from a fixed registry (uploads stay safe JSON — no code execution):
+Uploaded question sets contain data only. A fixed registry selects the grader, so an uploaded file cannot add executable grader code.
 
-| Grader `type` | Fields | Passes when |
+| Grader type | Fields | Result |
 |---|---|---|
-| `contains_all` | `keywords`, `case_sensitive?` | fraction of keywords present (1.0 = all) |
-| `json_array_min_len` | `min` | response is a JSON array with ≥ `min` items |
-| `number_within` | `expected`, `tolerance?` | a parsed number is within tolerance |
-| `exact_match` | `expected`, `case_sensitive?` | trimmed response equals `expected` |
-| `classification_set` | `expected` (list) | the response's label set equals `expected` |
+| `contains_all` | `keywords`, optional `case_sensitive` | Fraction of required keywords found |
+| `json_array_min_len` | `min` | Passes when the response is a JSON array with enough items |
+| `number_within` | `expected`, optional `tolerance` | Passes when a parsed number is within tolerance |
+| `exact_match` | `expected`, optional `case_sensitive` | Passes when the trimmed response matches |
+| `classification_set` | `expected` list | Passes when the returned label set matches |
 
-## Report cards & comparison (Tab 2)
+### Import and export
 
-- **Export run** downloads a self-contained `.html` report card for the active run: model,
-  hardware, requested/actual device tag, per-test scores (latency, **tok/s**, accuracy), and
-  category summary. The card embeds JSON so it stays reproducible and re-importable
-  (`POST /benchmark/export`).
-- **Export selected** downloads one card for a single selected run or a `.json` bundle when
-  multiple runs are selected. Bundles use `kind: "localdeploy.run_bundle"`.
-- **Import card(s)** accepts exported `.html` cards and `.json` bundles. Imported runs appear in
-  the same local run library as fresh benchmark results.
-- **Managing history**: each run in the library has an **×** to remove just that run; **Clear
-  history** wipes them all (with a confirm, since it also drops imported cards). **Select all** /
-  **Deselect all** drive which runs feed the dashboard and comparison.
-- **Compare selected** replaces the old two-slot compare form. Select 2 or more current or imported
-  runs, pin a baseline, and compare deltas for pass count, accuracy, latency, and tok/s. The
-  response detail drawer can show the same test's model outputs side by side. Fresh benchmark
-  results are automatically added to the selected comparison set when there are prior runs.
+A single run exports as a self-contained HTML report card with embedded JSON. Several selected runs export as a JSON bundle with `kind: "localdeploy.run_bundle"`. Both formats can be imported back into the run library. Imported and current runs use the same comparison views.
 
-## Tab — Monitor
+## Monitor
 
-Live view of what's happening after a model is loaded and while it's serving requests
-(`GET /system/monitor`, polled every 5 seconds while the tab is open). Before anything is deployed
-it explains what to do instead of showing an empty table.
+Monitor polls `GET /system/monitor` every five seconds while its tab is open. It shows current CPU, RAM, GPU, VRAM, loaded models, recent request timing, and short rolling charts.
 
-- **Overview**: current VRAM used/total, GPU utilization, RAM used/total, and CPU utilization, plus
-  short rolling charts (VRAM %, GPU utilization %, generation tok/s) built from samples taken while
-  this tab is open — history does not accumulate in the background when nobody is watching.
-- **Loaded models**: one card per running model with placement, VRAM in use, uptime, recent tok/s,
-  time-to-first-token, and request/failure counts, plus a **Stop** action.
-- **Recent requests**: the last 50 calls with timestamp, model, source (chat/benchmark/API),
-  success, prompt/output token counts, TTFT, tok/s, and latency. **Numeric metadata only** — prompts
-  and responses are never recorded here, matching the no-telemetry stance for the whole app.
-- **Alerts**: sustained VRAM pressure (>95% for 3+ minutes), a model running on a different device
-  than requested, generation speed well below its own recent median, and multiple backend calls
-  that are genuinely in flight at the same time.
-- **Session summaries**: when a model is stopped, a summary (peak VRAM, median tok/s, median TTFT,
-  request/failure counts, uptime) is saved to `reports/monitor-sessions/`. Calibration uses Ollama's
-  model-specific VRAM allocation at load time; whole-machine session peaks remain diagnostic only.
+Request history contains numeric metadata only. Prompts and responses are not recorded. The tab can warn about sustained VRAM pressure, unexpected placement, throughput below the model's recent median, and concurrent backend calls.
 
-## Auto-pick a profile (Tab 1)
+When a model stops, a session summary is written to `reports/monitor-sessions/`. It includes peak memory, median throughput, median time to first token, request counts, failures, and uptime. Calibration uses model-specific Ollama memory allocation rather than whole-machine peaks.
 
-**Auto-pick a profile → Find best fit** fit-checks enabled saved profiles, runs a short benchmark
-on candidates that can answer, and ranks them by accuracy, speed, and VRAM headroom. It recommends a
-saved profile but does not download models or search Hugging Face (`POST /system/recommend`).
-Requires the API + Ollama running.
+## Auto-pick
 
-## Optional token auth
+Find best fit checks enabled profiles, runs a short benchmark on candidates that are available, and ranks them by accuracy, speed, and memory headroom. It does not search for or download models. The endpoint is `POST /system/recommend`.
 
-By default the API has no auth. If the server sets `API_TOKEN`, open the UI once at
-`/ui?token=<secret>` — the token is stored locally and sent on every request (`X-API-Token`). If a
-request is rejected (401), the UI prompts you for the token and remembers it.
+## Token and offline settings
 
-This is one shared local token over HTTP. There is no TLS, per-user identity, or tenant isolation.
-Keep LocalDeploy on loopback and do not expose it through a public tunnel or internet-facing proxy.
+When `API_TOKEN` is set, open `/ui?token=<secret>` once. The UI stores the token in that browser and sends it with later requests. A 401 response opens the token prompt again.
 
-## Update check
+This is a shared local token sent over HTTP. Keep the service on loopback. See [../SECURITY.md](../SECURITY.md) before changing network exposure.
 
-A chip in the top bar (`GET /system/update-check`) compares the running version against this
-project's GitHub releases once per page load and shows itself only when a newer version exists —
-click it to open the release. No data about your machine is sent; see Offline mode below to
-disable it.
+`OFFLINE=true` disables LocalDeploy's model-search and update-check requests. It does not configure a separately started inference runtime. The Docker setup and Windows launcher set `OLLAMA_NO_CLOUD=true` when they start Ollama.
 
-## Offline mode
+Set `OFFLINE=true` to disable model search requests and the GitHub release check. Local backend calls on loopback continue to work. Run `python scripts/egress_selftest.py` to check this mode.
 
-Set `OFFLINE=true` to block all outbound internet calls (the Hugging Face/Ollama-library search and
-the update check are both skipped). The UI surfaces this in the search result. Verify with
-`python scripts/egress_selftest.py`.
+## Shortcuts and transport
 
-## Keyboard shortcuts
+| Input | Action |
+|---|---|
+| Enter in the Pull field | Start a pull |
+| Ctrl+Enter or Command+Enter in the question editor | Start a benchmark |
 
-- **Enter** in the Pull field — start the pull.
-- **⌘/Ctrl + Enter** in the question editor — run the benchmark.
-
-## Notes
-
-- Streaming endpoints (`/models/pull`, `/benchmark/run`) use Server-Sent Events; the UI reads the
-  stream incrementally and renders progress as it arrives.
-- All errors surface as toasts (bottom-right) and inline result messages; no action throws an
-  unhandled error if Ollama or the network is down.
-- The benchmark run calls the server's own `/chat` over `API_HOST:API_PORT`, so the API must be
-  reachable at its configured address (the same assumption the CLI `benchmark.py` makes).
+Pull and benchmark progress use Server-Sent Events. Errors are shown inline or as toasts. The benchmark runner calls the same local API used by the rest of the application, so the configured API address must be reachable from the LocalDeploy process.

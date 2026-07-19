@@ -139,7 +139,7 @@ def default_profile_for(
 def ensure_profile_for_model(model_id: str) -> Tuple[Optional[str], bool, Optional[str]]:
     """Ensure the live config has a profile for `model_id`. Best-effort.
 
-    Returns ``(profile_name, created, error)``. Never raises — auto-creation is a
+    Returns ``(profile_name, created, error)``. Never raises - auto-creation is a
     convenience that must never turn a successful pull into a failure. When the
     active config is the read-only example fixture, this no-ops (created=False).
     """

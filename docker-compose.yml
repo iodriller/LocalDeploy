@@ -22,6 +22,8 @@ services:
     environment:
       - API_HOST=0.0.0.0
       - ENABLE_WEB_UI=true
+      # Keep the bundled Ollama runtime local as well as LocalDeploy itself.
+      - OLLAMA_NO_CLOUD=true
       # Required if you switch the port mapping above to a LAN-reachable bind:
       # - API_TOKEN=change-me
       # Pre-pull models on first boot (space-separated), e.g.:

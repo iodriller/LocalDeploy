@@ -89,7 +89,7 @@ def _category_summary(tests: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
 def _card_id(payload: Dict[str, Any], tests: List[Dict[str, Any]]) -> str:
     """Deterministic id from the run's content (not generated_at), so exporting
-    — or re-importing — the same completed run twice produces the same id and
+    - or re-importing - the same completed run twice produces the same id and
     the client's existing history dedup (matching on id) actually catches it."""
     basis = json.dumps(
         {
@@ -205,7 +205,7 @@ def render_md(card: Dict[str, Any]) -> str:
         tps_cell = t.get("approx_tokens_per_second")
         lines.append(
             f"| {md(t.get('name'))} | {md(t.get('category'))} | {res} | "
-            f"{md(t.get('elapsed_seconds'))}s | {md(tps_cell) if tps_cell is not None else '—'} | "
+            f"{md(t.get('elapsed_seconds'))}s | {md(tps_cell) if tps_cell is not None else '-'} | "
             f"{md(t.get('accuracy'))} |"
         )
     return "\n".join(lines) + "\n"
@@ -224,7 +224,7 @@ def render_html(card: Dict[str, Any]) -> str:
     variance = _mapping(card.get("variance"))
 
     def _tps_cell(value: Any) -> str:
-        return _html.escape(str(value)) if value is not None else "—"
+        return _html.escape(str(value)) if value is not None else "-"
 
     rows = "".join(
         f"<tr><td>{_html.escape(str(t.get('name')))}</td>"
@@ -316,7 +316,7 @@ def _delta(a: Any, b: Any) -> Any:
 
 
 # A "regression" is only meaningful once you know what else changed (an
-# Ollama upgrade, a different driver, a different quant) — these are the
+# Ollama upgrade, a different driver, a different quant) - these are the
 # provenance dimensions worth calling out explicitly between two runs.
 def _dimension_diffs(card_a: Dict[str, Any], card_b: Dict[str, Any]) -> List[Dict[str, Any]]:
     prov_a = _mapping(card_a.get("provenance"))
