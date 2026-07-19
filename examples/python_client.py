@@ -17,8 +17,17 @@ import requests
 BASE_URL = os.getenv("LOCALDEPLOY_BASE_URL", "http://127.0.0.1:8000")
 
 
+def api_token() -> str:
+    return os.getenv("LOCALDEPLOY_API_TOKEN") or os.getenv("API_TOKEN") or ""
+
+
+def auth_headers() -> Dict[str, str]:
+    token = api_token()
+    return {"Authorization": f"Bearer {token}"} if token else {}
+
+
 def list_profiles() -> Dict[str, Any]:
-    response = requests.get(f"{BASE_URL}/profiles", timeout=10)
+    response = requests.get(f"{BASE_URL}/profiles", headers=auth_headers(), timeout=10)
     response.raise_for_status()
     return response.json()
 
@@ -29,7 +38,7 @@ def chat(prompt: str, max_output_tokens: int = 128) -> str:
         "safe_mode": True,
         "max_output_tokens": max_output_tokens,
     }
-    response = requests.post(f"{BASE_URL}/chat", json=payload, timeout=180)
+    response = requests.post(f"{BASE_URL}/chat", json=payload, headers=auth_headers(), timeout=180)
     response.raise_for_status()
     data = response.json()
     if not data.get("success"):
@@ -37,7 +46,7 @@ def chat(prompt: str, max_output_tokens: int = 128) -> str:
     return str(data.get("response") or "")
 
 
-def openai_sdk_chat(prompt: str) -> str:
+def openai_sdk_chat(prompt: str, model: str) -> str:
     """Use the official openai SDK against LocalDeploy's OpenAI-compatible endpoint.
 
     Install the SDK first: pip install openai
@@ -47,9 +56,12 @@ def openai_sdk_chat(prompt: str) -> str:
     except ImportError:
         return "(openai SDK not installed; pip install openai)"
 
-    client = OpenAI(base_url=f"{BASE_URL}/v1", api_key="not-used-locally")
+    if not model:
+        return "(no default profile; pull a model first)"
+
+    client = OpenAI(base_url=f"{BASE_URL}/v1", api_key=api_token() or "not-used-locally")
     response = client.chat.completions.create(
-        model="gemma3_4b_ollama_safe",
+        model=model,
         messages=[
             {"role": "system", "content": "You are concise."},
             {"role": "user", "content": prompt},
@@ -67,7 +79,8 @@ def main() -> int:
         print("Start it with: .\\scripts\\start.ps1")
         return 1
 
-    print(f"Default profile: {profiles.get('default_profile')}")
+    default_profile = str(profiles.get("default_profile") or "")
+    print(f"Default profile: {default_profile or '(none)'}")
     enabled = [name for name, p in profiles.get("profiles", {}).items() if p.get("enabled")]
     print(f"Enabled profiles: {', '.join(enabled) or '(none)'}")
     print()
@@ -77,7 +90,7 @@ def main() -> int:
     print()
 
     print("OpenAI SDK ->")
-    print(openai_sdk_chat("Name three small open-weight LLMs."))
+    print(openai_sdk_chat("Name three small open-weight LLMs.", default_profile))
     return 0
 
 

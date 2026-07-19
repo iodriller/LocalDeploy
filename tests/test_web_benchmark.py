@@ -102,7 +102,7 @@ def test_run_with_device_deploys_before_benchmark(monkeypatch) -> None:
     assert response.status_code == 200
     assert deploys == [{"model_id": "gemma3:4b", "keep_alive": "60m", "num_gpu": 0}]
     # Deploy happens just-in-time for each profile (right after its profile_start,
-    # before its first test) rather than for every selected profile up front —
+    # before its first test) rather than for every selected profile up front -
     # this keeps a multi-profile forced-device run from stacking several models
     # in VRAM/RAM at once. What must hold is: deploy completes before any test runs.
     assert text.index("deploy_start") < text.index("test_start")
@@ -166,7 +166,7 @@ def test_forced_device_multi_profile_never_stacks_deploys(monkeypatch) -> None:
 
 def test_forced_device_pins_num_gpu_on_each_inference(monkeypatch) -> None:
     # The fix: a forced CPU run must pin num_gpu on the inference calls too, not
-    # just the warm-up — otherwise Ollama can re-place the model on GPU mid-run.
+    # just the warm-up - otherwise Ollama can re-place the model on GPU mid-run.
     seen_num_gpu = []
 
     def fake_execute(base_url, name, profile, test, timeout, num_gpu=None):
@@ -196,7 +196,7 @@ def test_forced_device_pins_num_gpu_on_each_inference(monkeypatch) -> None:
 
 
 def test_auto_device_leaves_num_gpu_unset(monkeypatch) -> None:
-    # Auto (no device) must not pin num_gpu — unchanged behavior, Ollama decides.
+    # Auto (no device) must not pin num_gpu - unchanged behavior, Ollama decides.
     seen_num_gpu = []
 
     def fake_execute(base_url, name, profile, test, timeout, num_gpu=None):

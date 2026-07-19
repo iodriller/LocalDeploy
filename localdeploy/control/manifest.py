@@ -1,4 +1,4 @@
-"""Deployment manifests (Release R5) — capture an exact deployment so it can
+"""Deployment manifests (Release R5) - capture an exact deployment so it can
 be exported, inspected, and recreated on another machine.
 
 POST /system/manifest/export    -> assemble a manifest from a saved profile,
@@ -8,7 +8,7 @@ POST /system/manifest/export    -> assemble a manifest from a saved profile,
                                     default (per the reproducibility plan);
                                     JSON is returned alongside it.
 POST /system/manifest/validate  -> "would this manifest's deployment still
-                                    work here?" — a compatibility report, no
+                                    work here?" - a compatibility report, no
                                     side effects.
 POST /system/manifest/recreate  -> validate, then actually pull/serve to
                                     reproduce it on this machine, streamed.
@@ -19,19 +19,18 @@ GET  /system/integration-snippets -> copy-paste snippets for using a served
                                     serving logic.
 
 Every field is assembled from data this app already computes elsewhere
-(fit.py, calibration.py, hardware.py, benchmark history) — this module is
+(fit.py, calibration.py, hardware.py, benchmark history) - this module is
 orchestration, not a new estimation engine.
 """
 from __future__ import annotations
 
 import json
 import platform
-from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import yaml
 from fastapi import APIRouter
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from . import _ollama, calibration
 from .fit import FitRequest, _base_family, _parse_quant, fit_check
@@ -121,7 +120,7 @@ def _benchmark_section(run: Optional[Dict[str, Any]]) -> Dict[str, Any]:
 def manifest_export(req: ManifestExportRequest) -> Dict[str, Any]:
     profile_name, profile = _resolve_profile(req.profile, req.model_id)
     if not profile:
-        return {"success": False, "error": "Unknown profile or model_id — pull and deploy it first."}
+        return {"success": False, "error": "Unknown profile or model_id - pull and deploy it first."}
     model_id = str(profile.get("model_id") or profile_name)
     backend = str(profile.get("backend") or "ollama").lower()
     if backend != "ollama":
@@ -244,7 +243,7 @@ def _compatibility_report(manifest: Dict[str, Any]) -> Dict[str, Any]:
         diffs.append({"symbol": "info", "text": f"'{model_id}' is installed here, but under a different digest than the manifest recorded."})
         model_available = True
     else:
-        diffs.append({"symbol": "info", "text": f"'{model_id}' is not installed here yet — it will need to be pulled."})
+        diffs.append({"symbol": "info", "text": f"'{model_id}' is not installed here yet - it will need to be pulled."})
         model_available = False
 
     # Safe substitution: if the original context doesn't fit, does a smaller one?
@@ -369,7 +368,6 @@ def _api_base(request_host: Optional[str] = None) -> str:
 
 def _integration_snippet(kind: str, base_url: str, model_id: str, context: int, has_token: bool) -> Dict[str, str]:
     v1 = f"{base_url}/v1"
-    auth_header = 'Authorization: Bearer YOUR_API_TOKEN' if has_token else "(no token configured — no Authorization header needed)"
     api_key_line = "YOUR_API_TOKEN" if has_token else "not-needed"
     if kind == "open-webui":
         return {

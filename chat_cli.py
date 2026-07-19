@@ -1,4 +1,4 @@
-"""Compatibility shim — the implementation lives in ``localdeploy.chat_cli``.
+"""Compatibility shim - the implementation lives in ``localdeploy.chat_cli``.
 
 ``sys.modules`` aliasing makes ``import chat_cli`` yield the *same* module object
 as ``localdeploy.chat_cli``, so attribute access, monkeypatching, and ``from

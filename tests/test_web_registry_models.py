@@ -224,7 +224,7 @@ def test_pull_streams_and_terminates() -> None:
 
 def test_pull_of_unparseable_model_name_is_not_silent() -> None:
     # "llama3:latest" encodes no parameter count, so fit-check can't estimate
-    # size at all. That must not be a silent, unwarned pass-through — it must
+    # size at all. That must not be a silent, unwarned pass-through - it must
     # neither hard-block (we don't know it won't fit) nor proceed with zero
     # signal that fit couldn't be verified.
     response = client.post("/models/pull", json={"model": "llama3:latest", "free_vram_mb": 8192})

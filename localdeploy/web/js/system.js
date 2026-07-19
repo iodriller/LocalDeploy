@@ -163,13 +163,13 @@ function updateNextActionCard() {
   } else if (!steps.model) {
     html = nextActionHtml(
       "Get your first model",
-      "No models installed yet — get a recommended one that fits your hardware.",
+      "No models installed yet - get a recommended one that fits your hardware.",
       "#btn-recommend-models"
     );
   } else if (!steps.deploy) {
     html = nextActionHtml(
       "Deploy a model",
-      "A model is ready — deploy it from Your models to start serving it.",
+      "A model is ready - deploy it from Your models to start serving it.",
       "#your-models-card"
     );
   }
@@ -273,7 +273,7 @@ function svgSparkline(series, { unit = "", suffix = "", color = "var(--accent)",
   const values = series.map((v) => (v == null ? null : Number(v)));
   const known = values.filter((v) => v != null);
   if (!known.length) {
-    return `<div class="muted small monitor-spark-empty">No data yet — stay on this tab to build history.</div>`;
+    return `<div class="muted small monitor-spark-empty">No data yet - stay on this tab to build history.</div>`;
   }
   const width = 320;
   const height = 64;
@@ -300,10 +300,10 @@ function renderMonitorOverview(snap) {
   $("#monitor-ollama-pill").textContent = snap.ollama_reachable ? "Ollama: connected" : "Ollama: unreachable";
   $("#monitor-ollama-pill").classList.toggle("chip-bad", !snap.ollama_reachable);
   const rows = [
-    ["VRAM used", hw.vram_used_mb != null ? `${fmtMb(hw.vram_used_mb)} / ${fmtMb(hw.vram_total_mb)}` : "—"],
+    ["VRAM used", hw.vram_used_mb != null ? `${fmtMb(hw.vram_used_mb)} / ${fmtMb(hw.vram_total_mb)}` : "-"],
     ["GPU utilization", hw.gpu_utilization_pct != null ? `${hw.gpu_utilization_pct}%` : "not reported by this GPU"],
-    ["RAM used", hw.ram_used_mb != null ? `${fmtMb(hw.ram_used_mb)} / ${fmtMb(hw.ram_total_mb)}` : "—"],
-    ["CPU utilization", hw.cpu_percent != null ? `${hw.cpu_percent}%` : "—"],
+    ["RAM used", hw.ram_used_mb != null ? `${fmtMb(hw.ram_used_mb)} / ${fmtMb(hw.ram_total_mb)}` : "-"],
+    ["CPU utilization", hw.cpu_percent != null ? `${hw.cpu_percent}%` : "-"],
   ];
   $("#monitor-overview").innerHTML = rows
     .map(([label, value]) => `<div class="monitor-stat"><span class="muted small">${esc(label)}</span><strong>${esc(value)}</strong></div>`)
@@ -336,7 +336,7 @@ function renderMonitorAlerts(alerts) {
 
 function renderMonitorModelCard(m) {
   const uptime = m.uptime_seconds != null ? fmtDuration(m.uptime_seconds) : "unknown";
-  const vram = m.size_vram_mb != null ? fmtMb(m.size_vram_mb) : "—";
+  const vram = m.size_vram_mb != null ? fmtMb(m.size_vram_mb) : "-";
   const placement = m.placement ? `<span class="badge ${m.placement === "GPU" ? "on" : m.placement === "Split" ? "split" : "cpu"}">${esc(m.placement)}</span>` : "";
   const deviceNote = m.requested_device && m.placement && m.requested_device.toUpperCase() !== m.placement.toUpperCase()
     ? `<div class="muted small">Requested ${esc(m.requested_device)}, actually on ${esc(m.placement)}</div>`
@@ -354,9 +354,9 @@ function renderMonitorModelCard(m) {
     </div>
     <div class="monitor-model-stats">
       <div><span class="muted small">VRAM</span><strong>${esc(vram)}</strong></div>
-      <div><span class="muted small">tok/s (recent)</span><strong>${m.recent_tokens_per_second != null ? esc(m.recent_tokens_per_second) : "—"}</strong></div>
+      <div><span class="muted small">tok/s (recent)</span><strong>${m.recent_tokens_per_second != null ? esc(m.recent_tokens_per_second) : "-"}</strong></div>
       <div><span class="muted small">Requests</span><strong>${esc(m.request_count)}${m.failure_count ? ` (${esc(m.failure_count)} failed)` : ""}</strong></div>
-      <div><span class="muted small">TTFT (median)</span><strong>${m.median_ttft_ms != null ? `${esc(m.median_ttft_ms)} ms` : "—"}</strong></div>
+      <div><span class="muted small">TTFT (median)</span><strong>${m.median_ttft_ms != null ? `${esc(m.median_ttft_ms)} ms` : "-"}</strong></div>
     </div>
     ${deviceNote}
     <div class="row gap wrap fit-card-actions">
@@ -370,7 +370,7 @@ function renderMonitorModels(models) {
   const body = $("#monitor-models");
   if (!models || !models.length) {
     body.innerHTML = `<div class="monitor-empty">
-      <p class="muted">Nothing to monitor yet — this fills in once a model is running.</p>
+      <p class="muted">Nothing to monitor yet - this fills in once a model is running.</p>
       <p class="muted small">Head to <b>Setup &amp; Deploy</b>, pull or pick a model, and deploy it. Come back here to watch its VRAM, throughput, and request history live.</p>
       <button class="btn primary compact" id="monitor-goto-deploy">Go to Setup &amp; Deploy</button>
     </div>`;
@@ -417,13 +417,13 @@ function renderMonitorRequests(requests) {
       const result = r.success ? `<span class="badge on">ok</span>` : `<span class="badge wont" title="${esc(r.error || "")}">error</span>`;
       return `<tr>
         <td>${esc(time)}</td>
-        <td>${esc(r.model || "—")}</td>
-        <td><span class="badge">${esc(r.source || "—")}</span></td>
+        <td>${esc(r.model || "-")}</td>
+        <td><span class="badge">${esc(r.source || "-")}</span></td>
         <td>${result}</td>
-        <td class="num">${r.prompt_tokens ?? "—"}</td>
-        <td class="num">${r.output_tokens ?? "—"}</td>
-        <td class="num">${r.ttft_ms != null ? `${r.ttft_ms} ms` : "—"}</td>
-        <td class="num">${r.tokens_per_second ?? "—"}</td>
+        <td class="num">${r.prompt_tokens ?? "-"}</td>
+        <td class="num">${r.output_tokens ?? "-"}</td>
+        <td class="num">${r.ttft_ms != null ? `${r.ttft_ms} ms` : "-"}</td>
+        <td class="num">${r.tokens_per_second ?? "-"}</td>
         <td class="num">${r.elapsed_seconds}s</td>
       </tr>`;
     })
@@ -536,7 +536,7 @@ function setOllamaPill(installed, reachable) {
 }
 
 // ---------------------------------------------------------------------------
-// Update check (Release R7 Phase A) — best-effort, silent when offline/unavailable.
+// Update check (Release R7 Phase A) - best-effort, silent when offline/unavailable.
 // ---------------------------------------------------------------------------
 
 async function checkForUpdates() {

@@ -1,4 +1,4 @@
-"""Phase 1 — hardware probe now reports CPU model, cores, and RAM."""
+"""Phase 1 - hardware probe now reports CPU model, cores, and RAM."""
 from __future__ import annotations
 
 from localdeploy.control.hardware import _cpu_and_memory, detect_hardware
@@ -37,6 +37,6 @@ def test_psutil_path_populates_ram_when_available():
     try:
         import psutil  # noqa: F401
     except Exception:
-        return  # psutil not installed — RAM legitimately None; nothing to assert
+        return  # psutil not installed - RAM legitimately None; nothing to assert
     assert info["ram_total_mb"] is not None and info["ram_total_mb"] > 0
     assert info["physical_cores"] is None or info["physical_cores"] >= 1

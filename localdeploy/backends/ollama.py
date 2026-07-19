@@ -136,7 +136,7 @@ def ollama_metrics(data: Dict[str, Any]) -> Dict[str, Any]:
     prompt_seconds = seconds("prompt_eval_duration")
     # Time to first token: Ollama's non-streaming /api/chat response has no
     # explicit first-token timestamp, but load_duration + prompt_eval_duration
-    # IS the wall-clock time before the first generated token — the model
+    # IS the wall-clock time before the first generated token - the model
     # finishes loading (if cold), processes the prompt, then starts emitting.
     # Present whenever at least one of the two components is known.
     ttft_ms = None

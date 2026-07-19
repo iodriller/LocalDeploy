@@ -1,4 +1,4 @@
-"""Phase 2 — CPU vs GPU deployment target plumbing."""
+"""Phase 2 - CPU vs GPU deployment target plumbing."""
 from __future__ import annotations
 
 from localdeploy.backends.ollama import options_payload

@@ -50,7 +50,7 @@ def test_select_candidates_respects_download_budget():
 
 
 def test_select_candidates_always_includes_at_least_one():
-    # Even a tiny download budget must not return an empty list — the first
+    # Even a tiny download budget must not return an empty list - the first
     # ranked candidate is admitted unconditionally.
     picks = bakeoff_mod._select_candidates(None, "balanced", budget_gb=24.0, download_budget_gb=0.01, max_candidates=5)
     assert len(picks) == 1
