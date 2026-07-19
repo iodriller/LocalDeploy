@@ -34,6 +34,7 @@ dependencies = [
   "python-multipart>=0.0.31",
   "huggingface_hub>=0.23",
   "psutil>=5.9",
+  "pyyaml>=6.0",
 ]
 
 [project.optional-dependencies]
@@ -41,6 +42,13 @@ dev = [
   "pytest>=7.0",
   "httpx>=0.27",
   "playwright>=1.40",
+  "pillow>=10.0",
+]
+# Desktop tray launcher + PyInstaller build (Release R7, Phase A packaging).
+# Not required to run LocalDeploy itself — only to build the bundled .exe.
+packaging = [
+  "pyinstaller>=6.0",
+  "pystray>=0.19",
   "pillow>=10.0",
 ]
 

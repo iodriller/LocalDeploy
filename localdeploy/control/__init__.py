@@ -53,3 +53,23 @@ router.include_router(profiles.router)
 from . import history  # noqa: E402
 
 router.include_router(history.router)
+
+from . import monitor  # noqa: E402
+
+router.include_router(monitor.router)
+
+from . import manifest  # noqa: E402
+
+router.include_router(manifest.router)
+
+from . import bakeoff  # noqa: E402
+
+router.include_router(bakeoff.router)
+
+from . import updates  # noqa: E402
+
+router.include_router(updates.router)
+
+from . import community  # noqa: E402
+
+router.include_router(community.router)

@@ -57,6 +57,13 @@ const state = {
   unloadingModels: new Set(),
   chatSessionOperation: null,
   pullRetry: null,
+  // Monitor tab (Release R3): server holds hardware history; tok/s history is
+  // accumulated client-side per poll since the snapshot only reports current values.
+  monitor: { timer: null, tpsHistory: [] },
+  // Deployment manifests (Release R5): the last validated, recreate-eligible manifest.
+  manifestToRecreate: null,
+  // Automated bakeoff (Release R6).
+  bakeoff: { controller: null },
 };
 
 const BENCHMARK_RUNS_KEY = "localdeploy.benchmarkRuns.v1";
@@ -144,7 +151,12 @@ function initTooltips() {
   });
   document.addEventListener("focusout", (event) => {
     const trigger = triggerFor(event.target);
-    if (trigger === activeTrigger && !pinned && !trigger.matches(":hover")) hideTooltip();
+    // event.target usually isn't a tooltip trigger at all (e.g. any other
+    // button losing focus) — trigger is null then, and null === activeTrigger
+    // is true exactly when no tooltip is open, so this must bail out before
+    // touching trigger.matches(...) instead of relying on the equality check.
+    if (!trigger || trigger !== activeTrigger || pinned || trigger.matches(":hover")) return;
+    hideTooltip();
   });
   document.addEventListener("click", (event) => {
     const trigger = triggerFor(event.target);
@@ -313,12 +325,14 @@ function summaryFromTests(tests) {
   const successes = rows.filter((t) => t.success);
   const mean = (arr) => (arr.length ? arr.reduce((s, v) => s + Number(v || 0), 0) / arr.length : 0);
   const tps = successes.map((t) => t.approx_tokens_per_second).filter((v) => v != null);
+  const ttft = successes.map((t) => t.metrics?.ttft_ms).filter((v) => v != null);
   return {
     tests: rows.length,
     passed: successes.length,
     avg_accuracy: Number(mean(rows.map((t) => t.accuracy || 0)).toFixed(3)),
     avg_latency_s: Number(mean(rows.map((t) => t.elapsed_seconds || 0)).toFixed(3)),
     avg_tokens_per_second: tps.length ? Number(mean(tps).toFixed(2)) : null,
+    avg_ttft_ms: ttft.length ? Number(mean(ttft).toFixed(1)) : null,
   };
 }
 
@@ -358,6 +372,7 @@ function normalizeRunRecord(input, source = "current-run") {
     variance: input.variance || summary.variance || {},
     aggregates: input.aggregates || [],
     repetitions: input.repetitions || summary.repetitions || 1,
+    peakVramMb: input.peakVramMb ?? input.peak_vram_mb ?? null,
     tests,
     summary,
     category_summary: input.category_summary || input.categorySummary || categorySummary(tests),
@@ -447,19 +462,27 @@ function skeletonHtml(lines = 2) {
   return `<div class="skeleton-block">${Array.from({ length: lines }, () => `<div class="skeleton-line"></div>`).join("")}</div>`;
 }
 
+function dismissToast(node) {
+  if (!node || node.classList.contains("toast-hide")) return;
+  node.classList.add("toast-hide");
+  node.addEventListener("transitionend", () => node.remove(), { once: true });
+  // Fallback in case the transitionend event doesn't fire (e.g. reduced-motion).
+  setTimeout(() => node.remove(), 400);
+}
+
 function toast(message, kind = "info") {
   const node = document.createElement("div");
   node.className = `toast ${kind}`;
   node.textContent = message;
-  // Errors are announced assertively and stay until dismissed (click) so they
-  // aren't missed; info/success auto-dismiss politely.
-  if (kind === "error") {
-    node.setAttribute("role", "alert");
-    node.title = "Click to dismiss";
-    node.addEventListener("click", () => node.remove());
-  } else {
-    setTimeout(() => node.remove(), 5000);
-  }
+  // Errors are announced assertively and get more time on screen, but every
+  // toast eventually fades on its own — a pile of undismissed error toasts
+  // is worse than losing one you didn't read in time. Click still dismisses
+  // early either way.
+  const timeoutMs = kind === "error" ? 9000 : 5000;
+  if (kind === "error") node.setAttribute("role", "alert");
+  node.title = "Click to dismiss";
+  node.addEventListener("click", () => dismissToast(node));
+  setTimeout(() => dismissToast(node), timeoutMs);
   $("#toasts").appendChild(node);
 }
 
@@ -749,7 +772,7 @@ function updateNextActionCard() {
     html = nextActionHtml(
       "Get your first model",
       "No models installed yet — get a recommended one that fits your hardware.",
-      "#btn-starter-pack"
+      "#btn-recommend-models"
     );
   } else if (!steps.deploy) {
     html = nextActionHtml(
@@ -883,6 +906,197 @@ function activateTab(name) {
     void refreshStatus();
   } else if (name === "chat") {
     void refreshLiveModelState(true).then(() => $("#chat-input")?.focus());
+  }
+  if (name === "monitor") {
+    startMonitorPolling();
+  } else {
+    stopMonitorPolling();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Monitor tab (Release R3)
+// ---------------------------------------------------------------------------
+const MONITOR_POLL_MS = 5000;
+const MONITOR_TPS_HISTORY_MAX = 180;
+
+function svgSparkline(series, { unit = "", suffix = "", color = "var(--accent)", max = null } = {}) {
+  const values = series.map((v) => (v == null ? null : Number(v)));
+  const known = values.filter((v) => v != null);
+  if (!known.length) {
+    return `<div class="muted small monitor-spark-empty">No data yet — stay on this tab to build history.</div>`;
+  }
+  const width = 320;
+  const height = 64;
+  const vmax = max != null ? max : Math.max(...known, 1);
+  const n = values.length;
+  const points = values
+    .map((v, i) => {
+      if (v == null) return null;
+      const x = n <= 1 ? width : (i / (n - 1)) * width;
+      const y = height - Math.max(0, Math.min(1, v / (vmax || 1))) * height;
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    })
+    .filter(Boolean)
+    .join(" ");
+  const last = known[known.length - 1];
+  return `<svg class="monitor-spark" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" role="img" aria-label="Rolling chart, latest ${esc(String(last))}${esc(unit)}">
+      <polyline points="${esc(points)}" fill="none" stroke="${color}" stroke-width="2" vector-effect="non-scaling-stroke"></polyline>
+    </svg>
+    <div class="muted small monitor-spark-caption">latest: ${esc(String(last))}${esc(unit)}${suffix ? ` · ${esc(suffix)}` : ""}</div>`;
+}
+
+function renderMonitorOverview(snap) {
+  const hw = snap.hardware || {};
+  $("#monitor-ollama-pill").textContent = snap.ollama_reachable ? "Ollama: connected" : "Ollama: unreachable";
+  $("#monitor-ollama-pill").classList.toggle("chip-bad", !snap.ollama_reachable);
+  const rows = [
+    ["VRAM used", hw.vram_used_mb != null ? `${fmtMb(hw.vram_used_mb)} / ${fmtMb(hw.vram_total_mb)}` : "—"],
+    ["GPU utilization", hw.gpu_utilization_pct != null ? `${hw.gpu_utilization_pct}%` : "not reported by this GPU"],
+    ["RAM used", hw.ram_used_mb != null ? `${fmtMb(hw.ram_used_mb)} / ${fmtMb(hw.ram_total_mb)}` : "—"],
+    ["CPU utilization", hw.cpu_percent != null ? `${hw.cpu_percent}%` : "—"],
+  ];
+  $("#monitor-overview").innerHTML = rows
+    .map(([label, value]) => `<div class="monitor-stat"><span class="muted small">${esc(label)}</span><strong>${esc(value)}</strong></div>`)
+    .join("");
+
+  const hwHistory = (snap.history && snap.history.hardware) || [];
+  $("#monitor-chart-vram").innerHTML = svgSparkline(hwHistory.map((h) => h.vram_pct), { unit: "%" });
+  $("#monitor-chart-gpu").innerHTML = svgSparkline(hwHistory.map((h) => h.gpu_utilization_pct), { unit: "%" });
+
+  const modelsForTps = snap.models || [];
+  const activeRates = modelsForTps.map((m) => m.recent_tokens_per_second).filter((v) => v != null);
+  const avgTps = activeRates.length ? activeRates.reduce((a, b) => a + b, 0) / activeRates.length : null;
+  state.monitor.tpsHistory.push(avgTps);
+  if (state.monitor.tpsHistory.length > MONITOR_TPS_HISTORY_MAX) state.monitor.tpsHistory.shift();
+  $("#monitor-chart-tps").innerHTML = svgSparkline(state.monitor.tpsHistory, { unit: " tok/s" });
+}
+
+function renderMonitorAlerts(alerts) {
+  const box = $("#monitor-alerts");
+  if (!alerts || !alerts.length) {
+    box.classList.add("hidden");
+    box.innerHTML = "";
+    return;
+  }
+  box.classList.remove("hidden");
+  box.innerHTML = alerts
+    .map((a) => `<div class="monitor-alert monitor-alert-${esc(a.level)}">${a.level === "warning" ? "⚠" : "ℹ"} ${esc(a.text)}</div>`)
+    .join("");
+}
+
+function renderMonitorModelCard(m) {
+  const uptime = m.uptime_seconds != null ? fmtDuration(m.uptime_seconds) : "unknown";
+  const vram = m.size_vram_mb != null ? fmtMb(m.size_vram_mb) : "—";
+  const placement = m.placement ? `<span class="badge ${m.placement === "GPU" ? "on" : m.placement === "Split" ? "split" : "cpu"}">${esc(m.placement)}</span>` : "";
+  const deviceNote = m.requested_device && m.placement && m.requested_device.toUpperCase() !== m.placement.toUpperCase()
+    ? `<div class="muted small">Requested ${esc(m.requested_device)}, actually on ${esc(m.placement)}</div>`
+    : "";
+  return `<div class="fit-card model-card">
+    <div class="running-top">
+      <div class="model-identity">
+        <span class="model-mark running" aria-hidden="true">M</span>
+        <div>
+          <div class="model-title">${esc(m.name)}</div>
+          <div class="muted small">Running for ${esc(uptime)}</div>
+        </div>
+      </div>
+      ${placement}
+    </div>
+    <div class="monitor-model-stats">
+      <div><span class="muted small">VRAM</span><strong>${esc(vram)}</strong></div>
+      <div><span class="muted small">tok/s (recent)</span><strong>${m.recent_tokens_per_second != null ? esc(m.recent_tokens_per_second) : "—"}</strong></div>
+      <div><span class="muted small">Requests</span><strong>${esc(m.request_count)}${m.failure_count ? ` (${esc(m.failure_count)} failed)` : ""}</strong></div>
+      <div><span class="muted small">TTFT (median)</span><strong>${m.median_ttft_ms != null ? `${esc(m.median_ttft_ms)} ms` : "—"}</strong></div>
+    </div>
+    ${deviceNote}
+    <div class="row gap wrap fit-card-actions">
+      <span class="spacer"></span>
+      <button class="btn compact monitor-stop-btn" data-model="${esc(m.name)}">Stop</button>
+    </div>
+  </div>`;
+}
+
+function renderMonitorModels(models) {
+  const body = $("#monitor-models");
+  if (!models || !models.length) {
+    body.innerHTML = `<div class="monitor-empty">
+      <p class="muted">Nothing to monitor yet — this fills in once a model is running.</p>
+      <p class="muted small">Head to <b>Setup &amp; Deploy</b>, pull or pick a model, and deploy it. Come back here to watch its VRAM, throughput, and request history live.</p>
+      <button class="btn primary compact" id="monitor-goto-deploy">Go to Setup &amp; Deploy</button>
+    </div>`;
+    $("#monitor-goto-deploy")?.addEventListener("click", () => activateTab("serve"));
+    return;
+  }
+  body.innerHTML = models.map(renderMonitorModelCard).join("");
+  $$(".monitor-stop-btn", body).forEach((b) =>
+    b.addEventListener("click", async () => {
+      busy(b, true);
+      try {
+        await postJSON("/models/stop", { model: b.dataset.model });
+        toast(`Stopped '${b.dataset.model}'.`, "success");
+      } catch (err) {
+        toast(`Stop failed: ${err.message}`, "error");
+      } finally {
+        busy(b, false);
+        void refreshMonitor();
+      }
+    })
+  );
+}
+
+function renderMonitorRequests(requests) {
+  const tbody = $("#monitor-requests-table tbody");
+  const empty = $("#monitor-requests-empty");
+  if (!requests || !requests.length) {
+    tbody.innerHTML = "";
+    $("#monitor-requests-table").classList.add("hidden");
+    empty.classList.remove("hidden");
+    return;
+  }
+  empty.classList.add("hidden");
+  $("#monitor-requests-table").classList.remove("hidden");
+  tbody.innerHTML = requests
+    .map((r) => {
+      const time = new Date(r.ts * 1000).toLocaleTimeString();
+      const result = r.success ? `<span class="badge on">ok</span>` : `<span class="badge wont" title="${esc(r.error || "")}">error</span>`;
+      return `<tr>
+        <td>${esc(time)}</td>
+        <td>${esc(r.model || "—")}</td>
+        <td><span class="badge">${esc(r.source || "—")}</span></td>
+        <td>${result}</td>
+        <td class="num">${r.prompt_tokens ?? "—"}</td>
+        <td class="num">${r.output_tokens ?? "—"}</td>
+        <td class="num">${r.ttft_ms != null ? `${r.ttft_ms} ms` : "—"}</td>
+        <td class="num">${r.tokens_per_second ?? "—"}</td>
+        <td class="num">${r.elapsed_seconds}s</td>
+      </tr>`;
+    })
+    .join("");
+}
+
+async function refreshMonitor() {
+  try {
+    const snap = await getJSON("/system/monitor");
+    renderMonitorOverview(snap);
+    renderMonitorAlerts(snap.alerts);
+    renderMonitorModels(snap.models);
+    renderMonitorRequests(snap.requests);
+  } catch (err) {
+    $("#monitor-overview").innerHTML = `<div class="muted">Monitor snapshot failed: ${esc(err.message)}</div>`;
+  }
+}
+
+function startMonitorPolling() {
+  if (state.monitor.timer) return;
+  void refreshMonitor();
+  state.monitor.timer = setInterval(() => void refreshMonitor(), MONITOR_POLL_MS);
+}
+
+function stopMonitorPolling() {
+  if (state.monitor.timer) {
+    clearInterval(state.monitor.timer);
+    state.monitor.timer = null;
   }
 }
 
@@ -1313,6 +1527,10 @@ async function refreshStatus() {
               <span>GPU residency</span><b>${m.gpu_percent != null ? `${esc(m.gpu_percent)}%` : "?"}</b>
             </div>
             ${apiSnippetHtml(m.name)}
+            <div class="row gap wrap" style="margin-top:0.4rem">
+              <button class="btn compact export-manifest-btn" data-model="${esc(m.name)}">Export deployment</button>
+              <button class="btn compact use-elsewhere-btn" data-model="${esc(m.name)}">Use elsewhere ↗</button>
+            </div>
             <div class="muted small">${esc(m.activity_note || "Ollama keeps this model warm until the keep-alive expires.")}</div>
           </div>`;
         })
@@ -1324,6 +1542,8 @@ async function refreshStatus() {
     $$(".kill-model-btn", body).forEach((b) =>
       b.addEventListener("click", () => killRunningModel(b.closest(".running-card").dataset.model, b))
     );
+    $$(".export-manifest-btn", body).forEach((b) => b.addEventListener("click", () => exportManifest(b.dataset.model, b)));
+    $$(".use-elsewhere-btn", body).forEach((b) => b.addEventListener("click", () => openIntegrationSnippets(b.dataset.model, b)));
     wireCopyButtons(body);
   } catch (err) {
     state.servedModels = [];
@@ -1981,6 +2201,178 @@ const TUNING_FIELDS = [
   { key: "gpu_layers", label: "GPU layers (number or 'all')", type: "text" },
 ];
 
+// ---------------------------------------------------------------------------
+// Deployment manifests + integration snippets (Release R5)
+// ---------------------------------------------------------------------------
+function simpleModal(title, subtitle, bodyHtml) {
+  const overlay = document.createElement("div");
+  overlay.className = "modal-overlay";
+  overlay.innerHTML = `<div class="modal-card" role="dialog" aria-modal="true">
+      <div class="card-head">
+        <div><h3 class="sub">${esc(title)}</h3>${subtitle ? `<div class="muted small">${subtitle}</div>` : ""}</div>
+        <button class="btn compact modal-close">✕</button>
+      </div>
+      ${bodyHtml}
+    </div>`;
+  document.body.appendChild(overlay);
+  const close = () => overlay.remove();
+  overlay.addEventListener("click", (e) => { if (e.target === overlay) close(); });
+  $$(".modal-close", overlay).forEach((b) => b.addEventListener("click", close));
+  return overlay;
+}
+
+async function exportManifest(modelId, btn) {
+  busy(btn, true);
+  try {
+    const { name } = profileForModel(modelId);
+    const out = await postJSON("/system/manifest/export", { profile: name, model_id: modelId });
+    if (!out.success) throw new Error(out.error || "Export failed.");
+    const overlay = simpleModal(
+      "Deployment manifest",
+      `<code>${esc(modelId)}</code> — reproducible, human-readable YAML (JSON also available below).`,
+      `<pre class="log manifest-yaml">${esc(out.yaml)}</pre>
+       <div class="row gap wrap" style="margin-top:0.5rem">
+         <button class="btn primary" id="manifest-copy-yaml">Copy YAML</button>
+         <button class="btn" id="manifest-download-yaml">Download .yaml</button>
+         <button class="btn" id="manifest-download-json">Download .json</button>
+       </div>`
+    );
+    $("#manifest-copy-yaml", overlay)?.addEventListener("click", async () => {
+      await navigator.clipboard.writeText(out.yaml);
+      toast("Manifest YAML copied.", "success");
+    });
+    $("#manifest-download-yaml", overlay)?.addEventListener("click", () =>
+      downloadFile(`localdeploy-manifest-${modelId.replace(/[^\w.-]+/g, "_")}.yaml`, out.yaml, "text/yaml")
+    );
+    $("#manifest-download-json", overlay)?.addEventListener("click", () =>
+      downloadFile(`localdeploy-manifest-${modelId.replace(/[^\w.-]+/g, "_")}.json`, out.json, "application/json")
+    );
+  } catch (err) {
+    toast(`Export failed: ${err.message}`, "error");
+  } finally {
+    busy(btn, false);
+  }
+}
+
+async function openIntegrationSnippets(modelId, btn) {
+  busy(btn, true);
+  try {
+    const { data } = profileForModel(modelId);
+    const context = data?.safe_context_limit || data?.context_limit || 8192;
+    const out = await getJSON(`/system/integration-snippets?model=${encodeURIComponent(modelId)}&context=${context}`);
+    if (!out.success) throw new Error("Could not load integration snippets.");
+    const cardsHtml = out.cards
+      .map(
+        (c, i) => `<div class="fit-card integration-card">
+          <div class="model-title">${esc(c.label)}</div>
+          <pre class="log integration-snippet">${esc(c.snippet)}</pre>
+          <button class="btn compact integration-copy-btn" data-idx="${i}">Copy</button>
+        </div>`
+      )
+      .join("");
+    const overlay = simpleModal(
+      "Use elsewhere",
+      `<code>${esc(modelId)}</code> — copy-paste config for common tools, using this app's OpenAI-compatible <code>/v1</code> endpoints.`,
+      `<div class="fit-grid">${cardsHtml}</div>`
+    );
+    $$(".integration-copy-btn", overlay).forEach((b) =>
+      b.addEventListener("click", async () => {
+        await navigator.clipboard.writeText(out.cards[Number(b.dataset.idx)].snippet);
+        toast("Copied.", "success");
+      })
+    );
+  } catch (err) {
+    toast(`Could not load integration snippets: ${err.message}`, "error");
+  } finally {
+    busy(btn, false);
+  }
+}
+
+function compatibilityReportHtml(report) {
+  const symbolFor = { ok: "✓", bad: "✕", info: "△", unknown: "?" };
+  const rows = (report.diffs || [])
+    .map((d) => `<div class="compat-row compat-${esc(d.symbol)}"><span class="compat-mark">${symbolFor[d.symbol] || "•"}</span> ${esc(d.text)}</div>`)
+    .join("");
+  const subs = (report.substitutions || []).map((s) => `<div class="compat-row compat-info"><span class="compat-mark">△</span> ${esc(s)}</div>`).join("");
+  const verdict = report.can_recreate
+    ? `<span class="badge on">Can recreate here</span>`
+    : `<span class="badge wont">Cannot recreate as-is</span>`;
+  return `<div class="row gap wrap" style="margin-bottom:0.5rem">${verdict}</div>${rows}${subs}`;
+}
+
+function parseManifestInput(text) {
+  const trimmed = (text || "").trim();
+  if (!trimmed) return null;
+  try {
+    const parsed = JSON.parse(trimmed);
+    return parsed?.manifest || parsed; // accept either the raw manifest or an export{...} envelope
+  } catch {
+    return null;
+  }
+}
+
+async function validateManifest(btn) {
+  const text = $("#manifest-import-text")?.value;
+  const manifest = parseManifestInput(text);
+  const body = $("#manifest-body");
+  if (!manifest) {
+    body.innerHTML = `<div class="muted">Paste or load a manifest JSON first (YAML export files should be re-saved/copied as JSON, or use "Download .json" from Export deployment).</div>`;
+    $("#btn-manifest-recreate").disabled = true;
+    return;
+  }
+  busy(btn, true);
+  body.innerHTML = `<div class="muted"><span class="spin-inline"></span> Checking compatibility…</div>`;
+  try {
+    const out = await postJSON("/system/manifest/validate", { manifest });
+    if (!out.success) throw new Error(out.error || "Validation failed.");
+    body.innerHTML = compatibilityReportHtml(out);
+    state.manifestToRecreate = out.can_recreate ? manifest : null;
+    $("#btn-manifest-recreate").disabled = !out.can_recreate;
+  } catch (err) {
+    body.innerHTML = `<div class="muted">${esc(err.message)}</div>`;
+    $("#btn-manifest-recreate").disabled = true;
+  } finally {
+    busy(btn, false);
+  }
+}
+
+async function recreateManifest(btn) {
+  const manifest = state.manifestToRecreate;
+  if (!manifest) return;
+  const body = $("#manifest-body");
+  busy(btn, true);
+  body.innerHTML = `<div class="muted"><span class="spin-inline"></span> Recreating deployment…</div>`;
+  const log = [];
+  try {
+    await postMaybeStream("/system/manifest/recreate", { manifest }, (evt) => {
+      if (evt.event === "pull_start") log.push(`Pulling ${evt.model}…`);
+      else if (evt.event === "pull_end") log.push(`Pulled ${evt.model}.`);
+      else if (evt.event === "serve_start") log.push(`Serving at context ${evt.context}…`);
+      else if (evt.event === "recreate_end") {
+        log.push(`Placement: ${evt.placement_observed || "unknown"} (manifest recorded ${evt.placement_expected || "unknown"}).`);
+        if (evt.observed_vram_gb != null) log.push(`Observed VRAM here: ${evt.observed_vram_gb} GB (manifest: ${evt.manifest_observed_vram_gb ?? "n/a"} GB).`);
+      } else if (evt.event === "error") log.push(`Error: ${evt.error}`);
+      body.innerHTML = `<div class="log">${log.map(esc).join("<br/>")}</div>`;
+    });
+    toast("Deployment recreated.", "success");
+    void refreshStatus();
+  } catch (err) {
+    toast(`Recreate failed: ${err.message}`, "error");
+  } finally {
+    busy(btn, false);
+  }
+}
+
+function wireManifestZone() {
+  $("#btn-manifest-validate")?.addEventListener("click", (e) => validateManifest(e.currentTarget));
+  $("#btn-manifest-recreate")?.addEventListener("click", (e) => recreateManifest(e.currentTarget));
+  $("#manifest-import-file")?.addEventListener("change", async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    $("#manifest-import-text").value = await file.text();
+  });
+}
+
 function profileForModel(modelId, profileName) {
   if (profileName && state.profileData[profileName]) return { name: profileName, data: state.profileData[profileName] };
   const hit = Object.entries(state.profileData).find(([, v]) => v.model_id === modelId);
@@ -2140,13 +2532,30 @@ async function startProfile(profile, btn) {
 // ---------------------------------------------------------------------------
 // Tab 1 — Starter pack (curated first-pull picks for the detected budget)
 // ---------------------------------------------------------------------------
-function renderStarterCard(c) {
+const REASON_KIND_LABEL = { estimated: "estimated", published: "published spec", measured: "measured here" };
+
+function reasonListHtml(reasons) {
+  if (!reasons || !reasons.length) return "";
+  return `<ul class="reason-list">${reasons
+    .map((r) => {
+      const mark = r.kind === "measured" ? "⚡" : r.kind === "published" ? "△" : "✓";
+      return `<li class="reason-item reason-${esc(r.kind)}"><span class="reason-mark">${mark}</span> ${esc(r.text)} <span class="badge reason-kind-badge" title="Provenance">${esc(REASON_KIND_LABEL[r.kind] || r.kind)}</span></li>`;
+    })
+    .join("")}</ul>`;
+}
+
+const RECOMMEND_BUCKET_TITLE = { recommended: "★ Recommended", faster: "⚡ Faster", higher_quality: "◆ Higher quality" };
+
+function renderRecommendCard(c) {
+  if (!c) return "";
   const installed = !!findInstalledModel(c.pull_name);
   const action = installed
     ? `<span class="badge on">installed</span><button class="btn primary starter-deploy-btn" data-model="${esc(c.pull_name)}">Deploy</button>`
-    : `<button class="btn primary starter-pull-btn" data-model="${esc(c.pull_name)}">Pull model</button>`;
+    : `<button class="btn primary starter-pull-btn" data-model="${esc(c.pull_name)}">Download and start</button>`;
   const vision = c.vision ? `<span class="badge">vision</span>` : "";
+  const confBadge = `<span class="badge confidence-${esc(c.confidence)}" title="How much this estimate should be trusted">confidence: ${esc(c.confidence)}</span>`;
   return `<div class="fit-card model-card recommendation-card">
+    <div class="bucket-label">${esc(RECOMMEND_BUCKET_TITLE[c.bucket] || c.bucket)}</div>
     <div class="running-top">
       <div class="model-identity">
         <span class="model-mark" aria-hidden="true">M</span>
@@ -2158,48 +2567,193 @@ function renderStarterCard(c) {
       <span class="badge" title="Hand-curated quality rating; 5 is strongest in its size class">quality ${esc(c.tier)}/5</span>
     </div>
     <div class="model-card-copy">${esc(c.description || "")}</div>
-    <div class="muted small model-card-reason">${esc(c.reasoning || "")}</div>
+    <div class="muted small model-card-reason">${esc(c.why_summary || "")}</div>
+    <details class="why-recommended">
+      <summary>Why this model?</summary>
+      ${reasonListHtml(c.reasons)}
+    </details>
     <div class="row gap wrap fit-card-actions">
       ${vision}
+      ${confBadge}
       <span class="spacer"></span>
       ${action}
     </div>
   </div>`;
 }
 
-async function starterPack(source) {
-  const btn = source?.currentTarget || source || $("#btn-starter-pack");
+function wireRecommendCardActions(body) {
+  $$(".starter-pull-btn", body).forEach((b) =>
+    b.addEventListener("click", () => pullModel(b.dataset.model, b))
+  );
+  $$(".starter-deploy-btn", body).forEach((b) =>
+    b.addEventListener("click", () => startInstalledModel(resolveInstalledName(b.dataset.model), b))
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Automated bakeoff — "Compare top models for me" (Release R6)
+// Disabled per product decision — commented out rather than deleted so it's
+// easy to re-enable later. The backend (/system/bakeoff/run) is untouched.
+// ---------------------------------------------------------------------------
+/*
+function bakeoffDownloadBudgetGb() {
+  const sel = $("#bakeoff-budget")?.value;
+  if (sel === "custom") return Math.max(1, Number($("#bakeoff-budget-custom")?.value || 50));
+  return Number(sel || 30);
+}
+
+function wireBakeoffBudgetSelect() {
+  $("#bakeoff-budget")?.addEventListener("change", (e) => {
+    $("#bakeoff-budget-custom-wrap")?.classList.toggle("hidden", e.target.value !== "custom");
+  });
+}
+
+function bakeoffCandidateRowHtml(id, state_) {
+  const st = state_ || { phase: "queued" };
+  const phaseLabel = {
+    queued: "Queued", pulling: "Downloading…", deploying: "Deploying…",
+    benchmarking: "Benchmarking…", done: "Done", failed: "Failed",
+  }[st.phase] || st.phase;
+  const cls = st.phase === "done" ? "on" : st.phase === "failed" ? "wont" : st.phase === "queued" ? "off" : "cpu";
+  const detail = st.phase === "failed" ? st.reason || "" : st.detail || "";
+  return `<div class="bakeoff-row" data-model="${esc(id)}">
+    <span class="badge ${cls}">${esc(phaseLabel)}</span>
+    <b>${esc(id)}</b>
+    <span class="muted small">${esc(detail)}</span>
+  </div>`;
+}
+
+function renderBakeoffProgress(candidateOrder, candidateStates) {
+  const body = $("#bakeoff-body");
+  body.innerHTML = `<div class="bakeoff-progress">${candidateOrder.map((id) => bakeoffCandidateRowHtml(id, candidateStates[id])).join("")}</div>`;
+}
+
+function renderBakeoffResult(evt) {
+  const body = $("#bakeoff-body");
+  const rows = (evt.ranked || [])
+    .map(
+      (r, i) => `<tr class="${r.profile === evt.winner ? "bakeoff-winner-row" : ""}">
+        <td>${i === 0 ? "🏆 " : ""}${esc(r.profile)}</td>
+        <td class="num">${esc(r.passed)}/${esc(r.tests)}</td>
+        <td class="num">${esc(r.avg_accuracy)}</td>
+        <td class="num">${esc(r.avg_latency_s)}s</td>
+        <td class="num">${r.margin_gb != null ? `${esc(r.margin_gb)} GB` : "—"}</td>
+      </tr>`
+    )
+    .join("");
+  body.innerHTML = `<div class="bakeoff-winner-card">
+      <div class="eyebrow">Winner${evt.winner_deployed ? " · deployed" : ""}</div>
+      <h3 class="sub">${esc(evt.winner)}</h3>
+    </div>
+    <div class="table-wrap"><table class="results">
+      <thead><tr><th>Model</th><th class="num">Passed</th><th class="num">Accuracy</th><th class="num">Avg latency</th><th class="num">Headroom</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table></div>
+    <div class="row gap wrap" style="margin-top:0.5rem">
+      <button class="btn compact" id="bakeoff-export-winner">Export winner's deployment</button>
+      ${evt.losers && evt.losers.length ? `<button class="btn compact danger" id="bakeoff-remove-losers">Remove ${evt.losers.length} other downloaded model(s)</button>` : ""}
+    </div>`;
+  $("#bakeoff-export-winner")?.addEventListener("click", (e) => exportManifest(evt.winner, e.currentTarget));
+  $("#bakeoff-remove-losers")?.addEventListener("click", async (e) => {
+    if (!window.confirm(`Delete these ${evt.losers.length} model(s) from disk?\n\n${evt.losers.join("\n")}`)) return;
+    busy(e.currentTarget, true);
+    for (const model of evt.losers) {
+      try {
+        await postJSON("/models/delete", { model });
+      } catch {
+        // best-effort; move on to the next loser rather than aborting the whole cleanup
+      }
+    }
+    toast("Removed losing models.", "success");
+    await refreshLiveModelState(true);
+    busy(e.currentTarget, false);
+  });
+}
+
+async function runBakeoff(source) {
+  const btn = source?.currentTarget || source || $("#btn-bakeoff-run");
+  busy(btn, true);
+  const body = $("#bakeoff-body");
+  body.innerHTML = `<div class="muted"><span class="spin-inline"></span> Selecting fit-safe candidates…</div>`;
+  const candidateStates = {};
+  let candidateOrder = [];
+  try {
+    await postMaybeStream(
+      "/system/bakeoff/run",
+      {
+        use_case: $("#rec-use-case")?.value || null,
+        priority: $("#rec-priority")?.value || "balanced",
+        expected_context: parseInt($("#rec-context")?.value || "8192", 10),
+        download_budget_gb: bakeoffDownloadBudgetGb(),
+        free_vram_mb: targetVram(),
+      },
+      (evt) => {
+        if (evt.event === "bakeoff_start") {
+          candidateOrder = evt.candidates || [];
+          candidateOrder.forEach((id) => (candidateStates[id] = { phase: "queued" }));
+          renderBakeoffProgress(candidateOrder, candidateStates);
+        } else if (evt.event === "candidate_start") {
+          candidateStates[evt.model] = { phase: "pulling", detail: `~${evt.download_gb} GB` };
+          renderBakeoffProgress(candidateOrder, candidateStates);
+        } else if (evt.event === "pull_progress") {
+          candidateStates[evt.model] = { phase: "pulling", detail: evt.status || "downloading…" };
+          renderBakeoffProgress(candidateOrder, candidateStates);
+        } else if (evt.event === "deploy_start") {
+          candidateStates[evt.model] = { phase: "deploying", detail: "Deploying…" };
+          renderBakeoffProgress(candidateOrder, candidateStates);
+        } else if (evt.event === "test_start") {
+          candidateStates[evt.model] = { phase: "benchmarking", detail: `Running ${evt.name}…` };
+          renderBakeoffProgress(candidateOrder, candidateStates);
+        } else if (evt.event === "candidate_end") {
+          candidateStates[evt.model] = { phase: "done", detail: `accuracy ${evt.avg_accuracy} · ${evt.avg_latency_s}s avg` };
+          renderBakeoffProgress(candidateOrder, candidateStates);
+        } else if (evt.event === "candidate_failed") {
+          candidateStates[evt.model] = { phase: "failed", reason: evt.reason };
+          renderBakeoffProgress(candidateOrder, candidateStates);
+        } else if (evt.event === "bakeoff_end") {
+          renderBakeoffResult(evt);
+        } else if (evt.event === "error") {
+          body.innerHTML = `<div class="muted">${esc(evt.error)}</div>`;
+        }
+      }
+    );
+  } catch (err) {
+    body.innerHTML = `<div class="muted">Bakeoff failed: ${esc(err.message)}</div>`;
+    toast(`Bakeoff failed: ${err.message}`, "error");
+  } finally {
+    busy(btn, false);
+  }
+}
+*/
+
+async function recommendModels(source) {
+  const btn = source?.currentTarget || source || $("#btn-recommend-models");
   busy(btn, true);
   const body = $("#starter-pack-body");
-  body.innerHTML = `<div class="muted"><span class="spin-inline"></span> Finding models that fit your hardware…</div>`;
+  body.innerHTML = `<div class="muted"><span class="spin-inline"></span> Finding models that fit your workload and hardware…</div>`;
   try {
-    const data = await postJSON("/registry/starter-pack", {
+    const data = await postJSON("/registry/recommend", {
+      use_case: $("#rec-use-case")?.value || null,
+      priority: $("#rec-priority")?.value || "balanced",
+      expected_context: parseInt($("#rec-context")?.value || "8192", 10),
+      usage_mode: $("#rec-usage-mode")?.value || "single_user_chat",
       free_vram_mb: targetVram(),
       margin_gb: 2.0,
-      limit: 5,
     });
-    if (!data.success || data.budget_gb == null) {
+    if (!data.success || (!data.recommended && !data.faster && !data.higher_quality)) {
       body.innerHTML = `<div class="muted">${esc(data.message || "Could not determine a fit budget.")}</div>`;
       return;
     }
     const unit = data.budget_source === "vram" ? "VRAM" : "RAM";
-    const marginNote = data.margin_relaxed ? "" : ` (after a ${esc(data.margin_gb)} GB safety margin)`;
+    const marginNote = data.margin_relaxed ? "" : ` (after a 2 GB safety margin)`;
     const header = `<div class="muted small" style="margin-bottom:0.5rem">Budget: ~${esc(data.budget_gb)} GB usable ${unit}${marginNote} from ~${esc(data.raw_budget_gb)} GB detected.</div>`;
     const note = data.message ? `<div class="muted small">${esc(data.message)}</div>` : "";
-    if (!data.candidates.length) {
-      body.innerHTML = header + note + `<div class="muted">No curated models fit this budget.</div>`;
-      return;
-    }
-    body.innerHTML = header + note + `<div class="fit-grid">` + data.candidates.map(renderStarterCard).join("") + `</div>`;
-    $$(".starter-pull-btn", body).forEach((b) =>
-      b.addEventListener("click", () => pullModel(b.dataset.model, b))
-    );
-    $$(".starter-deploy-btn", body).forEach((b) =>
-      b.addEventListener("click", () => startInstalledModel(resolveInstalledName(b.dataset.model), b))
-    );
+    const cards = [data.recommended, data.faster, data.higher_quality].filter(Boolean);
+    body.innerHTML = header + note + `<div class="fit-grid">` + cards.map(renderRecommendCard).join("") + `</div>`;
+    wireRecommendCardActions(body);
   } catch (err) {
-    body.innerHTML = `<div class="muted">Starter pack lookup failed.</div>`;
-    toast(`Starter pack failed: ${err.message}`, "error");
+    body.innerHTML = `<div class="muted">Recommendation lookup failed.</div>`;
+    toast(`Recommendation failed: ${err.message}`, "error");
   } finally {
     busy(btn, false);
   }
@@ -4220,6 +4774,8 @@ async function runQueueItem(item, questionInfo, timeout, repetitions, controller
   const body = { profiles: [item.profile], timeout, repetitions };
   if (item.requestedDevice && item.requestedDevice !== "auto") body.device = item.requestedDevice;
   if (questionInfo.questions) body.questions = questionInfo.questions;
+  const pack = $("#bench-pack")?.value;
+  if (pack && !questionInfo.questions) body.pack = pack;
 
   let total = 0;
   let done = 0;
@@ -4284,6 +4840,7 @@ async function runQueueItem(item, questionInfo, timeout, repetitions, controller
         tokens_per_second_stdev: evt.summary?.tokens_per_second_stdev ?? 0,
         by_test: item.aggregates || [],
       };
+      item.peakVramMb = evt.summary?.peak_vram_mb ?? null;
       item.current = "Benchmark complete";
       setActiveRun(item, done || total, total);
       syncLiveBenchmarkRun(item, true);
@@ -4407,6 +4964,7 @@ async function runBenchmark() {
   btn.disabled = true;
   cancelBtn.hidden = false;
   $("#btn-export").disabled = true;
+  $("#btn-contribute").disabled = true;
 
   state.queueCancelled = false;
   // The global Cancel stops the whole queue: flag it, then abort whatever run
@@ -4751,7 +5309,9 @@ function renderCompareControls() {
   const status = $("#compare-status");
   if (status) status.textContent = `${state.selectedRunIds.length} selected. Select 2 or more runs to compare.`;
   $("#btn-export-selected").disabled = selectedCompleted === 0;
-  $("#btn-export").disabled = !(state.benchmarkRuns.find((r) => r.id === state.activeRunId) || state.lastRun);
+  const hasActiveRun = !(state.benchmarkRuns.find((r) => r.id === state.activeRunId) || state.lastRun);
+  $("#btn-export").disabled = hasActiveRun;
+  $("#btn-contribute").disabled = hasActiveRun;
 }
 
 function selectedComparisonRuns() {
@@ -4759,7 +5319,30 @@ function selectedComparisonRuns() {
   return state.selectedRunIds.map((id) => runs.find((r) => r.id === id)).filter(Boolean);
 }
 
-function renderComparison(runs, baseline) {
+function regressionDiffsHtml(resp) {
+  const diffRows = (resp.dimension_diffs || [])
+    .map(
+      (d) =>
+        `<tr class="${d.changed ? "regression-changed" : ""}"><td>${esc(d.dimension)}</td><td>${esc(d.a ?? "—")}</td><td>${esc(d.b ?? "—")}</td><td>${d.changed ? "⚠ changed" : "same"}</td></tr>`
+    )
+    .join("");
+  const sd = resp.summary_delta || {};
+  const deltaCell = (v, unit = "") => (v == null ? "—" : `${v > 0 ? "+" : ""}${esc(v)}${unit}`);
+  return `<h3 class="sub">What changed (regression check)</h3>
+    <div class="row gap wrap regression-deltas">
+      <span class="badge">tok/s Δ ${deltaCell(sd.avg_tokens_per_second)}</span>
+      <span class="badge">TTFT Δ ${deltaCell(sd.avg_ttft_ms, " ms")}</span>
+      <span class="badge">peak VRAM Δ ${deltaCell(sd.peak_vram_mb, " MB")}</span>
+      <span class="badge">accuracy Δ ${deltaCell(sd.avg_accuracy)}</span>
+    </div>
+    ${
+      diffRows
+        ? `<div class="table-wrap"><table class="results"><thead><tr><th>Dimension</th><th>${esc(resp.label_a)}</th><th>${esc(resp.label_b)}</th><th></th></tr></thead><tbody>${diffRows}</tbody></table></div>`
+        : `<div class="muted small">No provenance recorded on these runs to compare dimensions.</div>`
+    }`;
+}
+
+async function renderComparison(runs, baseline) {
   if (!runs.length || !baseline) {
     $("#compare-body").innerHTML = "";
     $("#response-drawer").classList.add("hidden");
@@ -4785,10 +5368,28 @@ function renderComparison(runs, baseline) {
   $("#compare-body").innerHTML = `<div class="table-wrap"><table class="results">
     <thead><tr><th>Run</th><th class="num">Passed</th><th class="num">Accuracy Δ</th><th class="num">Latency Δ</th><th class="num">tok/s Δ</th></tr></thead>
     <tbody>${rows}</tbody></table></div>
-    <h3 class="sub">Response detail</h3><div class="response-test-list">${testButtons}</div>`;
+    <h3 class="sub">Response detail</h3><div class="response-test-list">${testButtons}</div>
+    <div id="regression-diffs"></div>`;
   $$(".response-compare-btn", $("#compare-body")).forEach((b) => {
     b.addEventListener("click", () => renderResponseDrawer(b.dataset.test, runs));
   });
+  // The richer provenance-aware diff (dimension changes, TTFT/VRAM deltas) is
+  // only meaningful pairwise — a 3+ run comparison keeps the table above only.
+  if (runs.length === 2) {
+    const other = runs.find((r) => r.id !== baseline.id) || runs[1];
+    try {
+      const resp = await postJSON("/benchmark/compare", {
+        card_a: runToCardPayload(baseline),
+        card_b: runToCardPayload(other),
+      });
+      if (resp.success) {
+        const slot = $("#regression-diffs");
+        if (slot) slot.innerHTML = regressionDiffsHtml(resp);
+      }
+    } catch {
+      // Regression detail is a bonus panel; the primary comparison table above still rendered.
+    }
+  }
 }
 
 function renderAutoComparison() {
@@ -4819,18 +5420,30 @@ function renderBenchmarkWorkspace() {
   updateBenchmarkSummary();
 }
 
+// Map a normalized run object (camelCase, client-side) to the snake_case
+// card shape report.py's build_card/benchmark_compare expect. One adapter
+// reused by export (so provenance/peak VRAM survive a round-trip through the
+// downloaded HTML) and by the regression-detection compare call below.
+function runToCardPayload(run) {
+  return {
+    profile: run.profile,
+    model_id: run.modelId,
+    device: run.actualDevice || run.requestedDevice,
+    hardware: run.hardware,
+    tests: run.tests,
+    summary: run.summary,
+    category_summary: run.category_summary,
+    provenance: run.provenance || {},
+    repetitions: run.repetitions || 1,
+    variance: run.variance || {},
+    peak_vram_mb: run.peakVramMb ?? null,
+  };
+}
+
 async function exportOneRun(run, btn) {
   busy(btn, true);
   try {
-    const out = await postJSON("/benchmark/export", {
-      profile: run.profile,
-      model_id: run.modelId,
-      device: run.actualDevice || run.requestedDevice,
-      hardware: run.hardware,
-      tests: run.tests,
-      summary: run.summary,
-      category_summary: run.category_summary,
-    });
+    const out = await postJSON("/benchmark/export", runToCardPayload(run));
     if (!out.success) throw new Error(out.error || "export failed");
     const name = (run.profile || run.modelId || "model").replace(/[^\w.-]+/g, "_");
     const devSuffix = run.actualDevice || run.requestedDevice ? `-${run.actualDevice || run.requestedDevice}` : "";
@@ -4852,6 +5465,52 @@ async function exportCard() {
     await exportOneRun(run, btn);
   } catch (err) {
     toast(`Export failed: ${err.message}`, "error");
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Community benchmark sharing — local-only preview/save (Release R8)
+// ---------------------------------------------------------------------------
+async function contributeRun() {
+  const run = state.benchmarkRuns.find((r) => r.id === state.activeRunId) || state.lastRun;
+  if (!run) {
+    toast("Select or run a benchmark first.", "error");
+    return;
+  }
+  const btn = $("#btn-contribute");
+  busy(btn, true);
+  try {
+    const out = await postJSON("/system/community/preview", { card: runToCardPayload(run) });
+    if (!out.success) throw new Error(out.error || "Preview failed.");
+    const overlay = simpleModal(
+      "Contribute this benchmark",
+      `Exactly what would be shared — review before saving. ${esc(out.note)}`,
+      `<pre class="log manifest-yaml">${esc(JSON.stringify(out.would_share, null, 2))}</pre>
+       <details style="margin-top:0.5rem"><summary class="muted small">Never included</summary>
+         <div class="muted small">${out.excluded_fields.map(esc).join(", ")}</div>
+       </details>
+       <div class="row gap wrap" style="margin-top:0.75rem">
+         <button class="btn primary" id="contribute-save-local">Save locally</button>
+       </div>
+       <div id="contribute-save-status" class="muted small"></div>`
+    );
+    $("#contribute-save-local", overlay)?.addEventListener("click", async (e) => {
+      busy(e.currentTarget, true);
+      try {
+        const saved = await postJSON("/system/community/export", { card: runToCardPayload(run) });
+        if (!saved.success) throw new Error(saved.error || "Save failed.");
+        $("#contribute-save-status", overlay).textContent = `Saved to ${saved.path}. ${saved.note}`;
+        toast("Saved anonymized benchmark locally.", "success");
+      } catch (err) {
+        $("#contribute-save-status", overlay).textContent = `Save failed: ${err.message}`;
+      } finally {
+        busy(e.currentTarget, false);
+      }
+    });
+  } catch (err) {
+    toast(`Could not build preview: ${err.message}`, "error");
+  } finally {
+    busy(btn, false);
   }
 }
 
@@ -5119,6 +5778,22 @@ async function loadGraderTypes() {
   }
 }
 
+async function loadBenchmarkPacks() {
+  const sel = $("#bench-pack");
+  if (!sel) return;
+  try {
+    const data = await getJSON("/benchmark/packs");
+    if (!data.success) return;
+    sel.innerHTML =
+      `<option value="">Full suite</option>` +
+      data.packs
+        .map((p) => `<option value="${esc(p.id)}" title="${esc(p.description)}">${esc(p.label)} (${esc(p.test_count)})</option>`)
+        .join("");
+  } catch {
+    // Packs are a convenience filter; the full suite remains the default on failure.
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Wire up
 // ---------------------------------------------------------------------------
@@ -5237,7 +5912,10 @@ $("#chat-input")?.addEventListener("keydown", (e) => {
     if (!state.chatController) sendChatMessage();
   }
 });
-$("#btn-starter-pack")?.addEventListener("click", (e) => starterPack(e));
+$("#btn-recommend-models")?.addEventListener("click", (e) => recommendModels(e));
+// Bakeoff wiring disabled along with its UI section above (see the commented-out block).
+// $("#btn-bakeoff-run")?.addEventListener("click", (e) => runBakeoff(e));
+// wireBakeoffBudgetSelect();
 $("#btn-free").addEventListener("click", freeMemory);
 $("#btn-pull").addEventListener("click", () => pullModel());
 $("#btn-pull-dismiss")?.addEventListener("click", dismissPullProgress);
@@ -5270,6 +5948,7 @@ $$(".preset-btn").forEach((b) =>
 );
 $("#btn-export").addEventListener("click", exportCard);
 $("#btn-export-selected").addEventListener("click", exportSelectedRuns);
+$("#btn-contribute").addEventListener("click", contributeRun);
 $("#btn-compare").addEventListener("click", compareSelectedRuns);
 $("#card-import").addEventListener("change", (e) => readCardFiles(e.target));
 $("#btn-clear-runs").addEventListener("click", () => {
@@ -5370,6 +6049,31 @@ function setOllamaPill(installed, reachable) {
   pill.classList.remove("hidden");
 }
 
+// ---------------------------------------------------------------------------
+// Update check (Release R7 Phase A) — best-effort, silent when offline/unavailable.
+// ---------------------------------------------------------------------------
+async function checkForUpdates() {
+  const chip = $("#update-chip");
+  if (!chip) return;
+  try {
+    const data = await getJSON("/system/update-check");
+    if (!data.checked) {
+      chip.classList.add("hidden");
+      return;
+    }
+    if (data.update_available) {
+      chip.textContent = `⬆ ${data.latest_version} available`;
+      chip.title = `LocalDeploy ${data.latest_version} is available (you're on ${data.current_version}). Click to view.`;
+      chip.classList.remove("hidden");
+      chip.onclick = () => data.url && window.open(data.url, "_blank", "noopener");
+    } else {
+      chip.classList.add("hidden");
+    }
+  } catch {
+    chip.classList.add("hidden");
+  }
+}
+
 async function checkOllamaAvailability() {
   try {
     const res = await getJSON("/system/ollama-status");
@@ -5404,6 +6108,7 @@ function wireGetModelSegments() {
 (async function init() {
   initTooltips();
   wireGetModelSegments();
+  wireManifestZone();
   loadBenchmarkRuns();
   clearChat();
   initServerHistoryToggle();
@@ -5415,5 +6120,7 @@ function wireGetModelSegments() {
     refreshInstalled(),
     loadGraderTypes(),
     checkOllamaAvailability(),
+    loadBenchmarkPacks(),
+    checkForUpdates(),
   ]);
 })();

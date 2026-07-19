@@ -1064,6 +1064,7 @@ class TestResult:
     metrics: Dict[str, Any] = field(default_factory=dict)
     tokens_per_second_source: str = "estimated"
     warm_state: Optional[str] = None
+    context_limit_used: Optional[int] = None
 
 
 @dataclass
@@ -1079,6 +1080,42 @@ class ProfileResult:
     tests: List[TestResult] = field(default_factory=list)
     fits_in_vram: bool = True
     notes: List[str] = field(default_factory=list)
+
+
+def _percentile(values: List[float], pct: float) -> Optional[float]:
+    """Linear-interpolation percentile (the common default, e.g. numpy's).
+    None for an empty list; the single value for a singleton list."""
+    if not values:
+        return None
+    ordered = sorted(values)
+    if len(ordered) == 1:
+        return ordered[0]
+    k = (len(ordered) - 1) * (pct / 100.0)
+    f = int(k)
+    c = min(f + 1, len(ordered) - 1)
+    if f == c:
+        return ordered[f]
+    return ordered[f] * (c - k) + ordered[c] * (k - f)
+
+
+def _stats_block(values: List[float], digits: int = 3) -> Dict[str, Optional[float]]:
+    """Mean/median/stdev/min/max/P90/P95 in one call — the repeated-run
+    statistics the benchmark expansion plan asks for, computed once and
+    reused for both latency and tokens/sec rather than duplicated per metric."""
+    if not values:
+        return {
+            "mean": None, "median": None, "stdev": 0.0, "min": None, "max": None,
+            "p90": None, "p95": None,
+        }
+    return {
+        "mean": round(statistics.mean(values), digits),
+        "median": round(statistics.median(values), digits),
+        "stdev": round(statistics.stdev(values), digits) if len(values) > 1 else 0.0,
+        "min": round(min(values), digits),
+        "max": round(max(values), digits),
+        "p90": round(_percentile(values, 90), digits),
+        "p95": round(_percentile(values, 95), digits),
+    }
 
 
 def nvidia_smi_used_mb() -> Optional[int]:
@@ -1119,6 +1156,7 @@ def call_chat(
     test: TestCase,
     timeout: int,
     num_gpu: Optional[int] = None,
+    context_override: Optional[int] = None,
 ) -> Dict[str, Any]:
     suffix = str(profile_cfg.get("prompt_suffix") or "")
     prompt = test.prompt + (("\n\n" + suffix) if suffix else "")
@@ -1132,6 +1170,12 @@ def call_chat(
     # the device it warmed on instead of letting Ollama re-place the model.
     if num_gpu is not None:
         payload["num_gpu"] = num_gpu
+    # Context-scaling sweep: /chat already accepts a per-request context_limit
+    # override (prepare_request), so no server-side plumbing is needed to test
+    # the same model at several context lengths without editing its profile.
+    if context_override is not None:
+        payload["context_limit"] = context_override
+        payload["allow_clamp"] = True
     try:
         response = requests.post(
             f"{base_url}/chat",
@@ -1174,6 +1218,7 @@ def execute_test(
     num_gpu: Optional[int] = None,
     repetition: int = 1,
     warm_state: Optional[str] = None,
+    context_override: Optional[int] = None,
 ) -> TestResult:
     """Run one test against one profile and grade it.
 
@@ -1181,9 +1226,10 @@ def execute_test(
     and the streaming `/benchmark/run` endpoint, so call + grading never diverge.
     It does not print PASS/FAIL or sample VRAM — those stay with the caller.
     ``num_gpu`` pins the device on the inference call (0 = CPU) for forced runs.
+    ``context_override`` pins a per-call context length for context-scaling sweeps.
     """
     started = time.perf_counter()
-    data = call_chat(base_url, profile_name, profile, test, timeout, num_gpu=num_gpu)
+    data = call_chat(base_url, profile_name, profile, test, timeout, num_gpu=num_gpu, context_override=context_override)
     elapsed = float(data.get("elapsed_seconds") or (time.perf_counter() - started))
     raw_resp = data.get("response")
     response_text = raw_resp if isinstance(raw_resp, str) else json.dumps(raw_resp or "", ensure_ascii=False)
@@ -1217,6 +1263,7 @@ def execute_test(
         metrics=metrics,
         tokens_per_second_source="backend" if native_tps is not None else "estimated",
         warm_state=warm_state,
+        context_limit_used=data.get("context_limit_used"),
     )
 
 
@@ -1364,20 +1411,21 @@ def iter_run(
                     consecutive_fail = 0
             successful = [item for item in repeated if item.success]
             rates = [item.approx_tokens_per_second for item in successful if item.approx_tokens_per_second is not None]
+            latency_stats = _stats_block([item.elapsed_seconds for item in successful], digits=3)
+            tps_stats = _stats_block(rates, digits=2)
             yield {
                 "event": "test_aggregate",
                 "profile": name,
                 "name": test.name,
                 "runs": len(repeated),
                 "successful_runs": len(successful),
-                "mean_latency_seconds": round(statistics.mean([item.elapsed_seconds for item in successful]), 3)
-                if successful
-                else None,
-                "latency_stdev_seconds": round(statistics.stdev([item.elapsed_seconds for item in successful]), 3)
-                if len(successful) > 1
-                else 0.0,
-                "mean_tokens_per_second": round(statistics.mean(rates), 2) if rates else None,
-                "tokens_per_second_stdev": round(statistics.stdev(rates), 2) if len(rates) > 1 else 0.0,
+                "mean_latency_seconds": latency_stats["mean"],
+                "latency_stdev_seconds": latency_stats["stdev"],
+                "latency_p90_seconds": latency_stats["p90"],
+                "latency_p95_seconds": latency_stats["p95"],
+                "mean_tokens_per_second": tps_stats["mean"],
+                "tokens_per_second_stdev": tps_stats["stdev"],
+                "tokens_per_second_p90": tps_stats["p90"],
                 "accuracy_stdev": round(statistics.stdev([item.accuracy for item in repeated]), 3)
                 if len(repeated) > 1
                 else 0.0,
@@ -1391,16 +1439,17 @@ def iter_run(
         successful_latencies = [t.elapsed_seconds for t in prof if t.success]
         summary = {"tests": len(prof), "passed": passed, "avg_accuracy": avg_acc}
         if repetitions > 1 or provenance is not None:
+            latency_stats = _stats_block(successful_latencies, digits=3)
+            tps_stats = _stats_block(successful_rates, digits=2)
             summary.update(
                 {
                     "unique_tests": len({t.name for t in prof}),
                     "repetitions": repetitions,
-                    "latency_stdev_seconds": round(statistics.stdev(successful_latencies), 3)
-                    if len(successful_latencies) > 1
-                    else 0.0,
-                    "tokens_per_second_stdev": round(statistics.stdev(successful_rates), 2)
-                    if len(successful_rates) > 1
-                    else 0.0,
+                    "latency_stdev_seconds": latency_stats["stdev"],
+                    "latency_p90_seconds": latency_stats["p90"],
+                    "latency_p95_seconds": latency_stats["p95"],
+                    "tokens_per_second_stdev": tps_stats["stdev"],
+                    "tokens_per_second_p90": tps_stats["p90"],
                 }
             )
         overall.append({"profile": name, **summary})
