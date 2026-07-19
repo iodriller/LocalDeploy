@@ -8,17 +8,25 @@ Step 6:  GET  /system/status  -> served model(s), Ollama health, VRAM
 
 Ollama is driven fully. llama.cpp lifecycle is process-managed by the existing
 scripts, so serve/stop return clear guidance instead of spawning processes.
+
+Also covers importing GGUF files that aren't in any registry:
+         POST /system/check-local-gguf -> validate a local .gguf path
+         POST /models/import-url        -> download a direct GGUF URL, register
+                                            it with Ollama, create a profile
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import platform
+import re
 import shutil
 import subprocess
 import time
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
+from urllib.parse import unquote, urlsplit
 
 import requests
 from fastapi import APIRouter
@@ -26,7 +34,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from ..backends.llamacpp import llama_health
-from ..utils import BackendCallError, require_gpu_only
+from ..utils import BackendCallError, app_home, env_float, offline_mode, require_gpu_only
 from . import _ollama, calibration, monitor
 from ._config import ensure_profile_for_model
 from .fit import FitRequest, _base_family, _parse_quant, fit_check
@@ -262,6 +270,190 @@ def system_status() -> Dict[str, Any]:
         },
         "require_gpu_only": require_gpu_only(),
     }
+
+
+# --- GGUF import: local file / direct URL ------------------------------------
+# Covers models in no registry (a file already on disk, or hosted on GitHub
+# Releases or another direct host). A local file becomes a llama.cpp profile
+# (no download); a URL is downloaded then registered with Ollama via
+# /api/create so it gets the same serve/stop/delete lifecycle as a pull.
+
+
+class LocalGgufCheckRequest(BaseModel):
+    path: str
+
+
+@router.post("/system/check-local-gguf")
+def check_local_gguf(req: LocalGgufCheckRequest) -> Dict[str, Any]:
+    """Validate a local GGUF path before it becomes a llama.cpp profile."""
+    raw = (req.path or "").strip().strip('"')
+    if not raw:
+        return {"success": False, "error": "Enter a file path."}
+    if not raw.lower().endswith(".gguf"):
+        return {"success": False, "error": "Path must end in .gguf."}
+    try:
+        path = Path(raw).expanduser()
+    except (OSError, ValueError) as exc:
+        return {"success": False, "error": f"Invalid path: {exc}"}
+    if not path.is_file():
+        return {"success": False, "exists": False, "error": f"File not found: {path}"}
+    return {"success": True, "exists": True, "path": str(path), "size_bytes": path.stat().st_size}
+
+
+def _imports_dir() -> Path:
+    directory = app_home() / "imports"
+    directory.mkdir(parents=True, exist_ok=True)
+    return directory
+
+
+def _safe_model_name(raw: str) -> str:
+    name = re.sub(r"[^a-zA-Z0-9._-]+", "-", (raw or "").strip()).strip("-.").lower()
+    return name or "imported-model"
+
+
+_MAX_IMPORT_GB = env_float("MAX_GGUF_IMPORT_GB", 128.0)
+_DOWNLOAD_CHUNK = 8 * 1024 * 1024
+
+
+class ImportUrlRequest(BaseModel):
+    url: str
+    model: Optional[str] = None  # target Ollama model name; derived from the URL filename if omitted
+
+
+@router.post("/models/import-url")
+def models_import_url(req: ImportUrlRequest):
+    if require_gpu_only():
+        return {"success": False, "error": "GPU-only mode is enabled; refusing GGUF import."}
+    if offline_mode():
+        return {"success": False, "error": "offline mode (OFFLINE=true): URL import skipped - no egress."}
+
+    parsed = urlsplit(req.url)
+    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        return {"success": False, "error": "Only http:// or https:// URLs are supported."}
+    filename = unquote(Path(parsed.path).name) or "model.gguf"
+    if not filename.lower().endswith(".gguf"):
+        return {"success": False, "error": f"URL does not point at a .gguf file (got '{filename}')."}
+    target_model = _safe_model_name(req.model or Path(filename).stem)
+    if not re.fullmatch(r"[a-z0-9][a-z0-9._-]*", target_model):
+        return {"success": False, "error": f"Could not derive a valid model name from '{req.model or filename}'."}
+
+    def event_stream():
+        tmp_path = _imports_dir() / f"{target_model}.{time.time_ns()}.part"
+        try:
+            yield _sse({"status": f"starting download for {target_model}", "model": target_model, "source_url": req.url})
+            try:
+                response = requests.get(req.url, stream=True, timeout=(10, 60))
+            except requests.Timeout:
+                yield _sse({"error": f"Connection to {req.url} timed out."})
+                return
+            except requests.ConnectionError as exc:
+                yield _sse({"error": f"Could not reach {req.url}: {exc}"})
+                return
+            except requests.RequestException as exc:
+                yield _sse({"error": f"Download failed: {exc}"})
+                return
+            with response:
+                if not response.ok:
+                    yield _sse({"error": f"Download failed with HTTP {response.status_code}."})
+                    return
+                try:
+                    total = int(response.headers.get("content-length") or 0)
+                except (TypeError, ValueError):
+                    total = 0
+                max_bytes = _MAX_IMPORT_GB * 1_000_000_000
+                if total and total > max_bytes:
+                    yield _sse(
+                        {
+                            "error": f"File is {total / 1e9:.1f} GB, over the {_MAX_IMPORT_GB:.0f} GB import "
+                            "limit (set MAX_GGUF_IMPORT_GB to change)."
+                        }
+                    )
+                    return
+                hasher = hashlib.sha256()
+                downloaded = 0
+                last_emit = 0.0
+                try:
+                    with open(tmp_path, "wb") as fh:
+                        for chunk in response.iter_content(chunk_size=_DOWNLOAD_CHUNK):
+                            if not chunk:
+                                continue
+                            downloaded += len(chunk)
+                            if downloaded > max_bytes:
+                                raise BackendCallError(
+                                    f"Download exceeded the {_MAX_IMPORT_GB:.0f} GB import limit."
+                                )
+                            hasher.update(chunk)
+                            fh.write(chunk)
+                            now = time.time()
+                            if now - last_emit > 0.4:
+                                last_emit = now
+                                yield _sse(
+                                    {
+                                        "status": "downloading",
+                                        "digest": "download",
+                                        "total": total or None,
+                                        "completed": downloaded,
+                                    }
+                                )
+                except BackendCallError as exc:
+                    yield _sse({"error": str(exc)})
+                    return
+                except requests.RequestException as exc:
+                    yield _sse({"error": f"Download interrupted: {exc}"})
+                    return
+                except OSError as exc:
+                    yield _sse({"error": f"Could not write downloaded file: {exc}"})
+                    return
+            digest = hasher.hexdigest()
+            yield _sse(
+                {"status": "downloaded", "digest": "download", "total": total or downloaded, "completed": downloaded}
+            )
+
+            yield _sse({"status": "uploading to Ollama"})
+            try:
+                if not _ollama.blob_exists(digest):
+                    _ollama.push_blob(tmp_path, digest)
+            except BackendCallError as exc:
+                yield _sse({"error": str(exc)})
+                return
+            except requests.ConnectionError:
+                yield _sse({"error": "Ollama is not running or is unreachable. Start Ollama and retry."})
+                return
+            except requests.RequestException as exc:
+                yield _sse({"error": f"Could not upload the file to Ollama: {exc}"})
+                return
+
+            try:
+                for event in _ollama.create_stream(target_model, {filename: f"sha256:{digest}"}):
+                    yield _sse(event)
+                    if event.get("error"):
+                        return
+            except requests.ConnectionError:
+                yield _sse({"error": "Ollama is not running or is unreachable. Start Ollama and retry."})
+                return
+            except requests.RequestException as exc:
+                yield _sse({"error": f"Ollama create failed: {exc}"})
+                return
+
+            profile_name, created, _err = ensure_profile_for_model(target_model)
+            yield _sse(
+                {
+                    "status": "success",
+                    "done": True,
+                    "model": target_model,
+                    "profile": profile_name,
+                    "profile_created": created,
+                }
+            )
+        finally:
+            try:
+                if tmp_path.exists():
+                    tmp_path.unlink()
+            except OSError:
+                pass
+            yield "data: [DONE]\n\n"
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
 # --- Step 5: pull (streamed, fit-gated) --------------------------------------

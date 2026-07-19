@@ -32,9 +32,9 @@ Start here on a new installation. Check the detected hardware, get a model, and 
 |---|---|---|
 | Hardware | GPU inventory, compatible VRAM pools, CPU, RAM, and fit budget | `GET /system/hardware` |
 | Recommended | Up to three models for a use case, priority, and context size | `POST /registry/recommend` |
-| Model catalog | Search local runtimes, the Ollama library, and Hugging Face GGUF repositories | `GET /registry/providers`, `POST /registry/search-models` |
+| Model catalog | Search local runtimes, the Ollama library, Hugging Face GGUF repositories, and ModelScope GGUF repositories | `GET /registry/providers`, `POST /registry/search-models` |
 | Quant advisor | Compare common quantizations against the current memory budget | `POST /system/quant-advisor` |
-| Pull | Download an Ollama model with streamed progress and cancellation | `POST /models/pull` |
+| Pull or import | Download an Ollama model, import a direct GGUF URL, or register a local GGUF file | `POST /models/pull`, `POST /models/import-url`, `POST /system/check-local-gguf`, `POST /profiles/upsert` |
 | Deploy | Load a profile on Auto, GPU, or CPU placement | `POST /models/serve` |
 | Switch and stop | Replace or unload a running model | `POST /models/switch`, `POST /models/stop` |
 | Delete and free | Remove model files or unload all models from memory | `POST /models/delete`, `POST /models/free` |
@@ -42,7 +42,9 @@ Start here on a new installation. Check the detected hardware, get a model, and 
 
 The fit budget comes from the hardware probe. You can override it to compare against another GPU or a smaller free-memory target. Green means the model should fit in VRAM, yellow means it is tight or likely to use CPU offload, and red means the estimate does not fit available GPU or system memory. Estimates are conservative and are not guarantees.
 
-The Recommended view labels the source of each reason as estimated, published, or measured on this machine. Download and start pulls a missing model and deploys it. The catalog has runtime and size filters, sorting, pagination, and fit badges. The quant advisor uses tags that are actually published by the Ollama library instead of constructing names from a pattern.
+The Recommended view labels the source of each reason as estimated, published, or measured on this machine. Download and start pulls a missing model and deploys it. The catalog has runtime and size filters, sorting, pagination, source badges, and fit badges. The quant advisor uses tags that are actually published by the Ollama library instead of constructing names from a pattern.
+
+The Pull / Import panel accepts Ollama tags, `hf.co/...` GGUF shortcuts, and `modelscope.cn/...:<file>.gguf` shortcuts. It can also register an existing local GGUF file as a llama.cpp profile, or download a direct `.gguf` URL and register it with Ollama.
 
 The Your models card separates disk size from estimated runtime memory. It can sort models and delete several at once. Profiles whose backing model is missing are marked and can be removed under Advanced / All run profiles. For llama.cpp profiles, LocalDeploy also checks that the GGUF file exists.
 

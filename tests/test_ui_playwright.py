@@ -431,7 +431,7 @@ def test_catalog_keeps_clicked_size_and_renders_json_inspector(live_server, brow
               const node = document.createElement('div');
               node.id = 'json-test-node';
               document.body.appendChild(node);
-              const { renderChatText } = await import('/ui/js/chat.js?v=20260718-ui30');
+              const { renderChatText } = await import('/ui/js/chat.js');
               renderChatText(node, '{"model":"qwen3.5","scores":[1,2,3]}');
             }"""
         )
@@ -489,6 +489,7 @@ def test_benchmark_recommendation_receives_system_vram_budget(live_server, brows
     page.route("**/system/recommend/stream", recommend_route)
     try:
         page.goto(f"{live_server}/ui", wait_until="domcontentloaded")
+        page.wait_for_function("document.querySelector('#vram-budget-gb')?.value === '12.0'")
         page.locator("#advanced-zone").evaluate("element => { element.open = true; }")
         page.locator("#btn-recommend").click()
         page.wait_for_selector("#recommend-body .tune-result")
@@ -650,7 +651,7 @@ def test_monitor_tab_renders_snapshot(live_server, browser):
         # Switching away must stop polling - the interval id is cleared.
         page.get_by_role("tab", name="Setup & Deploy").click()
         assert page.evaluate(
-            "import('/ui/js/system.js?v=20260718-ui30').then(m => m.isMonitorActive())"
+            "import('/ui/js/system.js').then(m => m.isMonitorActive())"
         ) is False
     finally:
         page.close()

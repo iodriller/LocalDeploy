@@ -141,12 +141,14 @@ def test_unified_search_merges_sources_and_reports_partial_failures(monkeypatch)
                "provider": "ollama", "publisher": "ollama"}
     monkeypatch.setattr(reg, "_library_rows", lambda query, limit: ([dict(lib_row)], None))
     monkeypatch.setattr(reg, "_hf_rows", lambda query, limit: ([], "Hugging Face unreachable: boom"))
+    monkeypatch.setattr(reg, "_modelscope_rows", lambda query, limit: ([], "ModelScope unreachable: boom"))
     body = client.post("/registry/search-models", json={"query": "gemma"}).json()
     assert body["success"] is True
     assert body["online"] is True  # one source is enough
     assert [r["name"] for r in body["results"]] == ["gemma3"]
     assert body["sources"]["ollama"]["online"] is True
     assert body["sources"]["huggingface"]["online"] is False
+    assert body["sources"]["modelscope"]["online"] is False
     assert "Partial results" in body["message"]
 
 
@@ -162,6 +164,7 @@ def test_unified_search_orders_library_before_hf(monkeypatch):
           "url": "u", "provider": "huggingface", "publisher": "z-org"}
     monkeypatch.setattr(reg, "_library_rows", lambda query, limit: ([dict(lib)], None))
     monkeypatch.setattr(reg, "_hf_rows", lambda query, limit: ([dict(hf)], None))
+    monkeypatch.setattr(reg, "_modelscope_rows", lambda query, limit: ([], None))
     body = client.post("/registry/search-models", json={"query": "a"}).json()
     assert [r["source"] for r in body["results"]] == ["ollama", "huggingface"]
     assert body["results"][1]["pull_name"] == "hf.co/z-org/a-hf"

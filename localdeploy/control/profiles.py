@@ -112,8 +112,7 @@ def upsert_profile(req: UpsertProfileRequest) -> Dict[str, Any]:
                 while f"{name}_{suffix}" in profiles:
                     suffix += 1
                 name = f"{name}_{suffix}"
-            profiles[name] = default_profile_for(req.model_id)
-            profiles[name]["backend"] = requested_backend
+            profiles[name] = default_profile_for(req.model_id, backend=requested_backend)
             if req.base_url:
                 profiles[name]["base_url"] = strip_trailing_slash(req.base_url)
         prof = profiles[name]

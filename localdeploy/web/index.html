@@ -4,8 +4,8 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>LocalDeploy</title>
-    <link rel="icon" type="image/png" href="favicon.png?v=20260718-ui30" />
-    <link rel="stylesheet" href="styles.css?v=20260718-ui30" />
+    <link rel="icon" type="image/png" href="favicon.png?v=20260719-ui31" />
+    <link rel="stylesheet" href="styles.css?v=20260719-ui31" />
     <script>
       // Applied synchronously, before CSS renders, so a saved preference never flashes the other theme.
       try {
@@ -19,7 +19,7 @@
   <body>
     <header class="topbar">
       <button class="brand brand-button" id="brand-home" type="button" title="Go to setup">
-        <img class="brand-icon" src="logo.svg?v=20260718-ui30" alt="" />
+        <img class="brand-icon" src="logo.svg?v=20260719-ui31" alt="" />
         <span>LocalDeploy</span>
       </button>
       <nav class="tabs" role="tablist">
@@ -111,7 +111,7 @@
           <div class="segmented" role="tablist" aria-label="How to find a model">
             <button class="seg-btn active" data-seg="recommended" role="tab" aria-selected="true">★ Recommended</button>
             <button class="seg-btn" data-seg="hf" role="tab" aria-selected="false">⌕ Model catalog</button>
-            <button class="seg-btn" data-seg="manual" role="tab" aria-selected="false">↓ Pull by name</button>
+            <button class="seg-btn" data-seg="manual" role="tab" aria-selected="false">↓ Pull / Import</button>
             <button class="seg-btn" data-seg="quant" role="tab" aria-selected="false">⚖ Quant advisor</button>
           </div>
 
@@ -210,6 +210,7 @@
                   <option value="all">All sources</option>
                   <option value="ollama">Ollama</option>
                   <option value="huggingface">Hugging Face</option>
+                  <option value="modelscope">ModelScope</option>
                 </select>
               </label>
               <label class="field compact-field">
@@ -264,15 +265,15 @@
             </div>
             <div id="remote-active-filters" class="active-filter-row hidden" aria-live="polite"></div>
             <div id="catalog-source-status" class="provider-statuses"></div>
-            <div id="updates-body" class="muted">One search covers the Ollama library and Hugging Face GGUF repos - the source shows as a column. Leave blank for the most popular models.</div>
-            <p class="muted small" style="margin-top:0.6rem">Browse directly: <a href="https://ollama.com/search" target="_blank" rel="noopener">Ollama library ↗</a> · <a href="https://huggingface.co/models?library=gguf" target="_blank" rel="noopener">Hugging Face GGUF ↗</a></p>
+            <div id="updates-body" class="muted">One search covers the Ollama library, Hugging Face GGUF repos, and ModelScope GGUF repos - the source shows as a column. Leave blank for the most popular models.</div>
+            <p class="muted small" style="margin-top:0.6rem">Browse directly: <a href="https://ollama.com/search" target="_blank" rel="noopener">Ollama library ↗</a> · <a href="https://huggingface.co/models?library=gguf" target="_blank" rel="noopener">Hugging Face GGUF ↗</a> · <a href="https://modelscope.cn/models?libraries=GGUF" target="_blank" rel="noopener">ModelScope GGUF ↗</a></p>
           </div>
 
           <div class="seg-panel hidden" data-seg-panel="manual">
             <div class="row gap wrap" style="margin-bottom: 0.5rem">
               <label class="field grow">
-                <span>Ollama tag or Hugging Face GGUF repo</span>
-                <input type="text" id="pull-model" placeholder="gemma3:4b or hf.co/org/model-GGUF" />
+                <span>Ollama tag, Hugging Face, or ModelScope GGUF repo</span>
+                <input type="text" id="pull-model" placeholder="gemma3:4b, hf.co/org/model-GGUF, or modelscope.cn/org/model-GGUF:file.gguf" />
               </label>
               <label class="check" title="Keep the warning, but do not block the pull when the fit check says the model is risky.">
                 <input type="checkbox" id="pull-override" />
@@ -280,7 +281,33 @@
               </label>
               <button class="btn primary" id="btn-pull" data-icon="↓">Pull</button>
             </div>
-            <p class="muted small">Advanced: pull any Ollama tag, or a Hugging Face GGUF repo via the <code>hf.co/&lt;id&gt;</code> shortcut.</p>
+            <p class="muted small">Advanced: pull any Ollama tag, a Hugging Face GGUF repo via the <code>hf.co/&lt;id&gt;</code> shortcut, or a ModelScope GGUF repo via <code>modelscope.cn/&lt;id&gt;:&lt;file&gt;.gguf</code> (requires Ollama 0.30+).</p>
+
+            <hr class="field-divider" />
+            <h3 class="sub">Import a GGUF file directly</h3>
+            <p class="muted small">For files not in any registry - already on this machine, or hosted on GitHub Releases or another direct host.</p>
+
+            <div class="row gap wrap" style="margin-top:0.5rem">
+              <label class="field grow">
+                <span>Local GGUF file path</span>
+                <input type="text" id="local-gguf-path" placeholder="C:\models\mymodel.gguf" />
+              </label>
+              <button class="btn" id="btn-import-local-gguf" data-icon="📁">Import local file</button>
+            </div>
+            <p class="muted small">Registers an existing local file as a llama.cpp run profile - no download. Start llama-server yourself; LocalDeploy does not manage that process.</p>
+
+            <div class="row gap wrap" style="margin-top:0.75rem">
+              <label class="field grow">
+                <span>Direct GGUF URL</span>
+                <input type="url" id="import-gguf-url" placeholder="https://github.com/org/repo/releases/download/v1/model.gguf" />
+              </label>
+              <label class="field" style="min-width: 10rem">
+                <span>Model name (optional)</span>
+                <input type="text" id="import-gguf-name" placeholder="from filename" />
+              </label>
+              <button class="btn" id="btn-import-url-gguf" data-icon="⇩">Download and register</button>
+            </div>
+            <p class="muted small">Downloads the file, registers it with Ollama (<code>ollama create</code>), and creates a run profile - so Deploy/Unload/Delete work exactly like a pulled model.</p>
           </div>
 
           <div class="seg-panel hidden" data-seg-panel="quant">
@@ -859,6 +886,6 @@
 
     <div id="ui-tooltip" class="ui-tooltip" role="tooltip" aria-hidden="true"></div>
     <div id="toasts" class="toasts" aria-live="polite"></div>
-    <script type="module" src="js/app.js?v=20260718-ui30"></script>
+    <script type="module" src="js/app.js?v=20260719-ui31"></script>
   </body>
 </html>

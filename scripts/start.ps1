@@ -206,6 +206,26 @@ function Install-OllamaGuide {
     }
 }
 
+function Get-PythonAncestorIds {
+    # Some Windows Python setups (notably a venv created from a Conda base
+    # interpreter) transparently relaunch a script under a *different*
+    # interpreter as a child process - the venv's own python.exe stays alive
+    # as an orphaned parent while its child actually binds the port. Walking
+    # up while every ancestor is still a python-family process catches both,
+    # instead of leaving the parent running after the child is killed.
+    param([int]$ProcessId)
+    $ids = [System.Collections.Generic.List[int]]::new()
+    $current = Get-CimInstance Win32_Process -Filter "ProcessId = $ProcessId" -ErrorAction SilentlyContinue
+    while ($current) {
+        $ids.Add([int]$current.ProcessId)
+        if (-not $current.ParentProcessId) { break }
+        $parent = Get-CimInstance Win32_Process -Filter "ProcessId = $($current.ParentProcessId)" -ErrorAction SilentlyContinue
+        if (-not $parent -or $parent.Name -notmatch "^(python|python3|pythonw|py)(\.exe)?$") { break }
+        $current = $parent
+    }
+    return $ids
+}
+
 function Clear-ZombieOnPort {
     param([string]$Url)
     if (-not (Get-Command Get-NetTCPConnection -ErrorAction SilentlyContinue)) { return }
@@ -213,7 +233,14 @@ function Clear-ZombieOnPort {
     $listener = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
     if (-not $listener) { return }
     Write-Warning "Port $port is held by PID $($listener.OwningProcess) but not answering HTTP. Stopping it before startup."
-    Stop-Process -Id $listener.OwningProcess -Force -ErrorAction SilentlyContinue
+    if (Get-Command Get-CimInstance -ErrorAction SilentlyContinue) {
+        foreach ($killId in (Get-PythonAncestorIds -ProcessId $listener.OwningProcess)) {
+            Stop-Process -Id $killId -Force -ErrorAction SilentlyContinue
+        }
+    }
+    else {
+        Stop-Process -Id $listener.OwningProcess -Force -ErrorAction SilentlyContinue
+    }
     Start-Sleep -Milliseconds 600
 }
 

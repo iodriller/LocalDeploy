@@ -82,20 +82,26 @@ def _looks_like_vision(model_id: str) -> bool:
 
 
 def default_profile_for(
-    model_id: str, *, params_b: Optional[float] = None, quant: Optional[str] = None
+    model_id: str, *, params_b: Optional[float] = None, quant: Optional[str] = None, backend: str = "ollama"
 ) -> Dict[str, Any]:
-    """A conservative Ollama profile for a freshly pulled model.
+    """A conservative profile for a freshly pulled/imported model.
 
     Mirrors the field shape of the shipped example profiles so the rest of the
     app (fit-check, benchmark, serve) treats it identically to a hand-written one.
     """
     name = slugify_profile_name(model_id)
     supports_vision = _looks_like_vision(model_id)
+    try:
+        from ..utils import get_backend_base_url
+
+        base_url = get_backend_base_url({}, backend)
+    except Exception:
+        base_url = "http://127.0.0.1:11434"
     profile = {
         "name": name,
-        "backend": "ollama",
+        "backend": backend,
         "model_id": model_id,
-        "base_url": "http://127.0.0.1:11434",
+        "base_url": base_url,
         "enabled": True,
         "description": f"Auto-created from pulled model {model_id}.",
         "auto_created": True,
