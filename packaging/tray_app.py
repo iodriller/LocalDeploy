@@ -1,13 +1,13 @@
 """LocalDeploy desktop tray launcher (Release R7, Phase A packaging).
 
 Runs the existing FastAPI backend (``localdeploy.server:app``) in a
-background thread inside this same process — no second executable to spawn
-or supervise — and exposes the tray menu actions from the roadmap: Open,
+background thread inside this same process - no second executable to spawn
+or supervise - and exposes the tray menu actions from the roadmap: Open,
 Start/Stop/Restart service, View logs, Open model storage, Open reports,
 Check for updates, Quit.
 
 This is the process PyInstaller bundles (see ``localdeploy.spec``); it is not
-imported by the web app or covered by the pytest suite — pystray owns a
+imported by the web app or covered by the pytest suite - pystray owns a
 native OS event loop that can't run headless in CI. Verify manually:
 
     pip install -e ".[packaging]"

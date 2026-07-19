@@ -132,7 +132,7 @@ def test_find_serve_state_exact_match():
 
 def test_find_serve_state_falls_back_to_fuzzy_match():
     # note_serve was called with a bare/tagless name; Ollama reports the
-    # fully-qualified ":latest" form back via /api/ps — the exact dict key
+    # fully-qualified ":latest" form back via /api/ps - the exact dict key
     # 'llama3' won't match 'llama3:latest' but the two clearly refer to the
     # same deployment.
     monitor.note_serve("llama3", "CPU")
@@ -191,7 +191,7 @@ def test_alerts_no_false_positive_for_healthy_model():
 
 def test_alerts_sustained_high_vram_requires_full_window():
     now = time.time()
-    # Only two samples spanning a few seconds — not enough coverage of the 3-minute window.
+    # Only two samples spanning a few seconds - not enough coverage of the 3-minute window.
     monitor._hw_history.append({"ts": now - 2, "vram_pct": 99.0})
     monitor._hw_history.append({"ts": now, "vram_pct": 99.0})
     assert monitor._alerts({}, []) == []

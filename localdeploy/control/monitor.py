@@ -1,19 +1,19 @@
 """Deployment monitoring (Release R3).
 
 GET /system/monitor answers "what is happening after a model has been
-loaded and while it is serving requests?" — live placement, VRAM/RAM/CPU,
+loaded and while it is serving requests?" - live placement, VRAM/RAM/CPU,
 per-model request stats, rolling history for charts, and rule-based alerts.
 
 No background sampler thread: each call to this endpoint samples hardware
 fresh (the response needs a fresh reading anyway) and appends it to a bounded
-in-memory ring buffer, so a few minutes of client-side polling — while the
-Monitor tab is open — builds enough history for rolling charts and
+in-memory ring buffer, so a few minutes of client-side polling - while the
+Monitor tab is open - builds enough history for rolling charts and
 sustained-threshold alerts ("VRAM >95% for 3 minutes"). History does not
 accumulate while nobody is watching; an independent background sampler would
 close that gap but isn't needed for a first cut.
 
 Privacy: everything recorded here is numeric metadata (token counts,
-latencies, placement) — prompts and responses are never stored, matching
+latencies, placement) - prompts and responses are never stored, matching
 LocalDeploy's no-telemetry stance.
 """
 from __future__ import annotations
@@ -56,7 +56,7 @@ def reset_state() -> None:
 
 
 def note_serve(model_id: str, requested_device: Optional[str]) -> None:
-    """Record that a model just (re)started serving — resets its uptime clock."""
+    """Record that a model just (re)started serving - resets its uptime clock."""
     with _state_lock:
         _serve_state[model_id] = {"since": time.time(), "requested_device": requested_device}
 
@@ -246,7 +246,7 @@ def _find_serve_state(name: str) -> Optional[Dict[str, Any]]:
     Exact match covers the common case (profiles always carry a fully
     qualified model_id), but a bare/tagless serve request can leave the
     two spellings slightly different (e.g. 'llama3' vs Ollama's reported
-    'llama3:latest') — fall back to the same fuzzy matcher models.py uses
+    'llama3:latest') - fall back to the same fuzzy matcher models.py uses
     everywhere else for this instead of silently showing blank uptime.
     """
     with _state_lock:
@@ -324,7 +324,7 @@ def _sessions_dir() -> Path:
 
 def _persist_session(summary: Dict[str, Any]) -> Optional[str]:
     """Best-effort JSON write, mirroring history.py's benchmark-history pattern.
-    Never raises — losing a session summary must not break a model stop."""
+    Never raises - losing a session summary must not break a model stop."""
     try:
         import json
         import re

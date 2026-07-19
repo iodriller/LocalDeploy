@@ -143,7 +143,7 @@ def _confidence_for(sample_count: int) -> str:
 def get_correction(
     *, gpu: str, runtime: str, family: Optional[str], quant: Optional[str], context: Optional[int]
 ) -> Dict[str, Any]:
-    """Median observed/estimated ratio for this exact key. No cross-key blending —
+    """Median observed/estimated ratio for this exact key. No cross-key blending -
     materially different configurations are never averaged together."""
     key = sample_key(gpu, runtime, family, quant, context)
     data = _load()

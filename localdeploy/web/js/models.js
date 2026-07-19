@@ -144,7 +144,7 @@ function renderProfileSelectOptions() {
     state.profiles
       .map((name) => {
         const p = state.profileData[name] || {};
-        let label = p.model_id ? `${name} — ${p.model_id}` : name;
+        let label = p.model_id ? `${name} - ${p.model_id}` : name;
         if (profileIsUnpulled(name)) {
           label += ` (${installedStatusForProfile(name).label})`;
         }
@@ -223,7 +223,7 @@ function quantExplanation(value) {
 }
 
 function quantLabelHtml(value, className = "badge") {
-  if (!value) return `<span class="muted">—</span>`;
+  if (!value) return `<span class="muted">-</span>`;
   const explanation = quantExplanation(value);
   return `<span class="${esc(className)} quant-label tooltip-target" tabindex="0" role="button" aria-expanded="false" data-tooltip="${esc(explanation)}" aria-label="${esc(value)}: ${esc(explanation)}">${esc(value)}<span class="quant-info" aria-hidden="true">?</span></span>`;
 }
@@ -246,7 +246,7 @@ function runningDetailForInstalled(modelName) {
 }
 
 // ---------------------------------------------------------------------------
-// Tab 1 — Status
+// Tab 1 - Status
 // ---------------------------------------------------------------------------
 
 async function refreshStatus(options = {}) {
@@ -352,7 +352,7 @@ function apiSnippetHtml(model) {
   return `<div class="api-snippet">
     <span class="eyebrow">🔌 Use via API</span>
     <div class="api-snippet-row">
-      <code class="api-url" title="OpenAI-compatible endpoint — point any client here with model: &quot;${esc(model)}&quot; and any API key">${esc(url)}</code>
+      <code class="api-url" title="OpenAI-compatible endpoint - point any client here with model: &quot;${esc(model)}&quot; and any API key">${esc(url)}</code>
       <button class="btn compact copy-btn" data-copy="${esc(url)}" title="Copy endpoint URL">⧉ URL</button>
       <button class="btn compact copy-btn" data-copy="${esc(curlSnippetFor(model))}" title="Copy a ready-to-run curl request for this model">⧉ curl</button>
       <a class="btn compact api-docs-link" href="${esc(docs)}" target="_blank" rel="noopener" title="Open Swagger UI with every endpoint and its request and response definitions">API docs ↗</a>
@@ -441,7 +441,7 @@ function detectDevice(profileName) {
 }
 
 // ---------------------------------------------------------------------------
-// Tab 1 — Deploy / unload / replace
+// Tab 1 - Deploy / unload / replace
 // ---------------------------------------------------------------------------
 
 function showServeResult(res) {
@@ -514,7 +514,7 @@ async function switchModel() {
 }
 
 // ---------------------------------------------------------------------------
-// Tab 1 — Installed models + fit check
+// Tab 1 - Installed models + fit check
 // ---------------------------------------------------------------------------
 // Tiered fit badge (Phase 3): green = comfortable, yellow = tight / CPU-only
 // (soft warnings), red = won't fit anywhere (hard). Falls back to the coarse
@@ -582,7 +582,7 @@ async function refreshInstalled(options = {}) {
     if (!data.installed.length) {
       renderProfileSelectOptions();
       updateDiskSummary();
-      body.innerHTML = `<div class="muted">No models pulled yet — grab one from <b>Get a model</b> above.</div>`;
+      body.innerHTML = `<div class="muted">No models pulled yet - grab one from <b>Get a model</b> above.</div>`;
       return;
     }
     data.installed.forEach((m) => {
@@ -672,7 +672,7 @@ function renderInstalledList() {
           ${primaryAction}
           <button class="btn edit-tuning-btn" title="Edit this model's run profile (context, KV cache, GPU layers…)">⚙ Tune</button>
           <button class="btn compact fit-btn" title="Re-run the VRAM fit estimate (runs automatically when the list loads)">↻</button>
-          <button class="btn danger del-btn" title="Delete from disk${diskGb ? ` — frees ${esc(diskGb)} GB` : ""}">🗑 Delete</button>
+          <button class="btn danger del-btn" title="Delete from disk${diskGb ? ` - frees ${esc(diskGb)} GB` : ""}">🗑 Delete</button>
         </div>`;
       })
       .join("") +
@@ -723,7 +723,7 @@ async function fitCheckRow(row, force = false) {
       const detail = req != null
         ? `⚡ needs ~${req} GB VRAM${free != null ? ` of ${free} GB budget` : ""}`
         : "";
-      slot.innerHTML = `<div class="fit-summary">${fitBadge(res)}<span class="meta" title="Estimated memory to run this model (weights + KV cache + overhead) — different from its size on disk">${esc(detail)}</span></div>${fitMeterHtml(res)}`;
+      slot.innerHTML = `<div class="fit-summary">${fitBadge(res)}<span class="meta" title="Estimated memory to run this model (weights + KV cache + overhead) - different from its size on disk">${esc(detail)}</span></div>${fitMeterHtml(res)}`;
     } else {
       slot.innerHTML = `<span class="muted">${esc(res.message || "n/a")}</span>`;
     }
@@ -876,7 +876,7 @@ async function cleanOrphanProfiles(btn) {
     return !findInstalledModel(p.model_id || name);
   });
   if (!orphans.length) {
-    toast("No orphan profiles — every profile's model is pulled.", "success");
+    toast("No orphan profiles - every profile's model is pulled.", "success");
     return;
   }
   const preview = orphans.slice(0, 12).join("\n  ");
@@ -923,7 +923,7 @@ async function deleteProfile(profile, btn) {
 }
 
 // ---------------------------------------------------------------------------
-// Tab 1 — Tuning editor (edit a model's run profile: context, KV cache, GPU…)
+// Tab 1 - Tuning editor (edit a model's run profile: context, KV cache, GPU…)
 // ---------------------------------------------------------------------------
 // The fields a user can tune, with input types. `model_id` is upserted so the
 // profile is created on the fly for models pulled before auto-create existed.
@@ -958,7 +958,7 @@ async function exportManifest(modelId, btn) {
     if (!out.success) throw new Error(out.error || "Export failed.");
     const overlay = simpleModal(
       "Deployment manifest",
-      `<code>${esc(modelId)}</code> — reproducible, human-readable YAML (JSON also available below).`,
+      `<code>${esc(modelId)}</code> - reproducible, human-readable YAML (JSON also available below).`,
       `<pre class="log manifest-yaml">${esc(out.yaml)}</pre>
        <div class="row gap wrap" style="margin-top:0.5rem">
          <button class="btn primary" id="manifest-copy-yaml">Copy YAML</button>
@@ -1001,7 +1001,7 @@ async function openIntegrationSnippets(modelId, btn) {
       .join("");
     const overlay = simpleModal(
       "Use elsewhere",
-      `<code>${esc(modelId)}</code> — copy-paste config for common tools, using this app's OpenAI-compatible <code>/v1</code> endpoints.`,
+      `<code>${esc(modelId)}</code> - copy-paste config for common tools, using this app's OpenAI-compatible <code>/v1</code> endpoints.`,
       `<div class="fit-grid">${cardsHtml}</div>`
     );
     $$(".integration-copy-btn", overlay).forEach((b) =>
@@ -1259,7 +1259,7 @@ async function startProfile(profile, btn) {
 }
 
 // ---------------------------------------------------------------------------
-// Tab 1 — Starter pack (curated first-pull picks for the detected budget)
+// Tab 1 - Starter pack (curated first-pull picks for the detected budget)
 // ---------------------------------------------------------------------------
 
 const REASON_KIND_LABEL = { estimated: "estimated", published: "published spec", measured: "measured here" };
@@ -1319,8 +1319,8 @@ function handleStarterPackClick(event) {
 }
 
 // ---------------------------------------------------------------------------
-// Automated bakeoff — "Compare top models for me" (Release R6)
-// Disabled per product decision — commented out rather than deleted so it's
+// Automated bakeoff - "Compare top models for me" (Release R6)
+// Disabled per product decision - commented out rather than deleted so it's
 // easy to re-enable later. The backend (/system/bakeoff/run) is untouched.
 // ---------------------------------------------------------------------------
 /*
@@ -1366,7 +1366,7 @@ function renderBakeoffResult(evt) {
         <td class="num">${esc(r.passed)}/${esc(r.tests)}</td>
         <td class="num">${esc(r.avg_accuracy)}</td>
         <td class="num">${esc(r.avg_latency_s)}s</td>
-        <td class="num">${r.margin_gb != null ? `${esc(r.margin_gb)} GB` : "—"}</td>
+        <td class="num">${r.margin_gb != null ? `${esc(r.margin_gb)} GB` : "-"}</td>
       </tr>`
     )
     .join("");
@@ -1488,7 +1488,7 @@ async function recommendModels(source) {
 }
 
 // ---------------------------------------------------------------------------
-// Tab 1 — Hugging Face model search
+// Tab 1 - Hugging Face model search
 // ---------------------------------------------------------------------------
 
 const CATALOG_PAGE_SIZE = 12;
@@ -1532,7 +1532,7 @@ function renderProviderStatuses() {
     .map((provider) => {
       const n = (provider.models || []).length;
       const hint = provider.reachable
-        ? `${provider.base_url} — ${n} model${n === 1 ? "" : "s"}`
+        ? `${provider.base_url} - ${n} model${n === 1 ? "" : "s"}`
         : `${provider.error || "unreachable"}. ${PROVIDER_HINTS[provider.provider] || ""}`;
       return `<span class="badge ${provider.reachable ? "on" : "off"}" title="${esc(hint)}">${provider.reachable ? "●" : "○"} ${esc(provider.provider)}${provider.reachable ? ` · ${n}` : ""}</span>`;
     })
@@ -1591,7 +1591,7 @@ function renderProviderCatalog() {
   if (!body || !state.catalog.loaded) return;
   const rows = filteredCatalogRows();
   if (!rows.length) {
-    body.innerHTML = `<div class="empty-state">No models match${state.catalog.rows.length ? " these filters" : " — no reachable runtime reported any models yet"}.</div>`;
+    body.innerHTML = `<div class="empty-state">No models match${state.catalog.rows.length ? " these filters" : " - no reachable runtime reported any models yet"}.</div>`;
     pager?.classList.add("hidden");
     return;
   }
@@ -1606,11 +1606,11 @@ function renderProviderCatalog() {
           (model) => `<tr>
         <td><b>${esc(model.model)}</b></td>
         <td><span class="badge">${esc(model.provider)}</span></td>
-        <td>${esc(model.publisher || "—")}</td>
-        <td class="num">${esc(model.parameters || (catalogParamsB(model) != null ? catalogParamsB(model) + "B" : "—"))}</td>
+        <td>${esc(model.publisher || "-")}</td>
+        <td class="num">${esc(model.parameters || (catalogParamsB(model) != null ? catalogParamsB(model) + "B" : "-"))}</td>
         <td>${quantLabelHtml(model.quant, "quant-code")}</td>
-        <td class="num" title="${model.benchmark_samples ? `${esc(model.benchmark_samples)} saved samples` : "Not benchmarked yet — run it in Benchmark & Compare"}">${model.tokens_per_second != null ? esc(model.tokens_per_second) : "—"}</td>
-        <td class="num">${model.context != null ? esc(model.context) : "—"}</td>
+        <td class="num" title="${model.benchmark_samples ? `${esc(model.benchmark_samples)} saved samples` : "Not benchmarked yet - run it in Benchmark & Compare"}">${model.tokens_per_second != null ? esc(model.tokens_per_second) : "-"}</td>
+        <td class="num">${model.context != null ? esc(model.context) : "-"}</td>
         <td><button class="btn compact provider-profile-btn" data-model="${esc(model.model)}" data-provider="${esc(model.provider)}" data-base-url="${esc(model.base_url)}" title="Create a run profile for this model">＋ Add profile</button></td>
       </tr>`
         )
@@ -1817,7 +1817,7 @@ function remoteCatalogRow(row) {
     ? `<span class="badge on" title="A matching model is installed">installed</span>`
     : "";
   const caps = (row.capabilities || []).slice(0, 3).map((c) => `<span class="badge">${esc(c)}</span>`).join("");
-  const params = row.params_b != null ? `${row.params_b < 1 ? row.params_b * 1000 + "M" : row.params_b + "B"}` : "—";
+  const params = row.params_b != null ? `${row.params_b < 1 ? row.params_b * 1000 + "M" : row.params_b + "B"}` : "-";
   const pullAction = row.pullable === false
     ? `<a class="btn compact" href="${esc(row.url)}" target="_blank" rel="noopener">View</a>`
     : `<button class="btn primary compact library-pull-btn" data-model="${esc(row.pull_name)}" title="Pull this exact ${row.size_label ? `${esc(row.size_label)} size` : "model"}">Pull</button>`;
@@ -1833,8 +1833,8 @@ function remoteCatalogRow(row) {
     <td data-label="Source">${sourceBadge(row.source)}</td>
     <td class="num" data-label="Parameters"><strong>${esc(params)}</strong></td>
     <td data-label="Best fit">${fitBadgeForCatalog(row)}</td>
-    <td class="num" data-label="Popularity" title="Pulls on Ollama or downloads on Hugging Face">${esc(row.pulls || "—")}</td>
-    <td class="muted small" data-label="Updated">${esc(row.updated || "—")}</td>
+    <td class="num" data-label="Popularity" title="Pulls on Ollama or downloads on Hugging Face">${esc(row.pulls || "-")}</td>
+    <td class="muted small" data-label="Updated">${esc(row.updated || "-")}</td>
     <td class="catalog-actions" data-label="Actions"><div class="catalog-action-stack">${quantAction}${pullAction}</div></td>
   </tr>`;
 }
@@ -1997,7 +1997,7 @@ function markModelInstalledInUI(model) {
 }
 
 // ---------------------------------------------------------------------------
-// Tab 1 — Pull progress panel (%, speed, ETA, destination, completion)
+// Tab 1 - Pull progress panel (%, speed, ETA, destination, completion)
 // ---------------------------------------------------------------------------
 
 function setPullProgress({ percent, status, stats }) {
@@ -2021,7 +2021,7 @@ function setPullProgress({ percent, status, stats }) {
 function showPullDone(model) {
   const done = $("#pull-progress-done");
   done.innerHTML = `<div class="pull-done-row">
-      <div><strong>✓ Pulled — ${esc(model)} is ready</strong>
+      <div><strong>✓ Pulled - ${esc(model)} is ready</strong>
         <div class="muted small">A run profile was created for it. Deploy it from Your models, or right here.</div>
       </div>
       <div class="row gap wrap">
@@ -2085,7 +2085,7 @@ function highlightInstalledModel(model) {
 }
 
 // ---------------------------------------------------------------------------
-// Tab 1 — Pull (streamed, fit-gated)
+// Tab 1 - Pull (streamed, fit-gated)
 // ---------------------------------------------------------------------------
 
 async function pullModel(modelArg, triggerBtn) {
@@ -2196,7 +2196,7 @@ async function pullModel(modelArg, triggerBtn) {
           setPullProgress({ status: `Error: ${evt.error}` });
           return;
         }
-        // A soft fit note (e.g. "won't fit GPU — will run on CPU") rides the start event.
+        // A soft fit note (e.g. "won't fit GPU - will run on CPU") rides the start event.
         if (evt.note) append(`note: ${evt.note}`);
         if (evt.digest && evt.total) {
           digests[evt.digest] = { total: evt.total, completed: evt.completed || 0 };
@@ -2216,7 +2216,7 @@ async function pullModel(modelArg, triggerBtn) {
         const msg = j.message || "Model may not fit available memory.";
         append(`blocked by fit check: ${msg}`);
         if (j.fit?.estimate_gb) append(`  needs ~${j.fit.estimate_gb.required} GB`);
-        setPullProgress({ percent: 0, status: `Blocked by fit check — tick "Warn only; pull anyway" to continue.` });
+        setPullProgress({ percent: 0, status: `Blocked by fit check - tick "Warn only; pull anyway" to continue.` });
         showPullTerminal("blocked", model, msg);
       } else {
         const msg = j.error || "Pull could not start.";
@@ -2226,7 +2226,7 @@ async function pullModel(modelArg, triggerBtn) {
         showPullTerminal("failed", model, msg);
       }
     } else if (sawError) {
-      // Stream opened but reported a failure mid-way — don't claim success or
+      // Stream opened but reported a failure mid-way - don't claim success or
       // flip any card to "installed".
       showPullTerminal("failed", model, "The model source reported an error. Open Raw log for details.");
     } else {
@@ -2312,7 +2312,7 @@ async function deleteModel(name, btn) {
 }
 
 // ---------------------------------------------------------------------------
-// Tab 1 — Quant advisor: fit-check every common quant of one model size
+// Tab 1 - Quant advisor: fit-check every common quant of one model size
 // ---------------------------------------------------------------------------
 
 function quantBadge(v) {
@@ -2327,7 +2327,7 @@ function quantBadge(v) {
 }
 
 // Fill the "Pull it" column with real, published tags for this family+size,
-// so pulling a specific quant is one click on a tag that actually exists —
+// so pulling a specific quant is one click on a tag that actually exists -
 // no guessing tag-name conventions.
 
 async function attachQuantPullButtons(res, source = "ollama") {
@@ -2340,7 +2340,7 @@ async function attachQuantPullButtons(res, source = "ollama") {
     return;
   }
   if (!family || !cells.length) {
-    cells.forEach((c) => (c.innerHTML = `<span class="muted small" title="Not an Ollama library model — pull it by its own name">—</span>`));
+    cells.forEach((c) => (c.innerHTML = `<span class="muted small" title="Not an Ollama library model - pull it by its own name">-</span>`));
     return;
   }
   let data;
@@ -2350,7 +2350,7 @@ async function attachQuantPullButtons(res, source = "ollama") {
     data = null;
   }
   if (!data?.success || !data.online || !(data.tags || []).length) {
-    cells.forEach((c) => (c.innerHTML = `<span class="muted small" title="${esc(data?.message || "Tag list unavailable")}">—</span>`));
+    cells.forEach((c) => (c.innerHTML = `<span class="muted small" title="${esc(data?.message || "Tag list unavailable")}">-</span>`));
     return;
   }
   const sizeToken = `${String(paramsB).replace(/\.0$/, "")}b`;
@@ -2365,7 +2365,7 @@ async function attachQuantPullButtons(res, source = "ollama") {
     }
     cell.innerHTML = match.installed
       ? `<span class="badge on" title="${esc(match.full)} is already pulled">✓ pulled</span>`
-      : `<button class="btn primary compact quant-pull-btn" data-model="${esc(match.full)}" title="Pull ${esc(match.full)}${match.size ? ` (${esc(match.size)} download)` : ""} — fit-checked first">↓ ${esc(match.size || "Pull")}</button>`;
+      : `<button class="btn primary compact quant-pull-btn" data-model="${esc(match.full)}" title="Pull ${esc(match.full)}${match.size ? ` (${esc(match.size)} download)` : ""} - fit-checked first">↓ ${esc(match.size || "Pull")}</button>`;
   });
   if (extra) {
     const chips = data.tags
@@ -2406,7 +2406,7 @@ async function quantAdvise(btn) {
     const budget = res.free_vram_gb != null ? `${res.free_vram_gb} GB budget` : "no VRAM budget";
     const rows = res.variants
       .map((v) => {
-        const margin = v.margin_gb != null ? `${v.margin_gb >= 0 ? "+" : ""}${v.margin_gb} GB` : "—";
+        const margin = v.margin_gb != null ? `${v.margin_gb >= 0 ? "+" : ""}${v.margin_gb} GB` : "-";
         return `<tr>
           <td>${quantLabelHtml(v.quant, "quant-code")}</td>
           <td class="num">~${esc(v.weights_gb)} GB</td>
@@ -2458,7 +2458,7 @@ function handleQuantBodyClick(event) {
 }
 
 // ---------------------------------------------------------------------------
-// Tab: Chat playground — installed Ollama models with explicit load state
+// Tab: Chat playground - installed Ollama models with explicit load state
 // ---------------------------------------------------------------------------
 
 export async function setDefaultProfile(profile) {

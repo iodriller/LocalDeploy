@@ -1,4 +1,4 @@
-"""Sanity tests for benchmark.py graders — ensures they accept good answers
+"""Sanity tests for benchmark.py graders - ensures they accept good answers
 and reject bad ones. Run before launching long benchmark runs.
 """
 from __future__ import annotations
@@ -166,27 +166,27 @@ class TestStructuredGraders:
 
 class TestPlanningGraders:
     def test_chat_backend_decent(self):
-        text = """1. **Authentication** — set up JWT, user signup/login. Effort: S.
+        text = """1. **Authentication** - set up JWT, user signup/login. Effort: S.
 - Deliverable: /signup and /login endpoints
 - Deliverable: JWT middleware
 - Dependencies: none
 
-2. **Database schema** — users, rooms, messages tables. Effort: S.
+2. **Database schema** - users, rooms, messages tables. Effort: S.
 - Dependencies: 1
 - Deliverable: migrations
 - Deliverable: ORM models
 
-3. **WebSocket layer** — bidirectional message transport. Effort: M.
+3. **WebSocket layer** - bidirectional message transport. Effort: M.
 - Dependencies: 1, 2
 - Deliverable: socket handler
 
-4. **Presence tracking** — online/offline status. Effort: M.
+4. **Presence tracking** - online/offline status. Effort: M.
 - Dependencies: 3
 
-5. **Persistence and replay** — message history. Effort: M.
+5. **Persistence and replay** - message history. Effort: M.
 - Dependencies: 2, 3
 
-6. **Scaling and deploy** — Redis pub/sub, horizontal scaling. Effort: L.
+6. **Scaling and deploy** - Redis pub/sub, horizontal scaling. Effort: L.
 - Dependencies: 3, 5
 """
         assert _grade_chat_backend_plan(text) >= 0.7
@@ -305,7 +305,7 @@ class TestHardStructuredGraders:
         assert score >= 0.85
 
     def test_approval_decision_violates_conditional(self):
-        # needs_user_confirmation=True but confirmation_prompt is null — constraint violation
+        # needs_user_confirmation=True but confirmation_prompt is null - constraint violation
         bad = json.dumps({
             "decision": "needs_clarification",
             "risk_level": "high",

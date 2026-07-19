@@ -117,7 +117,7 @@
 
           <div class="seg-panel" data-seg-panel="recommended">
             <div class="section-title">
-              <p class="muted small">Tell us what you're doing with it — we'll pick from hand-picked, known-good models that fit your detected GPU (or system RAM), with a safety margin so they don't just barely fit.</p>
+              <p class="muted small">Tell us what you're doing with it - we'll pick from hand-picked, known-good models that fit your detected GPU (or system RAM), with a safety margin so they don't just barely fit.</p>
             </div>
             <div class="row gap wrap recommend-inputs">
               <label class="field compact-field">
@@ -166,7 +166,7 @@
             </div>
             <div id="starter-pack-body" class="muted">Pick a use case and priority above, then run this to see three explained picks for your budget.</div>
 
-            <!-- "Compare top models for me" (automated bakeoff, Release R6) — disabled per product
+            <!-- "Compare top models for me" (automated bakeoff, Release R6) - disabled per product
                  decision; kept here commented out rather than deleted so it's easy to re-enable.
             <div class="bakeoff-zone">
               <div class="card-head" style="padding:0;border:none">
@@ -179,9 +179,9 @@
                 <label class="field compact-field">
                   <span>Download budget</span>
                   <select id="bakeoff-budget">
-                    <option value="10">Small test — up to 10 GB</option>
-                    <option value="30" selected>Standard comparison — up to 30 GB</option>
-                    <option value="custom">Extended — custom</option>
+                    <option value="10">Small test - up to 10 GB</option>
+                    <option value="30" selected>Standard comparison - up to 30 GB</option>
+                    <option value="custom">Extended - custom</option>
                   </select>
                 </label>
                 <label class="field compact-field hidden" id="bakeoff-budget-custom-wrap">
@@ -198,7 +198,7 @@
           <div class="seg-panel hidden" data-seg-panel="hf">
             <div class="row gap wrap catalog-search-row">
               <label class="field grow">
-                <span>Search all sources — results update as you type</span>
+                <span>Search all sources - results update as you type</span>
                 <input type="search" id="hf-search" placeholder="gemma, qwen, coder, vision… (blank = most popular)" />
               </label>
               <button class="btn primary" id="btn-hf-search" data-icon="⌕">Search</button>
@@ -264,7 +264,7 @@
             </div>
             <div id="remote-active-filters" class="active-filter-row hidden" aria-live="polite"></div>
             <div id="catalog-source-status" class="provider-statuses"></div>
-            <div id="updates-body" class="muted">One search covers the Ollama library and Hugging Face GGUF repos — the source shows as a column. Leave blank for the most popular models.</div>
+            <div id="updates-body" class="muted">One search covers the Ollama library and Hugging Face GGUF repos - the source shows as a column. Leave blank for the most popular models.</div>
             <p class="muted small" style="margin-top:0.6rem">Browse directly: <a href="https://ollama.com/search" target="_blank" rel="noopener">Ollama library ↗</a> · <a href="https://huggingface.co/models?library=gguf" target="_blank" rel="noopener">Hugging Face GGUF ↗</a></p>
           </div>
 
@@ -295,7 +295,7 @@
               </label>
               <button class="btn primary" id="btn-quant-advise" data-icon="⚖">Estimate quants</button>
             </div>
-            <p class="muted small">Every common GGUF quantization of this size, fit-checked against your budget — so you know when there's headroom for a higher-quality tag than the default Q4.</p>
+            <p class="muted small">Every common GGUF quantization of this size, fit-checked against your budget - so you know when there's headroom for a higher-quality tag than the default Q4.</p>
             <div id="quant-body" class="muted">Enter a model size to compare its quantizations against your fit budget.</div>
           </div>
 
@@ -307,7 +307,7 @@
           <div class="pull-progress-head">
             <div>
               <span class="eyebrow">Pulling model</span>
-              <strong id="pull-progress-title">—</strong>
+              <strong id="pull-progress-title">-</strong>
               <div class="muted small" id="pull-progress-dest"></div>
             </div>
             <div class="row gap" style="align-items: center">
@@ -329,7 +329,7 @@
           </details>
         </div>
 
-        <!-- ============ 4. YOUR MODELS (installed — primary deploy surface) ============ -->
+        <!-- ============ 4. YOUR MODELS (installed - primary deploy surface) ============ -->
         <div class="card" id="your-models-card">
           <div class="card-head">
             <div>
@@ -419,7 +419,7 @@
             <div class="card-head">
               <div>
                 <h3 class="sub">📦 Local runtime inventory</h3>
-                <p class="muted small">Models already exposed by runtimes on this machine — Ollama, LM Studio, vLLM, Docker Model Runner, llama.cpp, and configured OpenAI-compatible servers. One click adds a run profile.</p>
+                <p class="muted small">Models already exposed by runtimes on this machine - Ollama, LM Studio, vLLM, Docker Model Runner, llama.cpp, and configured OpenAI-compatible servers. One click adds a run profile.</p>
               </div>
               <button class="btn" id="btn-provider-refresh" data-icon="↻">Scan runtimes</button>
             </div>
@@ -469,10 +469,10 @@
             </div>
             <p class="muted small">
               Benchmarks the profiles that are both <b>enabled</b> and already <b>pulled</b>, then ranks them by
-              accuracy, speed, and memory headroom. It compares what you have — it does not download models.
+              accuracy, speed, and memory headroom. It compares what you have - it does not download models.
             </p>
             <div class="row gap wrap preset-row">
-              <button class="btn compact preset-btn" data-preset="safe" title="Balances accuracy, speed, and VRAM headroom evenly — a dependable everyday pick.">Safe Starter</button>
+              <button class="btn compact preset-btn" data-preset="safe" title="Balances accuracy, speed, and VRAM headroom evenly - a dependable everyday pick.">Safe Starter</button>
               <button class="btn compact preset-btn" data-preset="quality" title="Weights accuracy heavily; picks the strongest answer quality among profiles that fit.">Best Quality</button>
               <button class="btn compact preset-btn" data-preset="fast" title="Weights speed heavily; picks the quickest profile that still fits your VRAM budget.">Fast / Low VRAM</button>
               <label class="check" title="Quick uses a handful of fast tests per candidate. Full runs the entire test bench per candidate for a more thorough (slower) score.">
@@ -835,7 +835,7 @@
           </div>
           <div id="monitor-models" class="fit-grid">
             <div class="monitor-empty">
-              <p class="muted">Nothing to monitor yet — this fills in once a model is running.</p>
+              <p class="muted">Nothing to monitor yet - this fills in once a model is running.</p>
               <p class="muted small">Head to Setup &amp; Deploy, pull or pick a model, and deploy it. Come back here to watch its VRAM, throughput, and request history live.</p>
             </div>
           </div>
@@ -844,7 +844,7 @@
         <div class="card">
           <div class="card-head">
             <h2>Recent requests</h2>
-            <span class="muted small">Numerical metadata only — prompts and responses are never stored here.</span>
+            <span class="muted small">Numerical metadata only - prompts and responses are never stored here.</span>
           </div>
           <div class="table-wrap">
             <table id="monitor-requests-table" class="results">
@@ -852,7 +852,7 @@
               <tbody></tbody>
             </table>
           </div>
-          <div id="monitor-requests-empty" class="muted small">No requests recorded yet — this fills in once you chat with or benchmark a loaded model.</div>
+          <div id="monitor-requests-empty" class="muted small">No requests recorded yet - this fills in once you chat with or benchmark a loaded model.</div>
         </div>
       </section>
     </main>

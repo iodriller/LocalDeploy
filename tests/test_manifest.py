@@ -132,7 +132,7 @@ def test_validate_suggests_smaller_context_when_original_does_not_fit(monkeypatc
     monkeypatch.setattr(_ollama, "version", lambda: ("0.12.0", None))
     # 14B fits comfortably in the mocked ~19.5 GB free VRAM at a normal context,
     # but a 131072-token context balloons the flat KV-cache estimate past both
-    # VRAM and the mocked 32 GB RAM — a smaller context should be suggested.
+    # VRAM and the mocked 32 GB RAM - a smaller context should be suggested.
     huge_context_manifest = _base_manifest(
         model={"name": "qwen3:14b", "digest": None, "quantization": "Q4_K_M", "source": "ollama"},
         deployment={"context_length": 131072, "placement_observed": "GPU"},

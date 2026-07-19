@@ -15,7 +15,7 @@ client = TestClient(app)
 
 
 # ---------------------------------------------------------------------------
-# Phase 5 — discovery: check-updates accepts search params
+# Phase 5 - discovery: check-updates accepts search params
 # ---------------------------------------------------------------------------
 
 def test_check_updates_accepts_explicit_queries(monkeypatch) -> None:
@@ -165,7 +165,7 @@ def test_installed_list_includes_details(monkeypatch) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Phase 6 — device-tagged report cards
+# Phase 6 - device-tagged report cards
 # ---------------------------------------------------------------------------
 
 def _make_card(device=None) -> dict:

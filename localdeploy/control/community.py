@@ -1,12 +1,12 @@
-"""Community benchmark sharing — local-only groundwork (Release R8).
+"""Community benchmark sharing - local-only groundwork (Release R8).
 
 LocalDeploy's whole premise is "no telemetry" (see README Privacy & Security).
 A real community dataset needs a hosted server, a moderation/abuse story, and
-a data-retention policy — an infrastructure and product decision this repo
+a data-retention policy - an infrastructure and product decision this repo
 has not made, not something to wire up silently inside a feature PR. Both
 endpoints below are honest about that: they compute and preview exactly what
 *would* be shared, and "export" saves that anonymized snapshot to a local
-file — there is no submission call anywhere in this module, because there is
+file - there is no submission call anywhere in this module, because there is
 nowhere to submit to yet.
 
 POST /system/community/preview  -> the anonymized payload, never persisted
@@ -19,7 +19,7 @@ import json
 import platform
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 from fastapi import APIRouter
 from pydantic import BaseModel
@@ -31,7 +31,7 @@ router = APIRouter()
 SCHEMA_VERSION = 1
 
 # Fields explicitly never copied into the shared payload, no matter what the
-# input card contains — listed here (not just in a docstring) so it doubles
+# input card contains - listed here (not just in a docstring) so it doubles
 # as documentation of the promise and is easy to audit.
 EXCLUDED_FIELDS = [
     "username", "computer name", "IP address",
@@ -54,7 +54,7 @@ def _round_or_none(value: Any, digits: int = 1) -> Optional[float]:
 
 
 def _anonymize_test(test: Dict[str, Any]) -> Dict[str, Any]:
-    """Numeric result fields only — never response_preview or error text,
+    """Numeric result fields only - never response_preview or error text,
     which can contain fragments of the user's actual prompts/outputs."""
     out = {k: test.get(k) for k in _TEST_NUMERIC_FIELDS}
     metrics = test.get("metrics") or {}
@@ -72,7 +72,7 @@ def anonymize_card(card: Dict[str, Any]) -> Dict[str, Any]:
     """Whitelist-copy a report-card-shaped payload (report.py's build_card
     output, or an equivalent run record) down to what the community-sharing
     plan defines as safe to share. Everything not explicitly copied here is
-    dropped — this is a whitelist, not a blocklist, by design."""
+    dropped - this is a whitelist, not a blocklist, by design."""
     hardware = card.get("hardware") or {}
     provenance = card.get("provenance") or {}
     prov_hardware = provenance.get("hardware") or {}
@@ -130,7 +130,7 @@ def community_preview(req: CommunityShareRequest) -> Dict[str, Any]:
         "would_share": anonymize_card(req.card),
         "excluded_fields": EXCLUDED_FIELDS,
         "note": (
-            "Preview only — nothing is sent anywhere. LocalDeploy does not have a "
+            "Preview only - nothing is sent anywhere. LocalDeploy does not have a "
             "community server yet, so there is currently no submit action; "
             "'Save locally' keeps this anonymized snapshot on disk for later."
         ),
@@ -157,5 +157,5 @@ def community_export(req: CommunityShareRequest) -> Dict[str, Any]:
         "success": True,
         "path": str(path),
         "would_share": payload,
-        "note": "Saved locally only — not transmitted anywhere. LocalDeploy has no community server yet.",
+        "note": "Saved locally only - not transmitted anywhere. LocalDeploy has no community server yet.",
     }

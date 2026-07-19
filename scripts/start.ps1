@@ -303,7 +303,22 @@ if (-not $ollama) {
 }
 elseif (-not (Test-Http "http://localhost:11434/api/tags" -Timeout 5)) {
     Write-Step "Starting Ollama"
-    Start-Process -FilePath $ollama -ArgumentList "serve" -WindowStyle Hidden
+    # Windows PowerShell 5 has no Start-Process -Environment parameter. Set the
+    # process value briefly so the child receives the .env setting, then restore
+    # the launcher's original environment.
+    $previousOllamaNoCloud = [Environment]::GetEnvironmentVariable("OLLAMA_NO_CLOUD")
+    $env:OLLAMA_NO_CLOUD = Env-Value -EnvFile $envFile -Name "OLLAMA_NO_CLOUD" -Default "true"
+    try {
+        Start-Process -FilePath $ollama -ArgumentList "serve" -WindowStyle Hidden
+    }
+    finally {
+        if ($null -eq $previousOllamaNoCloud) {
+            Remove-Item -LiteralPath Env:\OLLAMA_NO_CLOUD -ErrorAction SilentlyContinue
+        }
+        else {
+            $env:OLLAMA_NO_CLOUD = $previousOllamaNoCloud
+        }
+    }
     # Poll instead of a fixed sleep: first launch can take a while.
     for ($i = 0; $i -lt 20; $i++) {
         Start-Sleep -Milliseconds 750

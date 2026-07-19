@@ -5,11 +5,7 @@
 <h1 align="center">LocalDeploy</h1>
 
 <p align="center">
-  <strong>Pick, deploy &amp; benchmark the best local AI model for your machine — no guessing required.</strong>
-</p>
-
-<p align="center">
-  Everything stays on your machine: no cloud inference, no subscriptions, no telemetry.
+  A local web UI and API for choosing, running, and comparing AI models on your own hardware.
 </p>
 
 <p align="center">
@@ -19,48 +15,42 @@
   <img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux%20%7C%20Docker-555.svg" alt="Platforms" />
 </p>
 
+I built LocalDeploy because I needed a dependable way to choose and run local models for other work I am involved in. It became useful enough that I decided to make it public. I hope it saves someone else some setup time and trial and error.
+
+LocalDeploy sits on top of [Ollama](https://ollama.com) and can also work with llama.cpp and loopback OpenAI-compatible runtimes. It detects the machine, estimates whether a model will fit, manages local models, and records benchmark results. LocalDeploy itself does not provide cloud inference.
+
 <p align="center">
-  <img src="docs/assets/demo.gif" alt="LocalDeploy demo: hardware detection, curated model picks, fit-checked model list, and the benchmark dashboard" width="820" />
+  <img src="docs/assets/demo.gif" alt="LocalDeploy hardware detection, model selection, chat, and benchmark views" width="820" />
 </p>
 
----
+## What it does
 
-## Why?
+- Detects NVIDIA, AMD, Intel, and Apple Silicon hardware, including compatible multi-GPU layouts.
+- Searches the Ollama library and Hugging Face GGUF repositories from one screen.
+- Estimates model memory before a pull or deploy and explains when CPU offload is likely.
+- Pulls, starts, switches, unloads, and deletes local models.
+- Provides a streamed chat UI with image and document attachments.
+- Runs repeatable local benchmarks and compares accuracy, latency, throughput, and memory use.
+- Shows current VRAM, CPU, RAM, placement, request timing, and model throughput.
+- Exports benchmark reports and deployment manifests for later use.
 
-Running a local model with [Ollama](https://ollama.com) is easy. Knowing **which** model to run is not:
+If you already know which Ollama model you want and only need a terminal chat, Ollama may be all you need. LocalDeploy is meant for the less certain part: choosing a model for a particular machine and comparing it with real runs.
 
-| Ollama alone | With LocalDeploy |
-|---|---|
-| Guess whether a model fits your VRAM | Fit-checked before you pull or deploy: fits / tight / won't fit |
-| `ollama run` in a terminal | A browser UI: pull, deploy, chat, unload, switch — one click each |
-| Guess which quant tag to pull | Quant advisor: every Q2→F16 variant fit-checked |
-| No way to compare models | Live benchmarking: leaderboard, heatmap, speed-vs-quality |
-| Pick a model by name and hope | Guided recommendations, ranked by accuracy, speed, and VRAM headroom |
-| No record of what you tried | Report cards and deployment manifests, exportable and reproducible |
-| No visibility once it's running | Monitor tab: live VRAM/CPU/RAM, throughput, requests |
+## Install
 
-LocalDeploy runs *on* Ollama (and optionally llama.cpp) — it doesn't replace it. If you already know exactly which model you want, `ollama run` is enough. LocalDeploy is for the more common case: *"I have this GPU — what should I actually run, and how well does it work?"*
-
-## Quick Start
-
-### pip / pipx (any OS)
-
-Prerequisites: Python 3.10+ and [Ollama](https://ollama.com/download) running.
-
-```bash
-pipx install localdeploy   # or: pip install localdeploy
-localdeploy                # starts the API and opens the UI
-```
-
-State (`config.json`, `.env`, `logs/`, `reports/`) lives in `~/.localdeploy` (override with `LOCALDEPLOY_HOME`). `localdeploy --help` lists `--host`, `--port`, `--no-browser`.
+The PyPI package has not been published yet. Use one of the source installs below. The release process is documented in [docs/RELEASING.md](docs/RELEASING.md).
 
 ### Windows
 
+The installer can offer to install Python and Ollama through winget, clone the repository, create a virtual environment, and start the UI. Download it first so you can inspect it before running it:
+
 ```powershell
-irm https://raw.githubusercontent.com/iodriller/LocalDeploy/main/scripts/install.ps1 | iex
+$installer = Join-Path $env:TEMP "localdeploy-install.ps1"
+Invoke-RestMethod https://raw.githubusercontent.com/iodriller/LocalDeploy/main/scripts/install.ps1 -OutFile $installer
+& $installer
 ```
 
-Nothing needs to be preinstalled — it offers to install Python and Ollama via winget. Or from a clone:
+From an existing clone:
 
 ```powershell
 git clone https://github.com/iodriller/LocalDeploy.git
@@ -68,13 +58,11 @@ cd LocalDeploy
 .\scripts\start.ps1
 ```
 
-Creates `.env`, `config.json`, and a `.venv`; starts Ollama if installed; opens `http://localhost:8000/ui`. Stop with `.\scripts\stop.ps1`.
+The script creates `.env`, `config.json`, and `.venv`, starts Ollama when it is installed, and opens `http://localhost:8000/ui`. Stop it with `.\scripts\stop.ps1`. You can also double-click `start.bat` from a clone or ZIP download.
 
-No terminal? Double-click **`start.bat`** in the repo folder — same script, works from a plain ZIP download. After `git pull`, run `.\scripts\start.ps1 -Restart` to pick up changes.
+### macOS and Linux
 
-### macOS / Linux
-
-Prerequisites: Python 3.10+ and [Ollama](https://ollama.com/download) running.
+Install Python 3.10 or newer and [Ollama](https://ollama.com/download), then run:
 
 ```bash
 git clone https://github.com/iodriller/LocalDeploy.git
@@ -82,9 +70,11 @@ cd LocalDeploy
 ./scripts/start.sh
 ```
 
-Runs in the foreground, opens the UI when ready. Stop with Ctrl+C.
+The server stays in the foreground. Press Ctrl+C to stop it.
 
-### Docker (bundles Ollama, no Python needed)
+### Docker
+
+Docker builds bundle Ollama, so Python is not needed on the host:
 
 ```bash
 git clone https://github.com/iodriller/LocalDeploy.git
@@ -92,84 +82,66 @@ cd LocalDeploy
 docker compose up --build -d
 ```
 
-Open `http://localhost:8000/ui`. Stop with `docker compose down`. Volumes persist models and profiles across recreation; the host port binds to `127.0.0.1` only. For NVIDIA passthrough, uncomment `deploy.resources` in `docker-compose.yml` ([NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html) required).
+Open `http://localhost:8000/ui`. Use `docker compose down` to stop it. The default port mapping only listens on `127.0.0.1`. Model and profile data live in named volumes. NVIDIA passthrough is available in `docker-compose.yml` and requires the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html).
 
-## Your First 3 Minutes
+## Basic use
 
-A fresh install starts **empty on purpose** — no sample models, no phantom profiles.
+Open the UI and check the detected hardware and memory budget. Use Get a model to search or enter an Ollama tag, then review the fit estimate before downloading. Once the model is present, deploy it and use the Chat tab. The Benchmark tab can compare several installed models, and Monitor shows what is happening while they run.
 
-1. **Check hardware** — GPU, VRAM, CPU, RAM, and a fit budget.
-2. **Get a model** — describe your use case and priority (quality, speed, memory, context) for three explained picks, or pull any Ollama tag directly. Either way, it's fit-checked before you download.
-3. **Deploy it** — one click, Auto / GPU / CPU placement.
-4. **Chat with it** — streamed replies, image attachments for vision models.
-5. **Watch it run** — the Monitor tab shows live VRAM, throughput, and requests while it serves.
-6. **Benchmark it** — the built-in suite or a use-case pack (coding, structured JSON, reasoning), with repeated-run stats and regression detection.
-7. **Auto-pick** — once you've pulled a few models, rank them by accuracy, speed, or VRAM headroom.
+A new install starts without profiles or models. Pulling the first model creates its profile and makes it the default. `config.example.json` is a field reference, not a list of models that are assumed to be installed.
 
-No terminal flags, no VRAM math, no trial-and-error pulls. Full UI guide: [docs/UI.md](docs/UI.md)
-
-### Hardware scope
-
-NVIDIA, AMD, Intel, and Apple Silicon, detected via vendor tools and OS telemetry. Fit checks cover single-GPU, multi-GPU splits, and CPU offload. Mixed vendors are never summed into a fictional VRAM pool.
+The hardware and memory estimates are guidance. Drivers, runtime versions, context length, desktop GPU use, and quantization all affect the actual result. LocalDeploy records observed memory after deployment so later estimates can be adjusted for that machine.
 
 <p align="center">
-  <img src="docs/screenshots/setup-deploy.png" alt="Setup &amp; Deploy tab: hardware detection, live VRAM, fit budget" width="800" />
+  <img src="docs/screenshots/setup-deploy.png" alt="Setup and Deploy tab with hardware detection, live VRAM, and model fit information" width="800" />
 </p>
 
 <p align="center">
-  <img src="docs/screenshots/chat-playground.png" alt="Chat playground: a real streamed reply from a local model" width="800" />
+  <img src="docs/screenshots/chat-playground.png" alt="Chat playground with a streamed response from a local model" width="800" />
 </p>
 
-More screenshots (including light theme): [docs/SCREENSHOTS.md](docs/SCREENSHOTS.md)
+More screenshots are in [docs/SCREENSHOTS.md](docs/SCREENSHOTS.md).
 
-## Benchmarking
+## API and integrations
 
-- Runs execute sequentially to avoid VRAM contention, streaming per-test results live.
-- Repeated runs record native tok/s, variance, Ollama version, model digest, quant, context, and a hardware snapshot.
-- CPU, GPU, Auto, and CPU + GPU comparison modes.
-- Leaderboard, category heatmap, speed/quality scatter, per-test detail.
-- Runs live in browser `localStorage` and export as self-contained HTML/JSON report cards; an opt-in toggle also mirrors them to server-side JSON files.
-- Bring your own question set (safe JSON graders, no code execution) or use the built-in suite.
+OpenAPI documentation is served at `http://127.0.0.1:8000/docs`.
 
-<p align="center">
-  <img src="docs/screenshots/benchmark-compare.png" alt="Benchmark &amp; Compare tab: question set, model picker, run history" width="800" />
-</p>
+The OpenAI-compatible routes are `/v1/chat/completions`, `/v1/responses`, `/v1/embeddings`, and `/v1/models`. Tool calls are returned to the client but are never executed by LocalDeploy. Native routes cover hardware, model lifecycle, fit checks, monitoring, recommendations, manifests, and benchmarks.
 
-## Monitoring and reproducibility
+Supported local runtimes include Ollama, llama.cpp, LM Studio, vLLM, Docker Model Runner, and other OpenAI-compatible servers on loopback addresses. Backend URLs are checked in code and non-local addresses are rejected.
 
-- **Monitor tab** — live VRAM/CPU/RAM, per-model throughput and time-to-first-token, and alerts (VRAM pressure, placement mismatches, slow generation) while a model serves. Request history is numeric metadata only — prompts and responses are never stored.
-- **Estimates that improve with use** — every deploy compares the pre-load VRAM estimate against what actually got used, and later fit checks for that GPU/model/quant are corrected from that history, always shown as a visible correction, never applied silently.
-- **Deployment manifests** — export a running model's exact configuration as YAML/JSON, then validate or recreate it on another machine, with a compatibility report if the hardware differs.
-- **Use it elsewhere** — copy-paste config for Open WebUI, Continue, Cline, curl, Python, or JavaScript, generated from the model you just deployed.
+See [docs/API_OPTIONS.md](docs/API_OPTIONS.md) for request fields, [docs/UI.md](docs/UI.md) for the UI, [docs/CLI.md](docs/CLI.md) for terminal use, and [examples](examples/README.md) for small clients.
 
-## Privacy & Security
+## Data and network access
 
-- **No telemetry.** Backend URLs are enforced loopback-only in code; nothing about your machine, models, or usage is sent anywhere.
-- **Two internet lookups, both opt-out.** Model search (Hugging Face/Ollama library, runs when you search) and a GitHub release check (runs once per page load, no data sent). `OFFLINE=true` blocks both — verified by `python scripts/egress_selftest.py`.
-- **Community benchmark sharing is local-only today.** You can preview and save an anonymized snapshot to disk; there's no server to submit it to yet, so nothing is transmitted.
-- Binds to `127.0.0.1` by default, single user. `API_TOKEN` is one shared token, not real auth — no TLS, no multi-user isolation. Don't expose it to the internet or an untrusted LAN. See [SECURITY.md](SECURITY.md).
-- **No warranty.** LocalDeploy controls local processes, GPU placement, and files on your machine — use it at your own risk. See [SECURITY.md](SECURITY.md#disclaimer) and [LICENSE](LICENSE).
+LocalDeploy sends inference requests only to a configured loopback runtime. It does not include telemetry or upload prompts, responses, hardware details, or benchmark results. A runtime installed separately may have its own cloud features and settings. The supplied Docker setup disables Ollama cloud models with `OLLAMA_NO_CLOUD=true`; the Windows launcher uses the same default when it starts Ollama.
 
-## For Developers
+Two features can make outbound requests: model search queries Hugging Face and the Ollama library when you use search, and the UI checks this repository's GitHub releases once per page load. Set `OFFLINE=true` to disable both. `python scripts/egress_selftest.py` verifies the offline path.
+
+The API listens on `127.0.0.1` by default. `API_TOKEN` is an optional shared token, not full authentication. There is no TLS, user isolation, or rate limiting. Do not expose LocalDeploy directly to the internet or an untrusted network. Read [SECURITY.md](SECURITY.md) before changing the bind address.
+
+## Development
 
 ```powershell
-.\scripts\start.ps1 -Foreground   # live logs in the terminal
+python -m pip install -e ".[dev]"
+python -m playwright install chromium
+python -m ruff check .
+pytest -q
+python scripts\egress_selftest.py
 ```
 
-- OpenAPI docs at `http://127.0.0.1:8000/docs`.
-- **OpenAI-compatible**: `/v1/chat/completions` (streaming, tool calls), `/v1/responses`, `/v1/embeddings`, `/v1/models`. Tool calls are returned to the client, never executed by LocalDeploy. Use `API_TOKEN` as the bearer key when set.
-- **Control-plane endpoints**, safe to call directly: `/system/hardware`, `/system/fit-check` and `/system/fit-table`, `/system/monitor`, `/system/manifest/{export,validate,recreate}`, `/system/integration-snippets`, `/system/update-check`.
-- **Local runtime providers**: Ollama, llama.cpp, LM Studio, vLLM, Docker Model Runner, and other loopback OpenAI-compatible servers.
-- Model profiles live in `config.json`, starting empty and mirroring your machine — pulling a model creates its profile. `config.example.json` documents every field.
-- **Desktop packaging** (early): `packaging/localdeploy.spec` builds a standalone Windows tray executable with PyInstaller — `pip install -e ".[packaging]"` then `.\packaging\build.ps1`. Not yet published as a release asset or signed.
-- Terminal chat and model comparison: [docs/CLI.md](docs/CLI.md)
-- API request schema and limits: [docs/API_OPTIONS.md](docs/API_OPTIONS.md)
-- Model catalog with VRAM guidance: [docs/MODELS.md](docs/MODELS.md)
-- Tests and local checks: [tests/README.md](tests/README.md) and [CONTRIBUTING.md](CONTRIBUTING.md)
+Use `.\scripts\start.ps1 -Foreground` for live server logs. The frontend is plain HTML, CSS, and seven native ES modules, with no npm install or build step.
+
+Desktop packaging is experimental. `packaging/localdeploy.spec` builds an unsigned Windows tray application with PyInstaller:
+
+```powershell
+python -m pip install -e ".[packaging]"
+.\packaging\build.ps1
+```
 
 ## Contributing
 
-Issues and PRs are welcome — this project favors small, focused changes that keep everything local-first. Start with [CONTRIBUTING.md](CONTRIBUTING.md). Good first contributions: new benchmark questions, curated-catalog models, docs fixes.
+Issues and focused pull requests are welcome. Please read [CONTRIBUTING.md](CONTRIBUTING.md) first. The open issues include small catalog, benchmark question, and grader tasks that are suitable for a first contribution.
 
 ## License
 

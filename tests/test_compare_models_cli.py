@@ -5,7 +5,7 @@ DEFAULT_MODEL_PROFILE, or config.json's default_profile, `profile_names`
 used to become `[None]` (truthy list containing None) instead of an empty
 list, which passed the "no profiles selected" guard and then crashed with
 `TypeError: sequence item 0: expected str instance, NoneType found` inside
-`', '.join(missing)` — an ugly traceback instead of the intended helpful
+`', '.join(missing)` - an ugly traceback instead of the intended helpful
 message.
 """
 from __future__ import annotations

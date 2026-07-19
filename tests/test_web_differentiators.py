@@ -142,7 +142,7 @@ def test_set_default_writes_config(monkeypatch, tmp_path):
 
 
 def test_fresh_install_has_no_phantom_profiles(monkeypatch, tmp_path):
-    """A missing config.json must yield zero profiles — never the example's
+    """A missing config.json must yield zero profiles - never the example's
     sample profiles (the pre-0.4 fallback showed models nobody pulled)."""
     monkeypatch.setenv("CONFIG_PATH", str(tmp_path / "config.json"))
     body = client.get("/profiles").json()
