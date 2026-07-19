@@ -21,6 +21,7 @@ env/
 # Runtime output
 logs/
 reports/
+imports/
 benchmark-results/
 *.log
 *.bench.json

@@ -1,6 +1,6 @@
 "use strict";
 
-import { $, $$, busy, esc, fmtDuration, fmtMb, getJSON, postJSON, skeletonHtml, toast } from "./shared.js?v=20260718-ui30";
+import { $, $$, busy, esc, fmtDuration, fmtMb, getJSON, postJSON, skeletonHtml, toast } from "./shared.js?v=20260719-ui31";
 
 const state = {
   hardware: null,
@@ -118,7 +118,7 @@ function updateVramBudgetUI() {
     help.textContent =
       `Fit checks use a ${fmtMb(budget)} budget. Live free VRAM is lower right now; choose "Current free" to filter against the memory available without unloading models.`;
   } else if (budget) {
-    help.textContent = `Installed model badges, saved profile scan, and Hugging Face search all use this budget.`;
+    help.textContent = `Installed model badges, saved profile scan, and remote model search all use this budget.`;
   } else {
     help.textContent = "Set a GPU budget to filter models by fit.";
   }

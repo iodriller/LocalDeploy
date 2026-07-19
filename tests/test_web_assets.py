@@ -167,6 +167,8 @@ def test_new_ui_controls_have_safe_bindings() -> None:
         "remote-source-filter", "remote-size-filter", "remote-fit-filter", "remote-cap-filter",
         "remote-sort", "remote-installed-filter", "btn-remote-clear", "remote-active-filters",
         "btn-pull-dismiss", "pull-progress-actions", "chat-session-progress",
+        "local-gguf-path", "btn-import-local-gguf", "import-gguf-url", "import-gguf-name",
+        "btn-import-url-gguf",
     ):
         assert f'id="{dom_id}"' in html, dom_id
     assert "btn-hf-search" in models_js and "searchUnifiedModels" in models_js
@@ -174,6 +176,8 @@ def test_new_ui_controls_have_safe_bindings() -> None:
     assert "sendChatMessage" in chat_js
     for binding in ("quantAdvise", "bulkDeleteSelected"):
         assert binding in models_js, binding
+    for binding in ("importLocalGguf", "importGgufFromUrl", "modelscope"):
+        assert binding in models_js + html, binding
     assert "initServerHistoryToggle" in benchmark_js
     assert "vram-budget-gb" in system_js
     assert '["#profile-select", "#bench-profile-select"]' in models_js

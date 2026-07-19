@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional, Tuple
 
 import requests
@@ -195,6 +196,52 @@ def pull_stream(model: str) -> Iterator[Dict[str, Any]]:
         json={"name": model, "stream": True},
         stream=True,
         timeout=(10, 120),
+    ) as response:
+        response.raise_for_status()
+        for line in response.iter_lines():
+            if not line:
+                continue
+            try:
+                yield json.loads(line)
+            except (ValueError, TypeError):
+                continue
+
+
+# --- create-from-GGUF-file (used to import a downloaded file that isn't in any
+# registry: push the blob once, then point /api/create at its digest) --------
+
+
+def blob_exists(digest: str) -> bool:
+    """True if Ollama already has this blob (HEAD /api/blobs/:digest), so a
+    retry after a partial import doesn't re-upload the whole file."""
+    base = base_url()
+    try:
+        response = requests.head(f"{base}/api/blobs/sha256:{digest}", timeout=10)
+        return response.status_code == 200
+    except requests.RequestException:
+        return False
+
+
+def push_blob(file_path: Path, digest: str) -> None:
+    """Upload a local file as a content-addressed blob Ollama can reference
+    from /api/create. Streams from disk - never loads the whole file into memory."""
+    base = base_url()
+    with open(file_path, "rb") as fh:
+        response = requests.post(f"{base}/api/blobs/sha256:{digest}", data=fh, timeout=(10, 1800))
+    # 201 = created, 200 = already present (some Ollama versions no-op instead of 4xx).
+    if response.status_code not in (200, 201):
+        raise BackendCallError(f"Ollama rejected the uploaded blob (HTTP {response.status_code}): {response.text[:300]}")
+
+
+def create_stream(model: str, files: Dict[str, str]) -> Iterator[Dict[str, Any]]:
+    """Yield progress events from `ollama create` given already-pushed blobs
+    (`files` maps a filename to its 'sha256:<digest>')."""
+    base = base_url()
+    with requests.post(
+        f"{base}/api/create",
+        json={"model": model, "files": files, "stream": True},
+        stream=True,
+        timeout=(10, 1800),
     ) as response:
         response.raise_for_status()
         for line in response.iter_lines():

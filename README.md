@@ -26,7 +26,8 @@ LocalDeploy sits on top of [Ollama](https://ollama.com) and can also work with l
 ## What it does
 
 - Detects NVIDIA, AMD, Intel, and Apple Silicon hardware, including compatible multi-GPU layouts.
-- Searches the Ollama library and Hugging Face GGUF repositories from one screen.
+- Searches the Ollama library, Hugging Face, and ModelScope GGUF repositories from one screen.
+- Imports GGUF files that aren't in any registry - already on disk, or from a direct URL (e.g. GitHub Releases).
 - Estimates model memory before a pull or deploy and explains when CPU offload is likely.
 - Pulls, starts, switches, unloads, and deletes local models.
 - Provides a streamed chat UI with image and document attachments.

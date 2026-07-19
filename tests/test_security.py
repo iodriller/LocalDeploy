@@ -56,6 +56,8 @@ CONTROL_PLANE_ENDPOINTS = [
     "/models/stop",
     "/models/free",
     "/models/switch",
+    "/models/import-url",
+    "/system/check-local-gguf",
     "/system/set-default",
     "/system/recommend",
     "/benchmark/run",
