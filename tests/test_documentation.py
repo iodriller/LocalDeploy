@@ -22,7 +22,7 @@ def _markdown_files() -> list[Path]:
 
 def _tracked_text_files() -> list[Path]:
     names = subprocess.check_output(["git", "ls-files"], cwd=ROOT, text=True).splitlines()
-    binary_suffixes = {".gif", ".png"}
+    binary_suffixes = {".gif", ".icns", ".ico", ".png"}
     return [
         ROOT / name
         for name in names
