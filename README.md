@@ -10,6 +10,7 @@
 
 <p align="center">
   <a href="https://github.com/iodriller/LocalDeploy/actions/workflows/ci.yml"><img src="https://github.com/iodriller/LocalDeploy/actions/workflows/ci.yml/badge.svg" alt="CI status" /></a>
+  <a href="https://pypi.org/project/localdeploy/"><img src="https://img.shields.io/pypi/v/localdeploy.svg" alt="PyPI version" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT license" /></a>
   <img src="https://img.shields.io/badge/python-3.10%2B-blue.svg" alt="Python 3.10+" />
   <img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux%20%7C%20Docker-555.svg" alt="Platforms" />
@@ -39,7 +40,14 @@ If you already know which Ollama model you want and only need a terminal chat, O
 
 ## Install
 
-The PyPI package has not been published yet. Use one of the source installs below. The release process is documented in [docs/RELEASING.md](docs/RELEASING.md).
+Install from PyPI when Python and Ollama are already available:
+
+```bash
+python -m pip install localdeploy
+localdeploy
+```
+
+The launchers below can also set up a local clone and help install prerequisites.
 
 ### Windows
 
@@ -77,7 +85,17 @@ The launcher starts Ollama when it is installed but not already reachable, then 
 
 ### Docker
 
-Docker builds bundle Ollama, so Python is not needed on the host:
+The published container bundles Ollama, so Python is not needed on the host:
+
+```bash
+docker run -d --name localdeploy \
+  -p 127.0.0.1:8000:8000 \
+  -v localdeploy-data:/data/localdeploy \
+  -v ollama-data:/root/.ollama \
+  ghcr.io/iodriller/localdeploy:0.6.0
+```
+
+To build from source instead:
 
 ```bash
 git clone https://github.com/iodriller/LocalDeploy.git

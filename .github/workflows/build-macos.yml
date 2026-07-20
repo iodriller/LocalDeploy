@@ -1,12 +1,7 @@
 name: Build macOS app + DMG
 
-# Manual trigger only, on purpose: this workflow was authored and reasoned
-# about from a Windows machine (no Mac available to build or test on
-# directly), using the documented PyInstaller BUNDLE() API and macOS's
-# built-in hdiutil. It is NOT wired into the release/publish flow yet - run it
-# by hand from the Actions tab (or `gh workflow run build-macos.yml`) and
-# actually open the resulting .app on a real Mac at least once before trusting
-# it, or before adding a `release: published` trigger like publish.yml has.
+# This has passed its hosted macOS build and health check. Keep it manual until
+# the unsigned app has also been opened and checked in a desktop session.
 on:
   workflow_dispatch: {}
 
@@ -42,7 +37,7 @@ jobs:
           API_PORT=8099 NO_BROWSER=1 "dist/LocalDeploy.app/Contents/MacOS/LocalDeploy" &
           APP_PID=$!
           ok=0
-          for i in $(seq 1 30); do
+          for _ in $(seq 1 30); do
             if curl -fsS "http://127.0.0.1:8099/health" >/dev/null 2>&1; then ok=1; break; fi
             sleep 1
           done

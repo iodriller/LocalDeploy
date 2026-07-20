@@ -10,7 +10,7 @@ readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
 requires-python = ">=3.10"
-authors = [{ name = "iodriller and LocalDeploy contributors" }]
+authors = [{ name = "iodriller" }]
 keywords = ["ollama", "llm", "local-ai", "benchmark", "vram", "self-hosted"]
 classifiers = [
   "Development Status :: 4 - Beta",

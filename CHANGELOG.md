@@ -2,6 +2,18 @@
 
 All notable changes to this project should be documented here.
 
+## Unreleased
+
+- Published the Python package to PyPI and added a GHCR container publishing workflow with a
+  post-publish health check, build provenance, and an SBOM.
+- GitHub releases now receive the wheel and source archive as downloadable assets.
+- Limited push CI to `main`, added cancellation for superseded runs, and validated every workflow
+  with actionlint.
+- Updated project and installer authorship to iodriller and removed a tool-specific repository
+  guidance file.
+- Ran the macOS packaging workflow successfully on a GitHub-hosted Apple Silicon runner, including
+  building the app, launching it, checking `/health`, and creating the DMG.
+
 ## 0.6.0 - 2026-07-19
 
 ### ModelScope search and direct GGUF import
@@ -59,8 +71,8 @@ All notable changes to this project should be documented here.
   Menu + Desktop shortcuts, a working Settings > Apps entry, and a fully clean uninstall.
 - macOS: `packaging/macos.spec` builds a menu-bar-only `.app` (no Dock icon), and
   `.github/workflows/build-macos.yml` packages it into a `.dmg` with an automated smoke test.
-  Authored without access to a Mac; the workflow is manual-trigger only until it - or the
-  resulting `.app` - has actually been run on real hardware.
+  The workflow has passed on a GitHub-hosted Apple Silicon runner. The resulting app still needs a
+  manual desktop launch before the unsigned DMG should be treated as a normal end-user install.
 - Neither installer is code-signed yet: Windows SmartScreen and macOS Gatekeeper will both warn on
   first run. See `docs/PACKAGING.md` for what each warning means and the signing/notarization cost
   and account requirements to remove them.

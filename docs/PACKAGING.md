@@ -53,20 +53,13 @@ tray-only behavior). Building the `.dmg` from that is one `hdiutil` call; see
 the `.app` plus an `/Applications` symlink, then `hdiutil create -format
 UDZO`).
 
-**Important caveat**: this spec and workflow were authored without access to
-a Mac (built from a Windows machine, reasoning from PyInstaller's documented
-`BUNDLE()` API and macOS's documented `hdiutil`). The GitHub Actions workflow
-includes an automated smoke test (launches the built app, waits for
-`/health`), but **that workflow has not actually been run yet** - it's
-`workflow_dispatch` (manual trigger) on purpose, so it doesn't fire
-automatically and cost Actions minutes until someone runs it deliberately.
-Before trusting the `.dmg` for real: run the workflow (Actions tab, or `gh
-workflow run build-macos.yml`) and open the resulting `.app` on a real Mac at
-least once. It also currently targets Apple Silicon only (`macos-latest`
-runners are arm64); an Intel/universal2 build would need extra work this
-hasn't had.
+The workflow has passed on a GitHub-hosted Apple Silicon runner. It built the
+app, launched it, received a response from `/health`, and created the DMG.
+The app has not been opened manually in a normal desktop session, so do that
+before treating it as an end-user release. The current output is Apple
+Silicon only. Intel or universal2 builds need separate work.
 
-**Unsigned + unnotarized**: Gatekeeper will refuse to open it at all via a
+Gatekeeper will refuse to open the unsigned and unnotarized app via a
 normal double-click ("LocalDeploy.app is damaged and can't be opened" or
 similar) until the user right-clicks -> Open once, or clears the quarantine
 attribute (`xattr -dr com.apple.quarantine LocalDeploy.app`). This is a
@@ -77,11 +70,11 @@ harder wall than Windows SmartScreen's "Run anyway" - macOS notarization
 
 Neither build is signed. What each platform actually requires:
 
-- **Windows**: an OV or EV code-signing certificate (~$100-500/year from a
+- Windows needs an OV or EV code-signing certificate (~$100-500/year from a
   CA), used to `signtool sign` the `.exe` and `.msi`. [SignPath.io](https://signpath.io/)
   offers free signing for qualifying open-source projects, which is the usual
   path for a project like this rather than buying a certificate directly.
-- **macOS**: an Apple Developer Program membership ($99/year, mandatory - there
+- macOS needs an Apple Developer Program membership ($99/year, mandatory - there
   is no free tier for notarization), used to sign the `.app` with
   `codesign` and submit it to Apple's notary service (`xcrun notarytool`)
   before stapling the notarization ticket. Without this, Gatekeeper's

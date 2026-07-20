@@ -1,22 +1,6 @@
 # Releasing LocalDeploy
 
-This project builds a wheel and source archive in CI. Publishing to PyPI needs one account-level setup step that cannot be stored in the repository.
-
-## First PyPI publish
-
-The `localdeploy` project does not exist on PyPI yet. Before publishing a GitHub release, sign in to PyPI and add a pending trusted publisher at <https://pypi.org/manage/account/publishing/> with these values:
-
-| Field | Value |
-|---|---|
-| PyPI project name | `localdeploy` |
-| GitHub owner | `iodriller` |
-| GitHub repository | `LocalDeploy` |
-| Workflow | `publish.yml` |
-| Environment | `pypi` |
-
-The GitHub `pypi` environment already exists. A pending publisher does not reserve the package name until the first successful upload, so finish the first release soon after creating it.
-
-The v0.5.0 upload failed because no matching PyPI publisher had been registered. The build itself succeeded. Do not reuse that version on PyPI. Prepare and publish the next version instead.
+GitHub releases publish the Python package to PyPI and the container image to GHCR. The wheel and source archive are also attached to the GitHub release. PyPI uses trusted publishing, so the repository does not store an API token.
 
 ## Prepare a release
 
@@ -36,7 +20,7 @@ python -m build
 python -m twine check dist/*
 ```
 
-The Publish to PyPI workflow checks that the tag and package version match, builds both distributions, and uses OpenID Connect to request a short-lived PyPI token. No long-lived PyPI token should be added to GitHub secrets.
+The publishing workflows check that the tag and package version match. PyPI uses OpenID Connect to request a short-lived token. GHCR uses the release workflow's repository-scoped token.
 
 After the workflow completes, verify the package from a clean environment outside the repository:
 
@@ -46,15 +30,8 @@ python -m venv release-check
 .\release-check\Scripts\localdeploy.exe --version
 ```
 
-Use the released version in place of `0.6.0`.
+Use the released version in place of `0.6.0`. Verify the container separately:
 
-## Settings to enable when the repository becomes public
-
-GitHub does not expose some public-repository security settings while this repository is private. After changing visibility, enable these settings before announcing the project:
-
-- Private vulnerability reporting under Settings / Security / Advanced Security.
-- Secret scanning and push protection when GitHub offers them for the repository.
-- A ruleset for `main` that requires the CI workflow and blocks force pushes and deletion.
-- Automatically delete head branches after pull requests merge.
-
-The security policy explains the supported private reporting route.
+```bash
+docker pull ghcr.io/iodriller/localdeploy:0.6.0
+```
