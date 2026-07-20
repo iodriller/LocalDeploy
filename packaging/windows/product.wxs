@@ -1,0 +1,148 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  LocalDeploy Windows MSI installer.
+
+  Per-user install (LocalAppDataFolder), so double-clicking the .msi never
+  triggers a UAC elevation prompt - important for the "someone who doesn't
+  know a lot of code" audience this installer is for. Payload is the
+  PyInstaller onedir build (packaging/localdeploy.spec); files.wxs (generated
+  by heat.exe from that build output) is compiled alongside this file.
+
+  UpgradeCode below is permanent - it is what lets a newer .msi upgrade an
+  older install in place instead of installing side-by-side. Never change it.
+
+  Build: packaging\build.ps1 -Msi  (see that script for the exact
+  candle.exe/light.exe invocation; do not hand-run candle/light without it,
+  the SourceDir/ProductVersion preprocessor variables must match).
+-->
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi"
+     xmlns:util="http://schemas.microsoft.com/wix/UtilExtension">
+  <Product Id="*"
+           Name="LocalDeploy"
+           Language="1033"
+           Version="$(var.ProductVersion)"
+           Manufacturer="LocalDeploy contributors"
+           UpgradeCode="BCBBE1A9-FE8E-4639-B8EA-3027BFEFE519">
+
+    <Package InstallerVersion="500"
+             Compressed="yes"
+             InstallScope="perUser"
+             Description="LocalDeploy $(var.ProductVersion) Setup"
+             Manufacturer="LocalDeploy contributors" />
+
+    <MajorUpgrade DowngradeErrorMessage="A newer version of LocalDeploy is already installed. Uninstall it first if you want to downgrade." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <Icon Id="LocalDeployIcon.exe" SourceFile="localdeploy.ico" />
+    <Property Id="ARPPRODUCTICON" Value="LocalDeployIcon.exe" />
+    <Property Id="ARPURLINFOABOUT" Value="https://github.com/iodriller/LocalDeploy" />
+    <Property Id="ARPNOREPAIR" Value="1" />
+
+    <!-- Close a running tray app before install/upgrade/uninstall so its exe
+         and DLLs are not locked (Windows Installer would otherwise fail the
+         file operation with no clear message to a non-technical user). -->
+    <util:CloseApplication Id="CloseLocalDeploy" Target="LocalDeploy.exe" CloseMessage="yes" RebootPrompt="no" Timeout="5" />
+
+    <!-- Windows Installer's own RegisterProduct/PublishProduct actions are
+         supposed to populate this Uninstall key automatically, but verified
+         testing on this InstallScope="perUser" + WixUI_InstallDir combination
+         showed the app installs and uninstalls cleanly yet never appears in
+         Settings > Apps - RegisterProduct returns success without the ARP
+         entry actually landing in HKCU. Authoring it explicitly is the
+         standard, documented workaround and makes ARP visibility something
+         this package controls directly instead of depending on that engine
+         behavior. -->
+    <DirectoryRef Id="INSTALLFOLDER">
+      <Component Id="ArpRegistration" Guid="1A2B3C4D-5E6F-4A7B-8C9D-0E1F2A3B4C5D">
+        <RegistryKey Root="HKCU" Key="Software\Microsoft\Windows\CurrentVersion\Uninstall\[ProductCode]">
+          <RegistryValue Type="string" Name="DisplayName" Value="LocalDeploy" KeyPath="yes" />
+          <RegistryValue Type="string" Name="DisplayVersion" Value="$(var.ProductVersion)" />
+          <RegistryValue Type="string" Name="Publisher" Value="LocalDeploy contributors" />
+          <RegistryValue Type="string" Name="DisplayIcon" Value="[INSTALLFOLDER]LocalDeploy.exe" />
+          <RegistryValue Type="string" Name="InstallLocation" Value="[INSTALLFOLDER]" />
+          <RegistryValue Type="string" Name="UninstallString" Value="[SystemFolder]msiexec.exe /x [ProductCode]" />
+          <RegistryValue Type="string" Name="URLInfoAbout" Value="https://github.com/iodriller/LocalDeploy" />
+          <RegistryValue Type="integer" Name="NoModify" Value="1" />
+          <RegistryValue Type="integer" Name="NoRepair" Value="1" />
+          <RegistryValue Type="integer" Name="EstimatedSize" Value="65000" />
+        </RegistryKey>
+      </Component>
+    </DirectoryRef>
+
+    <Property Id="WIXUI_INSTALLDIR" Value="INSTALLFOLDER" />
+
+    <Directory Id="TARGETDIR" Name="SourceDir">
+      <Directory Id="LocalAppDataFolder">
+        <Directory Id="ProgramsFolder0" Name="Programs">
+          <Directory Id="INSTALLFOLDER" Name="LocalDeploy" />
+        </Directory>
+      </Directory>
+      <Directory Id="ProgramMenuFolder">
+        <Directory Id="ApplicationProgramsFolder" Name="LocalDeploy" />
+      </Directory>
+      <Directory Id="DesktopFolder" />
+    </Directory>
+
+    <DirectoryRef Id="ApplicationProgramsFolder">
+      <Component Id="ApplicationShortcuts" Guid="7E2A6C0D-9F0B-4A9E-9E5B-9B0C7E2F5A31">
+        <Shortcut Id="StartMenuShortcut"
+                  Name="LocalDeploy"
+                  Description="Choose, run, and compare local AI models"
+                  Target="[INSTALLFOLDER]LocalDeploy.exe"
+                  WorkingDirectory="INSTALLFOLDER"
+                  Icon="LocalDeployIcon.exe" />
+        <Shortcut Id="UninstallShortcut"
+                  Name="Uninstall LocalDeploy"
+                  Target="[SystemFolder]msiexec.exe"
+                  Arguments="/x [ProductCode]"
+                  Description="Uninstall LocalDeploy" />
+        <RemoveFolder Id="RemoveApplicationProgramsFolder" On="uninstall" />
+        <RegistryValue Root="HKCU" Key="Software\LocalDeploy" Name="StartMenuShortcutInstalled" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+    </DirectoryRef>
+
+    <DirectoryRef Id="DesktopFolder">
+      <Component Id="DesktopShortcut" Guid="4B6B7B0E-3B7B-4B36-9A1E-5C2F9D8E6C12">
+        <Shortcut Id="DesktopShortcutLink"
+                  Name="LocalDeploy"
+                  Description="Choose, run, and compare local AI models"
+                  Target="[INSTALLFOLDER]LocalDeploy.exe"
+                  WorkingDirectory="INSTALLFOLDER"
+                  Icon="LocalDeployIcon.exe" />
+        <RegistryValue Root="HKCU" Key="Software\LocalDeploy" Name="DesktopShortcutInstalled" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+    </DirectoryRef>
+
+    <DirectoryRef Id="INSTALLFOLDER">
+      <!-- Per-user MSI components can't rely on Windows Installer's normal
+           empty-directory cleanup (that's a per-machine behavior), so the
+           harvested file tree - being a PyInstaller output, not something
+           uninstall should try to enumerate one folder at a time - is
+           recursively removed as a single step here instead. -->
+      <Component Id="CleanupInstallFolder" Guid="9C4E6B2A-6C2E-4C8C-9B0E-2A5F7E1D4C63">
+        <RegistryValue Root="HKCU" Key="Software\LocalDeploy" Name="InstallFolderCleanupMarker" Type="integer" Value="1" KeyPath="yes" />
+        <util:RemoveFolderEx On="uninstall" Property="INSTALLFOLDER" />
+      </Component>
+    </DirectoryRef>
+
+    <Feature Id="MainApplication" Title="LocalDeploy" Level="1">
+      <ComponentGroupRef Id="LocalDeployFiles" />
+      <ComponentRef Id="ApplicationShortcuts" />
+      <ComponentRef Id="DesktopShortcut" />
+      <ComponentRef Id="CleanupInstallFolder" />
+      <ComponentRef Id="ArpRegistration" />
+    </Feature>
+
+    <!-- Wizard UI: Welcome -> License -> pick a folder -> Install -> Finish,
+         with a "Launch LocalDeploy" checkbox on the last page. -->
+    <WixVariable Id="WixUILicenseRtf" Value="license.rtf" />
+    <UI>
+      <UIRef Id="WixUI_InstallDir" />
+      <Publish Dialog="ExitDialog" Control="Finish" Event="DoAction" Value="LaunchApplication">WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1 and NOT Installed</Publish>
+    </UI>
+    <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT" Value="Launch LocalDeploy" />
+    <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOX" Value="1" />
+    <Property Id="WixShellExecTarget" Value="[INSTALLFOLDER]LocalDeploy.exe" />
+    <CustomAction Id="LaunchApplication" BinaryKey="WixCA" DllEntry="WixShellExec" Impersonate="yes" />
+  </Product>
+</Wix>

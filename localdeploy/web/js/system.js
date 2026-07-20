@@ -1,6 +1,6 @@
 "use strict";
 
-import { $, $$, busy, esc, fmtDuration, fmtMb, getJSON, postJSON, skeletonHtml, toast } from "./shared.js?v=20260719-ui31";
+import { $, $$, busy, esc, fmtDuration, fmtMb, getJSON, postJSON, skeletonHtml, toast } from "./shared.js?v=20260719-ui32";
 
 const state = {
   hardware: null,
@@ -607,6 +607,20 @@ export function initSystem(options = {}) {
 
 export async function refreshSystem() {
   const results = await Promise.allSettled([checkHardware(), checkOllamaAvailability(), checkForUpdates()]);
+  notifySystemChanges();
+  return { snapshot: getSystemSnapshot(), results };
+}
+
+// A lighter check for frequent triggers (every tab switch fires this via
+// invalidateModelState): Ollama's reachability can change mid-session, but
+// hardware doesn't, and an update check is an internet call that has no
+// business re-running on every navigation. Re-running all three here meant
+// every tab switch fired 3 extra requests on top of refreshModels()'s own 3 -
+// and since navigation doesn't await or cancel the previous switch's refresh,
+// quickly clicking through tabs could stack up several overlapping bursts.
+
+export async function refreshOllamaStatus() {
+  const results = await Promise.allSettled([checkOllamaAvailability()]);
   notifySystemChanges();
   return { snapshot: getSystemSnapshot(), results };
 }

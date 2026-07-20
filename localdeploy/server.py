@@ -1246,7 +1246,10 @@ def check_lan_exposure() -> None:
         )
     else:
         lines.append("No API_TOKEN is configured; any reachable client can use the control plane.")
-    lines.append("Bind API_HOST=127.0.0.1. Do not expose LocalDeploy directly to the internet or a public tunnel.")
+    if in_docker:
+        lines.append("Do not expose the host port mapping beyond 127.0.0.1, and never put LocalDeploy behind a public tunnel.")
+    else:
+        lines.append("Bind API_HOST=127.0.0.1. Do not expose LocalDeploy directly to the internet or a public tunnel.")
     lines.append("=" * 70)
     message = "\n".join(lines)
     if env_bool("REQUIRE_TOKEN_ON_LAN", False) and not token_configured:

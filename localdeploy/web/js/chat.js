@@ -1,6 +1,6 @@
 "use strict";
 
-import { $, $$, downloadFile, esc, fmtBytes, formatExpires, postJSON, postMaybeStream, toast } from "./shared.js?v=20260719-ui31";
+import { $, $$, downloadFile, esc, fmtBytes, formatExpires, postJSON, postMaybeStream, toast } from "./shared.js?v=20260719-ui32";
 
 const state = {
   profiles: [], profileData: {}, profileModels: {}, defaultProfile: null,
@@ -10,6 +10,7 @@ const state = {
 };
 let initialized = false;
 let onModelStateInvalidated = async () => {};
+let onNavigate = () => {};
 
 async function loadProfiles() { await onModelStateInvalidated(); }
 async function refreshStatus() { await onModelStateInvalidated(); }
@@ -718,7 +719,7 @@ function renderChatWelcome() {
     openCatalog.type = "button";
     openCatalog.className = "btn primary";
     openCatalog.textContent = "Open model catalog";
-    openCatalog.addEventListener("click", () => activateTab("serve"));
+    openCatalog.addEventListener("click", () => onNavigate("serve"));
     welcome.appendChild(openCatalog);
     list.appendChild(welcome);
     return;
@@ -760,6 +761,7 @@ export function initChat(options = {}) {
   if (initialized) return;
   initialized = true;
   onModelStateInvalidated = options.onModelStateInvalidated || onModelStateInvalidated;
+  onNavigate = options.onNavigate || onNavigate;
   $("#btn-chat-send")?.addEventListener("click", sendChatMessage);
   $("#btn-chat-clear")?.addEventListener("click", clearChat);
   $("#chat-model")?.addEventListener("change", updateChatModelState);

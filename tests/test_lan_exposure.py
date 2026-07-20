@@ -72,3 +72,28 @@ def test_require_token_on_lan_allows_with_token():
     result = _run({"API_HOST": "0.0.0.0", "API_TOKEN": "secret", "REQUIRE_TOKEN_ON_LAN": "true"})
     assert result.returncode == 0
     assert "IMPORT_OK" in result.stdout
+
+
+def test_docker_warning_does_not_tell_user_to_break_their_container(monkeypatch):
+    # Binding API_HOST=127.0.0.1 *inside* a container would make it unreachable
+    # through the host's port mapping - the generic non-Docker advice line must
+    # not reach a containerized process (see check_lan_exposure's in_docker
+    # branch in localdeploy/server.py). check_lan_exposure runs at import time,
+    # so exercise it directly in-process rather than via a subprocess.
+    import io
+
+    from localdeploy import server as server_mod
+
+    monkeypatch.setattr(server_mod.os.path, "exists", lambda p: p == "/.dockerenv")
+    monkeypatch.setenv("API_HOST", "0.0.0.0")
+    monkeypatch.setenv("API_TOKEN", "")
+    monkeypatch.setenv("REQUIRE_TOKEN_ON_LAN", "")
+    buf = io.StringIO()
+    monkeypatch.setattr(server_mod.sys, "stderr", buf)
+
+    server_mod.check_lan_exposure()
+
+    message = buf.getvalue()
+    assert "Inside Docker this is expected" in message
+    assert "Bind API_HOST=127.0.0.1" not in message
+    assert "host port mapping beyond 127.0.0.1" in message

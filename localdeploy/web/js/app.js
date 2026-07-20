@@ -1,10 +1,10 @@
 "use strict";
 
-import { $, $$, initSharedUI, toast } from "./shared.js?v=20260719-ui31";
-import { getSystemSnapshot, initSystem, refreshSystem, setMonitorActive, subscribeToSystemChanges, updateModelContext as updateSystemModelContext } from "./system.js?v=20260719-ui31";
-import { getModelSnapshot, initModels, refreshModels, setDefaultProfile, subscribeToModelChanges, updateSystemContext as updateModelsSystemContext } from "./models.js?v=20260719-ui31";
-import { initChat, updateModelContext as updateChatModelContext } from "./chat.js?v=20260719-ui31";
-import { initBenchmark, refreshBenchmarkMetadata, updateModelContext as updateBenchmarkModelContext, updateSystemContext as updateBenchmarkSystemContext } from "./benchmark.js?v=20260719-ui31";
+import { $, $$, initSharedUI, toast } from "./shared.js?v=20260719-ui32";
+import { getSystemSnapshot, initSystem, refreshOllamaStatus, refreshSystem, setMonitorActive, subscribeToSystemChanges, updateModelContext as updateSystemModelContext } from "./system.js?v=20260719-ui32";
+import { getModelSnapshot, initModels, refreshModels, setDefaultProfile, subscribeToModelChanges, updateSystemContext as updateModelsSystemContext } from "./models.js?v=20260719-ui32";
+import { initChat, updateModelContext as updateChatModelContext } from "./chat.js?v=20260719-ui32";
+import { initBenchmark, refreshBenchmarkMetadata, updateModelContext as updateBenchmarkModelContext, updateSystemContext as updateBenchmarkSystemContext } from "./benchmark.js?v=20260719-ui32";
 
 function propagateSystem(snapshot = getSystemSnapshot()) {
   updateModelsSystemContext(snapshot);
@@ -18,7 +18,7 @@ function propagateModels(snapshot = getModelSnapshot()) {
 }
 
 async function invalidateModelState() {
-  await Promise.allSettled([refreshModels(), refreshSystem()]);
+  await Promise.allSettled([refreshModels(), refreshOllamaStatus()]);
   propagateSystem(); propagateModels();
 }
 
@@ -48,7 +48,7 @@ async function bootstrap() {
   subscribeToModelChanges((snapshot, meta) => { propagateModels(snapshot); if (meta?.requiresSystemRefresh) void refreshSystem(); });
   initializeFeature("system", () => initSystem({ onNavigate: activateTab, onModelStateInvalidated: invalidateModelState }));
   initializeFeature("models", initModels);
-  initializeFeature("chat", () => initChat({ onModelStateInvalidated: invalidateModelState }));
+  initializeFeature("chat", () => initChat({ onModelStateInvalidated: invalidateModelState, onNavigate: activateTab }));
   initializeFeature("benchmark", () => initBenchmark({ onModelStateInvalidated: invalidateModelState, setDefaultProfile }));
   $$(".tab").forEach((tab) => tab.addEventListener("click", () => activateTab(tab.dataset.tab)));
   $("#brand-home")?.addEventListener("click", () => activateTab("serve"));

@@ -35,8 +35,8 @@ dev = [
   "playwright>=1.40",
   "pillow>=10.0",
 ]
-# Desktop tray launcher + PyInstaller build (Release R7, Phase A packaging).
-# Not required to run LocalDeploy itself - only to build the bundled .exe.
+# Desktop tray launcher + PyInstaller build (Windows .exe/.msi, macOS .app/.dmg).
+# Not required to run LocalDeploy itself - only to build the bundled apps.
 packaging = [
   "pyinstaller>=6.0",
   "pystray>=0.19",

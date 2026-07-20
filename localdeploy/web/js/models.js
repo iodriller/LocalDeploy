@@ -1,6 +1,6 @@
 "use strict";
 
-import { $, $$, busy, currentTheme, downloadFile, esc, fmtBytes, fmtDuration, fmtMb, formatExpires, getJSON, postJSON, postMaybeStream, simpleModal, skeletonHtml, startElapsed, toast, vramBarHtml } from "./shared.js?v=20260719-ui31";
+import { $, $$, busy, currentTheme, downloadFile, esc, fmtBytes, fmtDuration, fmtMb, formatExpires, getJSON, postJSON, postMaybeStream, simpleModal, skeletonHtml, startElapsed, toast, vramBarHtml } from "./shared.js?v=20260719-ui32";
 
 const state = {
   profiles: [], profileData: {}, profileModels: {}, defaultProfile: null,

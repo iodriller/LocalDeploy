@@ -443,5 +443,15 @@ Write-Host "  Chat:    .\scripts\chat.ps1 -Prompt `"How are you?`""
 Write-Host "  Logs:    Get-Content .\logs\api_server.err.log -Wait"
 
 if (-not $NoBrowser) {
-    Start-Process $uiUrl
+    # Opening the browser is a convenience, not part of a successful start. On a
+    # machine with no default browser association this throws, and because
+    # $ErrorActionPreference is "Stop" that would make start.ps1 exit non-zero -
+    # so start.bat would print "LocalDeploy did not start" even though it is
+    # running fine. Never let the browser step fail the launch.
+    try {
+        Start-Process $uiUrl -ErrorAction Stop
+    }
+    catch {
+        Write-Host "Could not open a browser automatically. Open $uiUrl yourself." -ForegroundColor Yellow
+    }
 }

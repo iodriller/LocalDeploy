@@ -5,14 +5,87 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
+# --- guided install helpers ---------------------------------------------------
+# Mirrors what start.ps1 offers via winget on Windows: ask once, use whatever
+# package manager is actually present, and never block a non-interactive run
+# (piped input, CI, no attached terminal) - those always fall through to
+# printing the manual instructions instead of prompting or acting.
+
+confirm() {
+  if [ ! -t 0 ]; then
+    return 1
+  fi
+  local reply
+  read -r -p "$1 [y/N] " reply || return 1
+  case "$reply" in
+    [Yy] | [Yy][Ee][Ss]) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+install_python_guided() {
+  case "$(uname -s)" in
+    Darwin)
+      if command -v brew >/dev/null 2>&1; then
+        if confirm "Python 3 was not found. Install it now with 'brew install python'?"; then
+          if brew install python; then return 0; fi
+        fi
+      fi
+      ;;
+    Linux)
+      if command -v apt-get >/dev/null 2>&1; then
+        if confirm "Python 3 was not found. Install it now with 'sudo apt install python3 python3-venv python3-pip'?"; then
+          if sudo apt-get update -y && sudo apt-get install -y python3 python3-venv python3-pip; then return 0; fi
+        fi
+      elif command -v dnf >/dev/null 2>&1; then
+        if confirm "Python 3 was not found. Install it now with 'sudo dnf install python3 python3-pip'?"; then
+          if sudo dnf install -y python3 python3-pip; then return 0; fi
+        fi
+      elif command -v pacman >/dev/null 2>&1; then
+        if confirm "Python 3 was not found. Install it now with 'sudo pacman -S python'?"; then
+          if sudo pacman -Sy --noconfirm python; then return 0; fi
+        fi
+      elif command -v zypper >/dev/null 2>&1; then
+        if confirm "Python 3 was not found. Install it now with 'sudo zypper install python3 python3-pip'?"; then
+          if sudo zypper install -y python3 python3-pip; then return 0; fi
+        fi
+      fi
+      ;;
+  esac
+  return 1
+}
+
+install_ollama_guided() {
+  case "$(uname -s)" in
+    Darwin)
+      if command -v brew >/dev/null 2>&1; then
+        if confirm "Ollama was not found. Install it now with 'brew install ollama'?"; then
+          if brew install ollama; then return 0; fi
+        fi
+      fi
+      ;;
+    Linux)
+      if confirm "Ollama was not found. Install it now using the official installer (curl -fsSL https://ollama.com/install.sh | sh)?"; then
+        if curl -fsSL https://ollama.com/install.sh | sh; then return 0; fi
+      fi
+      ;;
+  esac
+  return 1
+}
+
 PYTHON="${PYTHON:-python3}"
 if ! command -v "$PYTHON" >/dev/null 2>&1; then
-  echo "ERROR: Python 3 was not found." >&2
-  echo "  macOS:          brew install python  (or https://www.python.org/downloads/)" >&2
-  echo "  Debian/Ubuntu:  sudo apt install python3 python3-venv" >&2
-  echo "  Fedora:         sudo dnf install python3" >&2
-  echo "Then re-run this script." >&2
-  exit 1
+  if install_python_guided && command -v "$PYTHON" >/dev/null 2>&1; then
+    echo "[start] Python installed."
+  else
+    echo "ERROR: Python 3 was not found." >&2
+    echo "  macOS:          brew install python  (or https://www.python.org/downloads/)" >&2
+    echo "  Debian/Ubuntu:  sudo apt install python3 python3-venv" >&2
+    echo "  Fedora:         sudo dnf install python3" >&2
+    echo "  Arch:           sudo pacman -S python" >&2
+    echo "Then re-run this script." >&2
+    exit 1
+  fi
 fi
 if ! "$PYTHON" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)'; then
   echo "ERROR: Python 3.10+ is required; found $("$PYTHON" --version 2>&1)." >&2
@@ -103,6 +176,15 @@ ollama_ready() {
 
 if ! ollama_ready; then
   if ! command -v ollama >/dev/null 2>&1; then
+    install_ollama_guided || true
+  fi
+  if ollama_ready; then
+    # The guided installer above can already leave Ollama running (e.g. the
+    # official Linux script starts a systemd service) - nothing left to do,
+    # and starting a second `ollama serve` here would just fail to bind the
+    # port that one is already using.
+    echo "[start] Ollama is ready at $OLLAMA_URL"
+  elif ! command -v ollama >/dev/null 2>&1; then
     echo "[start] NOTE: Ollama was not found. Install it from https://ollama.com/download."
     echo "        The UI will start anyway and shows Ollama's status on the Setup tab."
   elif [ "$START_OLLAMA_VALUE" = "false" ]; then

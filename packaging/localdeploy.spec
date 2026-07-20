@@ -67,6 +67,7 @@ exe = EXE(
     strip=False,
     upx=False,
     console=False,  # tray app: no console window
+    icon=str(REPO_ROOT / "packaging" / "windows" / "localdeploy.ico"),
 )
 
 coll = COLLECT(

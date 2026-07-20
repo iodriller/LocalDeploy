@@ -63,13 +63,15 @@ The script creates `.env`, `config.json`, and `.venv`, starts Ollama when it is 
 
 ### macOS and Linux
 
-Install Python 3.10 or newer and [Ollama](https://ollama.com/download), then run:
-
 ```bash
 git clone https://github.com/iodriller/LocalDeploy.git
 cd LocalDeploy
 ./scripts/start.sh
 ```
+
+If Python 3 or Ollama is missing, the launcher offers to install it for you (Homebrew on macOS; apt, dnf, pacman, or zypper for Python and the [official installer](https://ollama.com/download) for Ollama on Linux) and asks before running anything. Answer no, or run non-interactively, and it prints the exact manual command instead.
+
+On macOS you can also double-click `start.command` from a clone (it opens Terminal and runs the launcher). A ZIP download strips the executable bit, so after unzipping run `chmod +x start.command scripts/*.sh` once, or just use `git clone` as above.
 
 The launcher starts Ollama when it is installed but not already reachable, then keeps the LocalDeploy server in the foreground. Press Ctrl+C to stop LocalDeploy. Run `./scripts/stop.sh --ollama` if you also want to stop an Ollama process started by the launcher. Set `START_OLLAMA=false` in `.env` when another service manages Ollama.
 
@@ -133,12 +135,15 @@ python scripts\egress_selftest.py
 
 Use `.\scripts\start.ps1 -Foreground` for live server logs. The frontend is plain HTML, CSS, and seven native ES modules, with no npm install or build step.
 
-Desktop packaging is experimental. `packaging/localdeploy.spec` builds an unsigned Windows tray application with PyInstaller:
+Desktop packaging is experimental and unsigned (Windows SmartScreen and, for the macOS build, Gatekeeper will warn on first run - see [docs/PACKAGING.md](docs/PACKAGING.md) for what that means and how to get past it). `packaging/localdeploy.spec` builds a Windows tray application with PyInstaller; add `-Msi` for a double-click `.msi` installer (per-user install, no admin/UAC prompt, Start Menu + Desktop shortcuts, proper Settings > Apps entry):
 
 ```powershell
 python -m pip install -e ".[packaging]"
-.\packaging\build.ps1
+.\packaging\build.ps1          # dist\LocalDeploy\LocalDeploy.exe
+.\packaging\build.ps1 -Msi     # also dist\LocalDeploy-Setup.msi
 ```
+
+The `-Msi` build fetches the WiX v3 toolset itself (a plain NuGet package, no admin rights, no license fee) into `build\wix-tools` on first run.
 
 ## Contributing
 
