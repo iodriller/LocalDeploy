@@ -2,6 +2,69 @@
 
 All notable changes to this project should be documented here.
 
+## 0.6.0 - 2026-07-19
+
+### ModelScope search and direct GGUF import
+
+- Added ModelScope as a third model source alongside Ollama and Hugging Face in the unified
+  catalog search, pulled through Ollama's native `modelscope.cn/<repo>:<file>.gguf` support
+  (Ollama 0.30+) - no new pull mechanism needed. Curated each repo's exposed quant variants down
+  to a standard ladder (Q3/Q4/Q5/Q6/Q8/F16) instead of listing every file a repo ships (some
+  unsloth-style repos carry 20+ near-duplicate quant/IQ variants), rounded ModelScope's
+  full-precision parameter counts for display (`9.197093888B` to `9.2B`), and fixed a quant-label
+  regex gap that left period-separated filenames (`Model.Q4_K_M.gguf`) with no visible quant badge.
+- Added GGUF import for models that aren't in any registry: a local file already on disk (becomes
+  a llama.cpp run profile, no download) or a direct URL such as a GitHub Release (downloaded,
+  registered with Ollama via `/api/create`, and given a run profile - so Deploy/Unload/Delete work
+  exactly like a pulled model).
+
+### Fixed
+
+- `chat.js`'s "Open model catalog" button (shown when no models are installed) called an
+  undefined function and did nothing; it now navigates correctly.
+- Every tab switch re-ran hardware detection and an internet update-check on top of the model/
+  profile refresh already needed for correctness, and switching tabs quickly could stack up
+  several overlapping bursts of requests since navigation didn't wait for the previous switch's
+  refresh to finish. Tab navigation now only refreshes Ollama reachability; hardware/update checks
+  stay on their original triggers (startup, the explicit button, and actions that actually change
+  VRAM usage).
+- `start.ps1` could report "LocalDeploy did not start" on a successful launch if no default browser
+  was configured, because opening the browser ran under the same fail-fast error handling as the
+  rest of the script.
+- `start.ps1`/`stop.ps1` could leave a stale server running after `-Restart`: on a venv created from
+  a Conda base interpreter, this machine transparently relaunches a script under a different
+  interpreter as a child process, and the launcher only ever tracked the parent PID. Both scripts
+  now identify whoever is actually listening on the configured port and walk up its process-family
+  ancestry, so the whole chain is stopped regardless of which hop originally got recorded.
+- `install.ps1` claimed it would `git pull` an existing install to update it but never actually did;
+  it now pulls (fast-forward only) when the checkout is clean, and skips with a clear warning
+  instead of overwriting anything if it isn't.
+- The Docker LAN-exposure warning's closing line ("Bind API_HOST=127.0.0.1") was shown even inside
+  a container, where binding to loopback internally would break the port mapping; that line is now
+  Docker-aware, matching the reassurance already given earlier in the same message.
+- Added `start.command` so macOS users can double-click to launch, the same way `start.bat` already
+  works on Windows (a plain `.sh` opens in a text editor on double-click instead of running).
+- `start.sh` now offers to install Python and Ollama itself when either is missing (Homebrew on
+  macOS; apt, dnf, pacman, or zypper for Python and the official installer script for Ollama on
+  Linux), asking before running anything and never prompting on a non-interactive run - mirroring
+  the guided install `start.ps1` already offered via winget on Windows.
+- The repository is now public; the previously-private repo made every documented install path
+  (the README one-liner, `install.ps1`'s own ZIP fallback, and anonymous `git clone`) 404 for
+  anyone without repository access.
+
+### Desktop installers (experimental)
+
+- Windows: `.\packaging\build.ps1 -Msi` produces a per-user `.msi` (no admin/UAC prompt), fetching
+  the WiX v3 toolset itself on first run. Verified end-to-end on a real machine: install, Start
+  Menu + Desktop shortcuts, a working Settings > Apps entry, and a fully clean uninstall.
+- macOS: `packaging/macos.spec` builds a menu-bar-only `.app` (no Dock icon), and
+  `.github/workflows/build-macos.yml` packages it into a `.dmg` with an automated smoke test.
+  Authored without access to a Mac; the workflow is manual-trigger only until it - or the
+  resulting `.app` - has actually been run on real hardware.
+- Neither installer is code-signed yet: Windows SmartScreen and macOS Gatekeeper will both warn on
+  first run. See `docs/PACKAGING.md` for what each warning means and the signing/notarization cost
+  and account requirements to remove them.
+
 ## 0.5.1 - 2026-07-18
 
 ### Public release audit

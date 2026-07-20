@@ -23,7 +23,7 @@ The v0.5.0 upload failed because no matching PyPI publisher had been registered.
 1. Update `localdeploy/__init__.py::__version__` and add the matching section to `CHANGELOG.md`.
 2. Run the local checks from a clean checkout.
 3. Merge the release change to `main` and wait for CI.
-4. Create a GitHub release whose tag is exactly `v<package-version>`, for example `v0.5.1`.
+4. Create a GitHub release whose tag is exactly `v<package-version>`, for example `v0.6.0`.
 
 Local checks:
 
@@ -42,11 +42,11 @@ After the workflow completes, verify the package from a clean environment outsid
 
 ```powershell
 python -m venv release-check
-.\release-check\Scripts\python.exe -m pip install localdeploy==0.5.1
+.\release-check\Scripts\python.exe -m pip install localdeploy==0.6.0
 .\release-check\Scripts\localdeploy.exe --version
 ```
 
-Use the released version in place of `0.5.1`.
+Use the released version in place of `0.6.0`.
 
 ## Settings to enable when the repository becomes public
 
